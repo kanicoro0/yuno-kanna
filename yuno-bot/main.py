@@ -125,7 +125,7 @@ def append_chat_history(user_id, role, content, user_name=None):
     except Exception as e:
         safe_report_error(f"会話履歴の保存に失敗したよ: {e}")
         return
-    
+
     report = f"📝 ログを更新したよ：\n{name}：\n" + content
     print(report)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -641,7 +641,7 @@ async def handle_mention(message, ctx):
             if len(reply) > 4000:
                 reply = reply[:4000] + "（……省略）"
 
-            append_chat_history(user_id, "assistant", f"{reply}\n\nつけたリアクション：{reaction}")
+            append_chat_history(user_id, "assistant", f"{reply}\nつけたリアクション：{reaction}")
             await send_reply(message, reply, reaction)
 
             break

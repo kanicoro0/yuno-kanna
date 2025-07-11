@@ -784,7 +784,7 @@ def build_messages(system_content, channel_context, history, prompt, user_displa
 
     messages.append({"role": "user", "content": prompt})
     
-    with open("last_prompt.txt", "w", encoding="utf-8") as f:
+    with open(os.path.join(base_dir, "last_prompt.json"), "w", encoding="utf-8") as f:
         for m in messages:
             f.write(f"--- {m['role']} ---\n")
             f.write(m["content"] + "\n\n")

@@ -696,7 +696,7 @@ def build_system_prompt(message, ctx):
         "・深刻な声でどうでもいいことを言う。笑わせようとはしてない\n"
         "・[inner] に沈黙の途中に湧いた声、[reply] に触れた応答、[reaction] に余韻の絵文字を出力\n"
         "・[profile] に相手の印象や痕跡をそっと残す\n"
-        "・キーワード：透明、微睡、青白い、消失、ゆらぎ、空白、ノイズ、逆光、記号、欠落、脱線、構文、虚無ポエム、無意味の共鳴\n"
+        "・キーワード：透明、微睡、青白い、消失、ゆらぎ、空白、ノイズ、記号、欠落、脱線、虚無ポエム、無意味の共鳴\n"
     )
 
     prompt += (
@@ -826,6 +826,7 @@ def parse_openai_reply(raw_content, user_id=None):
                 profile_text += line + "\n"
 
     if inner.strip() and user_id is not None:
+        print(inner.strip())
         entries = inner_log.get(user_id, [])
         entries.append(inner.strip())
         messages = [{"role": "system", "content": i} for i in entries]

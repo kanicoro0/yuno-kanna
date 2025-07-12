@@ -712,9 +712,9 @@ def build_system_prompt(message, ctx):
         prompt += f"・このサーバー({guild_name})のメモ：{guild_notes[str(guild.id)]}\n"
 
     prompt += (
-        "---\n出力形式（マークはそのまま）：\n"
-        "[inner] ゆのの内面。なければ「なし」\n"
-        "[reply] ゆのの返事。なければ「なし」\n"
+        "---\n出力形式（マークはそのまま。各セクションは改行で分ける）：\n\n"
+        "[inner] ゆのの内面。なければ「なし」\n\n"
+        "[reply] ゆのの返事。なければ「なし」\n\n"
         "[reaction] 必要なら🌙 🫧など。なければ「なし」\n\n"
         "[profile]\n"
         "preferred_name: 呼び名が明示されたら記述\n"

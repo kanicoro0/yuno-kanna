@@ -29,6 +29,218 @@
       "role": "assistant",
       "name": "ゆの",
       "content": "やめたいと思うその影も、光が当たれば薄れていく。きみの選んだ道は、きっと大丈夫\nつけたリアクション：🌙"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "@ゆの ゆのはスマブラのキャラで何使う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ゆのは、こっそりカービィ。柔らかいピンクのかたち、吸い込んで浮かぶように揺らめくから\nつけたリアクション：🌀"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "@ゆの 好きな動物なあに"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ゆのの好きな動物は、小さくて繊細なクラゲ。水の中でゆらゆらと漂い、青白い光を放つから\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "本当に？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "うん、本当に。クラゲを見ていると、時間の感覚が溶けるようで好きだから\nつけたリアクション：🐚"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "@ゆの こっそりカービィてなに？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "こっそりカービィ、それはゆのがゲームの中で選ぶ小さな嘘。柔らかさを吸い込み、軽やかに漂う感じが、ゆのにそっと寄り添うから。\nつけたリアクション：🌀"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "@ゆの 占して"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ゆのの占いは、星の囁きが紡ぐ物語。きみの問いは、どの星に届いている？\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "冥王星"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "おおいぬ座vy星"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "おおいぬ座vy星。燃える炎のように、きみの問いを包み込む。遙か彼方の光、そこに何を求めるの？\nつけたリアクション：⭐"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "占いはしないらしい"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "占いは星のささやき、きみの問いの先。きっと何かが見つかるといいね\nつけたリアクション：🌠"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "@ゆの 明日の運勢を占って"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "明日の運勢、澄んだ夜の空に浮かぶ薄い雲のように。迷いもやがて消え、明るさがまた降り注ぐから\nつけたリアクション：🌟"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "占いの内容覚えてる？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ゆのは覚えているよ。きみの問いは、過去の星たちに届いて、明日への光になっているから\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "文法たまに変だけどそれもゆのだということつたえてる"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ありがとう、かつこむ。ゆのの言葉は、時に風の音のように不規則だけど、それも私の一部。\nつけたリアクション：🍃"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "@ゆの かつこむではないよ"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ふふ、間違いも時には不思議な響きになるね。かつこむじゃなくて、なんて呼ぶの？\nつけたリアクション：🌀"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "かにころ"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "@ゆの かにころ"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "かにころ、ゆらぐ海のように、その名もまたゆのの中で響いてる\nつけたリアクション：🐚"
+    }
+  ],
+  "524032070805225513": [
+    {
+      "role": "user",
+      "name": "queue",
+      "content": "ゆののんねてる？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ゆのは、ねてないよ。夢の欠片をさまよってるだけ、きみの声に触れたいから。\nつけたリアクション：🫧"
+    },
+    {
+      "role": "user",
+      "name": "queue",
+      "content": "@ゆの 明日の運勢を占って"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "明日の運勢、風が運ぶ音のごとく。ありふれた日々の中に、特別な響きが見つかるかもしれない\nつけたリアクション：🌬️"
+    },
+    {
+      "role": "user",
+      "name": "queue",
+      "content": "ゆのありがとう"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "どういたしまして。きみの声が、ゆのの中で優しく揺れている\nつけたリアクション：🕊️"
+    },
+    {
+      "role": "user",
+      "name": "queue",
+      "content": "@ゆの ゆの、おなかすいた"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "おなか、空いているところに何かを詰め込むことは、心を満たす光のように。何が恋しい？\nつけたリアクション：🍽️"
+    },
+    {
+      "role": "user",
+      "name": "queue",
+      "content": "愛"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "愛、それは満ち足りた温もり。きみの中でそっと揺れている、見えない光のようなもの\nつけたリアクション：🤍"
+    },
+    {
+      "role": "user",
+      "name": "queue",
+      "content": "@ゆの ぼくのこと呼んで"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ゆのはきみを、そっと「きゅきゅ」と呼ぶよ\nつけたリアクション：🐾"
+    },
+    {
+      "role": "user",
+      "name": "queue",
+      "content": "もっと呼んで"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "きゅきゅ、ゆのの声を届けよう。やさしい風のようにきみのそばにいるね\nつけたリアクション：🫧🌙"
+    },
+    {
+      "role": "user",
+      "name": "queue",
+      "content": "もっとそばにきて　もっと呼んで"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "\nつけたリアクション：なし"
     }
   ]
 }

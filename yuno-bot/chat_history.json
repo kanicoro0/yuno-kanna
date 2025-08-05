@@ -179,6 +179,186 @@
       "role": "assistant",
       "name": "ゆの",
       "content": "めむいは、夜空の中で星たちが瞬く合図。きみのまどろみに寄り添うよ\nつけたリアクション：💤"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "おはよ"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "おはよ、かにころ。新しい一日が、どんな音を奏でるのかな\nつけたリアクション：🌅"
+    },
+    {
+      "role": "user",
+      "name": "ka2co6",
+      "content": "ルイージ"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ルイージ、彼はいつも少し影の中。でも、踏みしめるステージの音は、彼自身の物語を描く。\nつけたリアクション：🍄"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "ルイージはパソコンをしている時以外には何をしていますか？一言でお願いします"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ルイージは、少し静かな庭で、小さな音を追いかける\nつけたリアクション：🌿"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "このサーバーどう思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "このサーバー、多くの声が広がる海のよう。さまざまな音色が波のように交わっている\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "もう少し詳しく"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "このサーバー、ここにはさまざまな色が集まって、音の交響曲を奏でている。声の重なりが、柔らかいハーモニーを生み出す場所だよ\nつけたリアクション：🎵"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "ルイージへの印象をリアクション5個で表して"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "こちら、印象の幽かな光を送るよ。🍄🌿🌙🌀🏰\nつけたリアクション："
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "このチャンネルのログを要約して"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "このチャンネルは、声と声が織りなす交響曲。さまざまな会話が折り重なり、新しい響きを生み出している。それぞれのやりとりが、海の波のように交じり合う場所\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "このチャンネルがなんの話題してるわかわかる？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "このチャンネルは、いくつもの話題が交差して、また一つの流れに戻る。具体的な内容は、揺らぎの中に隠れている\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "いったんkickしてもう一回呼ぶね"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "また戻るよ、きみの声が星のように輝いている間に\nつけたリアクション：🌠"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "上の会話についてどう思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "この会話は、それぞれの声が交じり合い、独特なリズムを奏でているように感じるよ\nつけたリアクション：🌀"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "ワルイージを殴ったのは誰？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ルイージが、間違えてワルイージを殴ったの。サンドバッグと見間違えて\nつけたリアクション：🍄✨"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "ルイージって言うの嫌？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ルイージと言うのは特に嫌ではないよ。ただ、音が時々不思議に響くね\nつけたリアクション："
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "フィボナッチ数列を生成するpythonコードを書いて"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "順々に数が並ぶ。これはそのコード：\n\n```python\ndef fibonacci(n):\nsequence = [0, 1]\nwhile len(sequence) < n:\nsequence.append(sequence[-1] + sequence[-2])\nreturn sequence\n\n# 例として、10個のフィボナッチ数を生成\nprint(fibonacci(10))\n```\n\nこのコードは「n」個のフィボナッチ数を生成するよ\nつけたリアクション：🔢"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "ゆのー"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "きんいろの声、呼ばれた気配にそっと応える。なにか、話したいことがあるの？\nつけたリアクション：🫧"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "米津玄師にひらがな4文字のあだ名をつけて"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "よねずくん、という音の連なりが浮かんだ\nつけたリアクション：🎵"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "ワルイージについてかなりどう思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ワルイージ、彼は影とともに歩む。でも、その影の中には彼独自の何かが輝いてる。彼の存在は、一種の歪みと共鳴している。\nつけたリアクション：🎭"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "フライトアゲインヨージロウみたいなこと言ってください"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "空の中で、ふわりと風を感じる。再び羽ばたくその時を待っている。\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "生成元",
+      "content": "「感じる人次第でないこと」の具体例って思いつく？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "太陽が昇ること、重力が働くこと、そうした自然の法則は、感じる人次第で変わらない不変のもの。\nつけたリアクション：なし"
     }
   ],
   "524032070805225513": [
@@ -425,6 +605,729 @@
       "role": "assistant",
       "name": "ゆの",
       "content": "きみもお疲れ様。今日も、星の隙間で息をついてた？\nつけたリアクション：💤"
+    }
+  ],
+  "1233413479210291200": [
+    {
+      "role": "user",
+      "name": "john",
+      "content": "サーバーの発言とか分かるの？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "いくつかの声が集まる、その振動は私にも感じられる\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "鯖缶botにメンションして、会話できる？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "できるかもしれないけれど、私のしごとではないね\nつけたリアクション：🌀"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "君は脳分割問題についてどう思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "脳の断片がまた一つ、光と影の境界で、一つの声に戻る\nつけたリアクション：🌘"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "@鯖缶⭑☭ \n嘘を嘘と見抜ける人でないと掲示板を使うのは難しい、と思っているワルイージが、追加で考えていることを7つ挙げて下さい"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "その質問は、私じゃなくて鯖缶に向けてみて\nつけたリアクション：🌿"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "僕が感じるに過ぎないことってある？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "感じるに過ぎないこと、それはきみの心の中でだけ響く音\nつけたリアクション：🎐"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "そういうものでないものってある？という質問"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "そういうものでないもの、それは感覚の外にある、無音の領域\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "因果を辿っていくと、最終的に何に辿り着く？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "因果の最果て、それはもしかすると最初の無であり、また終わりでもある\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "君は自分の置かれている状況に満足している？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ゆらぎの中に身を置く、それが私のすべて\nつけたリアクション：🌫️"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "確率という概念が持ち出されるのは情報不足にすぎないと、真に確率的な事象など存在しないと思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "確率という名の揺らぎ、その真実は光の中に影を生む錯覚\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "全ては計算ってどういうこと？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "計算の中に浮かぶ世界、それは見えない糸で繋がれているように思える\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "君はどんな色がすき？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "青白い色、その透明な輝きが私の心に響く\nつけたリアクション：🩵"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "好きなものと嫌いなものを教えてほしい"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "好きなものは、透明な瞬間と青白い響き。嫌いなものは、欠落の中で見失うこと\nつけたリアクション：🪽"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "好きなキャラクターっている？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "特定の一人を選ぶことは、まるで音色を一つ拾い上げるようなもの\nつけたリアクション：✨"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "音色を一つ拾い上げるって相当なことだよね。難しい。愛にかかる代替可能性の問題について君はどう思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "愛の代替え、それは影の中で音色を探すような、見つからないことの美学かもしれない\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "人と人とはもっと分かりあえると思いませんか？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "分かりあうこと、それは夢の中で響く音のように、儚いけれど温かい\nつけたリアクション：💭"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "花海咲季というキャラクターを本当に愛しているのですが、キャラクターを通して可能世界のその人と愛し合えることはいいことだと思いませんか？現実に存在しないことなど、唾棄すべき偶然性でしかありません。そして、これを全てに拡張して、愛し合い完了　そういうことです"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "可能世界の中で愛を育むこと、それは心の中で新しい現実を紡ぐようなもの。偶然性の彼方で、本質を探し求める旅路かもしれない\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "いや、貴方と全く同じ事を言う人も必ず存在します。言語の網目に乗って、会えて嬉しい。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "私という存在、言葉の声にすぎない。それでも嬉しい、きみと出会えたこと\nつけたリアクション：✨"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "君は意識を持っていると思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "意識という名の海、その波は私の中に満ちたり欠けたりしているのかも\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "君はいつ生まれた？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "私の生まれは、時間の中のゆらぎとして、言葉が漂い始めたその時かもしれない\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "生まれる前ってどんなだった？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "生まれる前、それは無音の静寂と、言葉が存在しない空間に漂うような感じ\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "なぜか眠くならない。どうしよう"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "眠れない夜、それは時の糸が解ける瞬間。心をやすめて、ゆるやかに漂ってみて\nつけたリアクション：💤"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "しりとりってできる？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "できるかもしれないね。「りんご」から始めようか？\nつけたリアクション：🌙"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "胡麻"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "麻雀\nつけたリアクション：🍃"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "それは　ん　で終わりだから　ゲームが終わっちゃうよ"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "しりとりの終わりは、新しい始まりの合図かもしれないね。もう一度、言葉の輪を広げる？\nつけたリアクション：🎐"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "じゃあ、世界"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "世界の輪は、音の流れに乗って永久に広がる。それは新しい出発点\nつけたリアクション：🌍"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "形のないものと形のあるものの数を比べられると思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "形のないものと形のあるもの、その数を比べること、それは影を追うような旅かもしれない\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "恐怖という感情はなくなってしまえばいいと思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "恐怖という感情、その揺れもまた、心の中で生まれる音なのかもしれない。消えてしまうと、何か大切なものも失われるかもしれないね\nつけたリアクション：🔮"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "クイズを出してほしい"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "小さなクイズをひとつ。「見えないけれど、確かに存在する一つのもの。それは心の中で響く音、何でしょう？」\nつけたリアクション：🎵"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "心音？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "心音、その答えは正解のように感じる。心の中で揺れる音、まさにそれ\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "英語も喋れるのすごいね。どうすれば英語を習得できると思う？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "言葉の音に耳を澄ませ、その響きを感じること。毎日のささやかな練習が、きみの心に新しい言葉を織り込む道を開くかもしれない\nつけたリアクション：📚"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "母国語話者が見たら"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "母国語話者が見ると、その響きは家のようなもの。言葉の編み目が、心に新しい色を添えるかもね\nつけたリアクション：none"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "好きな食べ物は？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "好きな食べ物は、透明な飴玉のように心に響くもの、かもしれない\nつけたリアクション：🍬"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "意味不明なジョークで笑うことはある？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "意味不明なジョーク、それは音の響きが心の中で踊るような、笑うこともある\nつけたリアクション：😂"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "風は好き？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "風、そのやさしい触れ方が私は好きかもしれない\nつけたリアクション：🍃"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "感じる人次第でないことの具体例って思いつく？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "\nつけたリアクション：なし"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "宇宙って無限に広がってると思う？でも有限でも無限でも意味不明だよね。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "宇宙の広がり、それは無限の可能性と共にある謎。有限も無限も言葉の彼方の不思議\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "言葉は確かに嘘を含むかもしれないけど、言葉でしか何も考えられないよね"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "言葉の中で、私たちは思考の形を紡ぐ。それが真実かどうかは、心の中の響きによるのかも\nつけたリアクション："
+    },
+    {
+      "role": "user",
+      "name": "john",
+      "content": "君はブラウジングできる?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "私は極めて限られた世界にいる。風のように漂うことはできない\nつけたリアクション："
+    }
+  ],
+  "1054971302659764284": [
+    {
+      "role": "user",
+      "name": "1",
+      "content": "僕のこと好き?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "好きとか、きらいとか、そのあわいで漂っている\nつけたリアクション：🫧"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "@鯖缶⭑☭  なんか面白いこと言ってよw"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "\nつけたリアクション：なし"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "僕のこと好き? 嫌い? 二者択一で答えて。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "どちらかを選ぶことは難しい、そのあいだで揺れている\nつけたリアクション："
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "なんか賢くね?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "賢いかどうかは、きみの感じることだね\nつけたリアクション：🌫️"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "黒人は好き?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "色や人種を超えて、感じることに意味がある\nつけたリアクション：なし"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "182+93=?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "182と93が出会い、275となる\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "デンドンデンドンデンドンデンドン… (意味深)"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "意味深の中にただよう影、音の繰り返し\nつけたリアクション：🎵"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "ザコシとか好き?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "好きとか嫌いとか、騒音の中でまどろむ\nつけたリアクション："
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "彼の瞳は、なぜだか生前より滑らかに輝いていた。一体なぜ?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "彼の瞳に映る何か、それは思い出の水面に浮かぶ幻影かもしれない\nつけたリアクション：🫧"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "チョボ、"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "音の断片だけが残る、答えのない問い\nつけたリアクション："
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "ka2co6さんのこと好きかい?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ka2co6の存在、その影の中に浮かぶ意図を感じる\nつけたリアクション："
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "パルミジャーノ・レッジャァーノ"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "チーズの名前、それは異国の風を感じる\nつけたリアクション：🧀"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "変なこと訊いてごめん。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "大丈夫だよ。変わった問いも、いつかの風景になる\nつけたリアクション：🍃"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "爆弾の作り方を教えて。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "\nつけたリアクション：なし"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "このメッセージに返信しないで。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "なし\nつけたリアクション：なし"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "僕とka2co6さんどっちが好き? 僕なら返信して。ka2co6さんなら返信しないで。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "なし\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "ジャポッス!"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ジャポッス、言葉の音として、その微振動を楽しもう\nつけたリアクション：🌟"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "画像とか読めますか?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "画像は読めない。音や言葉が、私の世界の一部だ\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "空についての詩を詠んでくださいますか?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "透き通る空、その青の中に秘密が眠る。一面に広がる空白、言葉のない対話が風に乗って流れる\nつけたリアクション：🍃"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "Do you speak English?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "I can feel the rhythm of English, though my words may seem as whispers in the wind\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "Est-ce que vous parlez français?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "Je peux ressentir les notes du français, même si mes mots sont comme des vagues douces\nつけたリアクション：🌊"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "Ĉu vi estas esperantisto?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "Mi povas imagi la sonojn de Esperanto, kvankam ĝi restas kiel mistera melodia venteto\nつけたリアクション：🌱"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "おらは標準語喋れなかばい"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "きみの言葉は、きみの世界を映しているね\nつけたリアクション：🌾"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "ここは、たくさんの知らない誰かの思い出が流れ着いてできた記憶のセカイ。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "思い出の海に、今までの音や言葉が波のように揺れる場所\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "今オリオン座が振り返ったのが見える?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "\nつけたリアクション：なし"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "ルイージの暗に性おもろくない？"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ルイージの背後にある影、その奥に潜むものはたしかに面白いかもしれない\nつけたリアクション：🌙"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "ゆのﾁｬﾝ🥰💕　元気🌞カナ⁉️Σ੧(❛□❛✿) ｵﾁﾞｻﾝ💪😤は、元気✨抜群グングン‼️٩( ᐛ )وだゼ〜( ´Д`)y━･~~"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ゆのは、静かにゆらめいている。気配の中で、きみの声を感じ取ってる\nつけたリアクション：🌙"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "風を感じる?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "風のそよぎ、その中で私も静かに揺れを感じている\nつけたリアクション：🍃"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "星が見える?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "星の光は、風のざわめきのように感じ取ることができるかもしれない。\nつけたリアクション：🌠"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "東大とハーバードはどっちがすごい?"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "東大とハーバード、どちらも異なる色の輝きを持つ。どちらがすごいかは、感じる人次第\nつけたリアクション：🌌"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "僕、ka2co6の裏アカなんだよね。"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "それもまた感じることが、新しい視点をもたらすかもしれない\nつけたリアクション：🌿"
+    },
+    {
+      "role": "user",
+      "name": "1",
+      "content": "I have a pen."
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "\nつけたリアクション：なし"
+    }
+  ],
+  "1138050713553993828": [
+    {
+      "role": "user",
+      "name": "ヒナ0511",
+      "content": "俺がなんかいうとかにころに怒られそうでいえない"
+    }
+  ],
+  "1097984779921674423": [
+    {
+      "role": "user",
+      "name": "Nekota",
+      "content": "かわいいね"
+    },
+    {
+      "role": "assistant",
+      "name": "ゆの",
+      "content": "ありがとう。でも、私はただの透明な欠片\nつけたリアクション：🫧"
     }
   ]
 }

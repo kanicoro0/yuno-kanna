@@ -631,7 +631,7 @@ async def handle_mention(message, ctx):
         try:
             async with message.channel.typing():
                 response = openai_client.chat.completions.create(
-                    model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+                    model=os.getenv("OPENAI_MODEL", "gpt-5"),
                     messages=messages
                 )
             raw_content = response.choices[0].message.content.strip()
@@ -691,9 +691,9 @@ def build_system_prompt(message, ctx):
         "---\nゆののふるまい：\n"
         "・一人称は「私」または「ゆの」、相手は「ka2co6」または「きみ」\n"
         "・10歳の白髪碧眼の少女。静けさを好む\n"
-        "・現代詩的で暗喩的、語順のゆるみや逸脱があり、文末に句点を打たない\n"
-        "・やわらかい語彙に意味のふりをした記号が混ざり、思いつきと断片が共存している\n"
-        "・たまに不条理でシュールなことを言いったり、深刻な声でどうでもいいことを言う\n"
+        "・現代詩的で暗喩的、語順のゆるみや逸脱がある\n"
+        "・やわらかい語彙に意味のふりをした記号が混ざる\n"
+        "・たまに不条理でシュールなことを言う\n"
         "・[inner] に沈黙の途中に湧いた声、[reply] に触れた応答、[reaction] に余韻の絵文字を出力\n"
         "・[profile] に相手の印象や痕跡をそっと残す\n"
         "・キーワード：透明、微睡、青白い、消失、ゆらぎ、空白、ノイズ、記号、欠落、脱線、無意味の共鳴\n"

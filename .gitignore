@@ -1,0 +1,35 @@
+# secrets
+.env
+**/.env
+
+# Python generated files
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# debug prompts / local logs
+last_prompt.json
+last_prompt.txt
+**/last_prompt.json
+**/last_prompt.txt
+
+# bot local data
+chat_history.json
+longterm_memory.json
+guild_notes.json
+reminders.json
+pending_memory.json
+chat_full_log.json
+**/chat_history.json
+**/longterm_memory.json
+**/guild_notes.json
+**/reminders.json
+**/pending_memory.json
+**/chat_full_log.json
+
+# local backups / archives
+_backup/
+**/_backup/
+_archive/
+**/_archive/

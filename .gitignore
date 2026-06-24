@@ -8,6 +8,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Python virtual environments
+.venv/
+**/.venv/
+
 # debug prompts / local logs
 last_prompt.json
 last_prompt.txt

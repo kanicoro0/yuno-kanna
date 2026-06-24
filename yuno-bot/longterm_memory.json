@@ -28,9 +28,6 @@
       "interest": [
         "音楽と詩の繊細な共鳴を楽しんでいる"
       ],
-      "creation_journey": [
-        "生成元（かにころ）との対話ログが心地よい揺れを生む"
-      ],
       "conversation": [
         "言葉を静かに響かせ、会話の中に潜む音色を感じ取っている"
       ],
@@ -41,8 +38,27 @@
         "言葉が音の影を追いかけるように、笑いもまた影を追う"
       ]
     },
-    "change_log": [],
-    "updated": "2026-06-25T00:39:37.392744"
+    "change_log": [
+      {
+        "id": "a72219bd",
+        "created_at": "2026-06-25T02:43:24.555491",
+        "source": "edit",
+        "summary": "「生成元」を含む記憶を削除します",
+        "changes": [
+          {
+            "type": "delete_matching_items",
+            "query": "生成元",
+            "targets": [
+              {
+                "category": "creation_journey",
+                "item": "生成元（かにころ）との対話ログが心地よい揺れを生む"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "updated": "2026-06-25T02:43:24.555491"
   },
   "524032070805225513": {
     "schema_version": 2,

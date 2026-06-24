@@ -14,7 +14,9 @@ from config import (
     DISCORD_LIMIT,
     ENABLE_GIT_SAVE,
     GUILD_NOTES_FILE as guild_notes_file,
+    INNER_LOG_LIMIT,
     LAST_PROMPT_FILE,
+    LOG_INNER_TO_DISCORD,
     LOG_CHANNEL_ID,
     LONGTERM_MEMORY_FILE as longterm_memory_file,
     MAX_CHANNEL_LOG,
@@ -26,6 +28,7 @@ from config import (
     OWNER_ID,
     PENDING_MEMORY_FILE as pending_memory_file,
     PENDING_MESSAGE_EXCERPT_LIMIT,
+    PROFILE_LOG_LIMIT,
     PREFIXES,
     REMINDERS_FILE as reminders_file,
     WINDOW_SECONDS,
@@ -134,14 +137,30 @@ async def append_chat_history(user_id, role, content, user_name=None):
         asyncio.create_task(log_channel.send(report))
 
 
-def send_inner_to_log(inner):
-    inner_text = str(inner or "").strip()
-    if not inner_text or inner_text == "なし":
+def send_ai_debug_log(inner, profile_text):
+    if not LOG_INNER_TO_DISCORD or not LOG_CHANNEL_ID:
         return
+
+    def clean_text(value, limit):
+        text = str(value or "").strip().replace("```", "'''")
+        if not text or text == "なし" or limit <= 0:
+            return ""
+        return text[:limit]
+
+    inner_text = clean_text(inner, INNER_LOG_LIMIT)
+    profile_log = clean_text(profile_text, PROFILE_LOG_LIMIT)
+    sections = []
+    if inner_text:
+        sections.append(f"[inner]\n{inner_text}")
+    if profile_log:
+        sections.append(f"[profile candidate]\n{profile_log}")
+    if not sections:
+        return
+
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         asyncio.create_task(
-            log_channel.send(f"[inner]\n{inner_text[:1000]}")
+            log_channel.send("\n\n".join(sections)[:DISCORD_LIMIT])
         )
 
 #--- 記憶から各項目を抽出 ---
@@ -171,11 +190,15 @@ def parse_profile_section(profile_text):
             profile["likes"] = [v.strip() for v in value.split(",") if v.strip()]
         elif key == "traits":
             profile["traits"] = [v.strip() for v in value.split(",") if v.strip()]
+        elif key.startswith("extra."):
+            extra_key = key[6:].strip()
+            if extra_key:
+                profile["extra"][extra_key] = value
         elif key.startswith("secret."):
-            skey = key[7:].strip()
-            if "secret" not in profile["extra"]:
-                profile["extra"]["secret"] = {}
-            profile["extra"]["secret"][skey] = value
+            # 旧形式は互換入力として受けるが、保存先は extra 直下へ統一する。
+            extra_key = key[7:].strip()
+            if extra_key:
+                profile["extra"][extra_key] = value
         else:
             profile["extra"][key] = value
 
@@ -194,6 +217,143 @@ def deep_merge(dict1, dict2):
         else:
             result[key] = value
     return result
+
+
+def normalize_memory_field(field):
+    requested_field = str(field or "").strip()
+    normalized_field = requested_field.lower()
+    if normalized_field in ("preferred_name", "note", "likes", "traits"):
+        return normalized_field
+    if normalized_field.startswith("extra."):
+        extra_key = requested_field[6:].strip()
+        return f"extra.{extra_key}" if extra_key else None
+    if normalized_field.startswith("secret."):
+        # secret.xxx は旧入力との互換だけ残し、extra.xxx として扱う。
+        extra_key = requested_field[7:].strip()
+        return f"extra.{extra_key}" if extra_key else None
+    return None
+
+
+def normalize_extra_entries(extra):
+    if not isinstance(extra, dict):
+        return {}
+
+    result = {
+        key: value
+        for key, value in extra.items()
+        if key != "secret"
+    }
+    legacy_secret = extra.get("secret")
+    if not isinstance(legacy_secret, dict):
+        if "secret" in extra:
+            result["secret"] = legacy_secret
+        return result
+
+    for key, value in legacy_secret.items():
+        if key not in result:
+            result[key] = value
+            continue
+        if result[key] == value:
+            continue
+        fallback_key = f"secret_{key}"
+        suffix = 2
+        while fallback_key in result and result[fallback_key] != value:
+            fallback_key = f"secret_{key}_{suffix}"
+            suffix += 1
+        result[fallback_key] = value
+    return result
+
+
+def merge_memory_list(existing_values, candidate_values):
+    merged = []
+    seen = set()
+
+    for value in existing_values if isinstance(existing_values, list) else []:
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        merged.append(value)
+        if len(merged) >= 20:
+            return merged
+
+    for value in candidate_values if isinstance(candidate_values, list) else []:
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value or len(value) > 50 or value in seen:
+            continue
+        seen.add(value)
+        merged.append(value)
+        if len(merged) >= 20:
+            break
+    return merged
+
+
+def replace_memory_field(user_id, field, content):
+    canonical_field = normalize_memory_field(field)
+    if canonical_field is None:
+        return None
+
+    entry = longterm_memory.get(user_id, {})
+    if not isinstance(entry, dict):
+        entry = {}
+
+    if canonical_field.startswith("extra."):
+        extra = entry.get("extra")
+        if not isinstance(extra, dict):
+            extra = {}
+            entry["extra"] = extra
+        extra[canonical_field[6:]] = content
+    else:
+        entry[canonical_field] = content
+
+    entry["updated"] = datetime.now().isoformat()
+    longterm_memory[user_id] = entry
+    return canonical_field
+
+
+def delete_memory_field(user_id, field):
+    canonical_field = normalize_memory_field(field)
+    entry = longterm_memory.get(user_id)
+    if canonical_field is None or not isinstance(entry, dict):
+        return False
+
+    if canonical_field in ("preferred_name", "note"):
+        if not entry.get(canonical_field):
+            return False
+        entry[canonical_field] = None
+    elif canonical_field in ("likes", "traits"):
+        if not entry.get(canonical_field):
+            return False
+        entry[canonical_field] = []
+    else:
+        extra_key = canonical_field[6:]
+        extra = entry.get("extra")
+        if not isinstance(extra, dict) or extra_key not in extra:
+            return False
+        extra.pop(extra_key)
+
+    entry["updated"] = datetime.now().isoformat()
+    longterm_memory[user_id] = entry
+    return True
+
+
+def remove_memory_list_item(user_id, field, item):
+    canonical_field = normalize_memory_field(field)
+    if canonical_field not in ("likes", "traits"):
+        return False
+    entry = longterm_memory.get(user_id)
+    values = entry.get(canonical_field) if isinstance(entry, dict) else None
+    if not isinstance(values, list) or item not in values:
+        return False
+    values.remove(item)
+    entry[canonical_field] = values
+    entry["updated"] = datetime.now().isoformat()
+    longterm_memory[user_id] = entry
+    return True
 
 
 def is_empty_profile(profile):
@@ -226,14 +386,9 @@ def format_profile_for_display(profile):
             value = ", ".join(str(item) for item in value)
         lines.append(f"・{key}: {value}")
 
-    extra = profile.get("extra", {})
+    extra = normalize_extra_entries(profile.get("extra", {}))
     if isinstance(extra, dict):
         for key, value in extra.items():
-            if key == "secret" and isinstance(value, dict):
-                for secret_key, secret_value in value.items():
-                    if secret_value:
-                        lines.append(f"・secret.{secret_key}: {secret_value}")
-                continue
             if not value:
                 continue
             if isinstance(value, (dict, list)):
@@ -301,8 +456,8 @@ async def add_pending_memory(
         )
     return candidate
 
-# 記憶を書き換え・保存
-async def update_longterm_memory(user_id, profile, *, log_details=True):
+# pending memory の候補パッチだけを適用する。明示編集の置換には使わない。
+async def apply_memory_candidate(user_id, profile):
     if not isinstance(profile, dict):
         profile = {}
     entry = longterm_memory.get(user_id, {})
@@ -310,18 +465,28 @@ async def update_longterm_memory(user_id, profile, *, log_details=True):
         entry = {}
     changed_fields = []
 
-    def update_field(key, new_value):
-        nonlocal changed_fields
+    for key in ("preferred_name", "note"):
+        new_value = profile.get(key)
+        if isinstance(new_value, str):
+            new_value = new_value.strip()
         if new_value and new_value != entry.get(key):
             entry[key] = new_value
             changed_fields.append(key)
 
-    update_field("preferred_name", profile.get("preferred_name"))
-    update_field("note", profile.get("note"))
-    update_field("likes", profile.get("likes"))
-    update_field("traits", profile.get("traits"))
-    merged_extra = deep_merge(entry.get("extra", {}), profile.get("extra", {}))
-    update_field("extra", merged_extra)
+    for key in ("likes", "traits"):
+        merged_values = merge_memory_list(entry.get(key), profile.get(key))
+        if merged_values != entry.get(key, []):
+            entry[key] = merged_values
+            changed_fields.append(key)
+
+    current_extra = entry.get("extra")
+    if not isinstance(current_extra, dict):
+        current_extra = {}
+    candidate_extra = normalize_extra_entries(profile.get("extra"))
+    merged_extra = deep_merge(current_extra, candidate_extra)
+    if merged_extra != current_extra:
+        entry["extra"] = merged_extra
+        changed_fields.append("extra")
     if not changed_fields:
         return []
 
@@ -335,33 +500,20 @@ async def update_longterm_memory(user_id, profile, *, log_details=True):
         return None
 
     if changed_fields:
-        if log_details:
-            lines = [f"📝 記憶を更新したよ（{entry.get('preferred_name', 'unknown')}）"]
-            for key in changed_fields:
-                if key == "extra":
-                    extra = entry["extra"]
-                    lines.append("・extra:")
-                    for k, v in extra.items():
-                        if k == "secret" and isinstance(v, dict):
-                            lines.append("　- secret:")
-                            for sk, sv in v.items():
-                                lines.append(f"　　・{sk}: {sv}")
-                        else:
-                            lines.append(f"　- {k}: {v}")
-                elif isinstance(entry[key], list):
-                    lines.append(f"・{key}: {', '.join(entry[key])}")
-                else:
-                    lines.append(f"・{key}: {entry[key]}")
-        else:
-            lines = [
-                f"📝 記憶候補を反映したよ（ユーザーID: {user_id}）",
-                f"更新項目: {', '.join(changed_fields)}",
-            ]
+        lines = [
+            f"📝 記憶候補を反映したよ（ユーザーID: {user_id}）",
+            f"更新項目: {', '.join(changed_fields)}",
+        ]
         report = "\n".join(lines)
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             asyncio.create_task(log_channel.send(report))
     return changed_fields
+
+
+async def update_longterm_memory(user_id, profile, *, log_details=False):
+    # 旧呼び出しとの互換。候補承認の追加マージとしてのみ扱う。
+    return await apply_memory_candidate(user_id, profile)
 
 # --- データ読み込み関数 ---
 # --- サーバーメモの読み込み ---
@@ -378,6 +530,23 @@ def load_chat_history():
 def load_longterm_memory():
     global longterm_memory
     longterm_memory = load_json_file(longterm_memory_file)
+
+
+def migrate_secret_extra_entries():
+    changed = False
+    if not isinstance(longterm_memory, dict):
+        return False
+    for entry in longterm_memory.values():
+        if not isinstance(entry, dict):
+            continue
+        extra = entry.get("extra")
+        if not isinstance(extra, dict) or not isinstance(extra.get("secret"), dict):
+            continue
+        migrated_extra = normalize_extra_entries(extra)
+        if migrated_extra != extra:
+            entry["extra"] = migrated_extra
+            changed = True
+    return changed
 
 
 def load_pending_memory():
@@ -401,7 +570,7 @@ memory_group = discord.app_commands.Group(
 
 
 @memory_group.command(name="show", description="あなた個人の記憶を表示します")
-@discord.app_commands.describe(include_extra="extra・secretも表示する")
+@discord.app_commands.describe(include_extra="extraも表示する")
 async def memory_show(
     interaction: discord.Interaction,
     include_extra: bool = False,
@@ -418,7 +587,7 @@ async def memory_show(
         extra_lines = [
             line
             for line in format_profile_for_display(entry)
-            if line.startswith("・extra.") or line.startswith("・secret.")
+            if line.startswith("・extra.")
         ]
         lines.extend(extra_lines or ["・extra: （なし）"])
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
@@ -493,20 +662,12 @@ async def memory_set(
     await interaction.response.defer(ephemeral=True)
 
     user_id = str(interaction.user.id)
-    entry = longterm_memory.get(user_id, {})
-    if not isinstance(entry, dict):
-        entry = {}
-    if field_name in ("likes", "traits"):
-        entry[field_name] = values
-    else:
-        entry[field_name] = stripped_content
-    entry["updated"] = datetime.now().isoformat()
-    longterm_memory[user_id] = entry
+    stored_value = values if field_name in ("likes", "traits") else stripped_content
+    replace_memory_field(user_id, field_name, stored_value)
     await write_json_async(longterm_memory_file, longterm_memory)
     await save_to_git_async("memory set")
 
-    value = entry[field_name]
-    value_display = ", ".join(value) if isinstance(value, list) else value
+    value_display = ", ".join(stored_value) if isinstance(stored_value, list) else stored_value
     await interaction.followup.send(
         f"📝 {field_name} を更新したよ：{value_display}",
         ephemeral=True,
@@ -518,7 +679,7 @@ async def memory_set(
     description="個人記憶を直接編集します。contentを省略すると削除します",
 )
 @discord.app_commands.describe(
-    field="preferred_name / note / likes / traits / extra.xxx / secret.xxx",
+    field="preferred_name / note / likes / traits / extra.xxx",
     content="新しい内容。省略または空で削除します",
 )
 async def memory_edit(
@@ -528,25 +689,20 @@ async def memory_edit(
 ):
     user_id = str(interaction.user.id)
     requested_field = field.strip()
-    normalized_field = requested_field.lower()
+    canonical_field = normalize_memory_field(requested_field)
     content = content.strip()
 
-    valid_field = (
-        normalized_field in ("preferred_name", "note", "likes", "traits")
-        or (normalized_field.startswith("extra.") and bool(requested_field[6:].strip()))
-        or (normalized_field.startswith("secret.") and bool(requested_field[7:].strip()))
-    )
-    if not valid_field:
+    if canonical_field is None:
         await interaction.response.send_message(
             "⚠️ 対応していない項目名みたい\n"
-            "使える項目：preferred_name / note / likes / traits / extra.xxx / secret.xxx",
+            "使える項目：preferred_name / note / likes / traits / extra.xxx",
             ephemeral=True,
         )
         return
 
     if not content:
         await interaction.response.defer(ephemeral=True)
-        if not forget_memory_field(user_id, requested_field):
+        if not delete_memory_field(user_id, canonical_field):
             await interaction.followup.send(
                 "そこにはまだ覚えているものがないみたい",
                 ephemeral=True,
@@ -555,26 +711,27 @@ async def memory_edit(
         await write_json_async(longterm_memory_file, longterm_memory)
         await save_to_git_async("memory edit")
         await interaction.followup.send(
-            f"🕳️ {requested_field} を忘れたよ",
+            f"🕳️ {canonical_field} を忘れたよ",
             ephemeral=True,
         )
         return
 
-    if normalized_field == "preferred_name":
+    values = None
+    if canonical_field == "preferred_name":
         if len(content) > 100:
             await interaction.response.send_message(
                 "⚠️ preferred_name は100文字以内でお願い",
                 ephemeral=True,
             )
             return
-    elif normalized_field == "note":
+    elif canonical_field == "note":
         if len(content) > 200:
             await interaction.response.send_message(
                 "⚠️ note は200文字以内でお願い",
                 ephemeral=True,
             )
             return
-    elif normalized_field in ("likes", "traits"):
+    elif canonical_field in ("likes", "traits"):
         values = []
         seen = set()
         for value in content.split(","):
@@ -601,47 +758,17 @@ async def memory_edit(
                 ephemeral=True,
             )
             return
-
+    
     await interaction.response.defer(ephemeral=True)
 
-    entry = longterm_memory.get(user_id, {})
-    if not isinstance(entry, dict):
-        entry = {}
-
-    if normalized_field == "preferred_name":
-        entry["preferred_name"] = content
-    elif normalized_field == "note":
-        entry["note"] = content
-    elif normalized_field in ("likes", "traits"):
-        entry[normalized_field] = values
-    elif normalized_field.startswith("secret."):
-        secret_key = requested_field[7:].strip()
-        extra = entry.get("extra")
-        if not isinstance(extra, dict):
-            extra = {}
-            entry["extra"] = extra
-        secret = extra.get("secret")
-        if not isinstance(secret, dict):
-            secret = {}
-            extra["secret"] = secret
-        secret[secret_key] = content
-    else:
-        extra_key = requested_field[6:].strip()
-        extra = entry.get("extra")
-        if not isinstance(extra, dict):
-            extra = {}
-            entry["extra"] = extra
-        extra[extra_key] = content
-
-    entry["updated"] = datetime.now().isoformat()
-    longterm_memory[user_id] = entry
+    stored_value = values if canonical_field in ("likes", "traits") else content
+    replace_memory_field(user_id, canonical_field, stored_value)
     await write_json_async(longterm_memory_file, longterm_memory)
     await save_to_git_async("memory edit")
 
-    value = entry.get(normalized_field)
-    value_display = ", ".join(value) if isinstance(value, list) else content
+    value_display = ", ".join(stored_value) if isinstance(stored_value, list) else stored_value
     await interaction.followup.send(
-        f"📝 {requested_field} を更新したよ：{value_display}",
+        f"📝 {canonical_field} を更新したよ：{value_display}",
         ephemeral=True,
     )
 
@@ -682,10 +809,7 @@ async def memory_remove_item(
         return
 
     await interaction.response.defer(ephemeral=True)
-    values.remove(target_item)
-    entry[field_name] = values
-    entry["updated"] = datetime.now().isoformat()
-    longterm_memory[user_id] = entry
+    remove_memory_list_item(user_id, field_name, target_item)
     await write_json_async(longterm_memory_file, longterm_memory)
     await save_to_git_async("memory remove item")
     await interaction.followup.send(
@@ -750,9 +874,10 @@ async def servermemory_set(interaction: discord.Interaction, content: str):
             ephemeral=True,
         )
         return
+    await interaction.response.defer(ephemeral=True)
     guild_notes[str(interaction.guild.id)] = stripped_content
     await save_guild_notes()
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"📝 サーバーメモを更新したよ：{stripped_content}",
         ephemeral=True,
     )
@@ -795,11 +920,7 @@ async def accept_pending_candidate(user_id, key):
             return False, None, False
 
         profile = candidate.get("profile", {})
-        changed_fields = await update_longterm_memory(
-            user_id,
-            profile,
-            log_details=False,
-        )
+        changed_fields = await apply_memory_candidate(user_id, profile)
         if changed_fields is None:
             return False, None, False
 
@@ -916,41 +1037,8 @@ async def slash_pendingmemory(interaction: discord.Interaction):
 
 
 def forget_memory_field(user_id, field):
-    entry = longterm_memory.get(user_id)
-    if not isinstance(entry, dict):
-        return False
-
-    requested_field = field.strip()
-    normalized_field = requested_field.lower()
-    if normalized_field in ("preferred_name", "note"):
-        if not entry.get(normalized_field):
-            return False
-        entry[normalized_field] = None
-    elif normalized_field in ("likes", "traits"):
-        if not entry.get(normalized_field):
-            return False
-        entry[normalized_field] = []
-    elif normalized_field.startswith("secret."):
-        secret_key = requested_field[7:]
-        extra = entry.get("extra", {})
-        secret = extra.get("secret", {}) if isinstance(extra, dict) else {}
-        if not secret_key or not isinstance(secret, dict) or secret_key not in secret:
-            return False
-        secret.pop(secret_key)
-        if not secret:
-            extra.pop("secret", None)
-    elif normalized_field.startswith("extra."):
-        extra_key = requested_field[6:]
-        extra = entry.get("extra", {})
-        if not extra_key or not isinstance(extra, dict) or extra_key not in extra:
-            return False
-        extra.pop(extra_key)
-    else:
-        return False
-
-    entry["updated"] = datetime.now().isoformat()
-    longterm_memory[user_id] = entry
-    return True
+    # 既存呼び出しとの互換。secret.xxx も extra.xxx に読み替える。
+    return delete_memory_field(user_id, field)
 
 
 def parse_reminder_time(time_text: str, now=None):
@@ -991,13 +1079,22 @@ def parse_reminder_time(time_text: str, now=None):
 
 
 @discord.app_commands.describe(
-    field="忘れる項目（preferred_name / note / likes / traits / extra.xxx / secret.xxx）"
+    field="忘れる項目（preferred_name / note / likes / traits / extra.xxx）"
 )
 async def slash_forget(interaction: discord.Interaction, field: str):
     user_id = str(interaction.user.id)
     requested_field = field.strip()
-    if not forget_memory_field(user_id, requested_field):
+    canonical_field = normalize_memory_field(requested_field)
+    if canonical_field is None:
         await interaction.response.send_message(
+            "⚠️ 対応していない項目名みたい",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    if not delete_memory_field(user_id, canonical_field):
+        await interaction.followup.send(
             "そこにはまだ覚えているものがないみたい",
             ephemeral=True,
         )
@@ -1005,8 +1102,8 @@ async def slash_forget(interaction: discord.Interaction, field: str):
 
     await write_json_async(longterm_memory_file, longterm_memory)
     await save_to_git_async("forget memory")
-    await interaction.response.send_message(
-        f"🕳️ {requested_field} を忘れたよ",
+    await interaction.followup.send(
+        f"🕳️ {canonical_field} を忘れたよ",
         ephemeral=True,
     )
 
@@ -1084,10 +1181,7 @@ async def slash_remind(
         )
         return
 
-    await interaction.response.send_message(
-        f"……うん、{label}に声を届ける",
-        ephemeral=True,
-    )
+    await interaction.response.defer(ephemeral=True)
     channel_id = interaction.channel_id
     persisted_reminders[str(user_id)] = {
         "channel_id": channel_id,
@@ -1095,6 +1189,10 @@ async def slash_remind(
         "due_at": (datetime.now() + timedelta(seconds=delay_seconds)).isoformat(),
     }
     await write_json_async(reminders_file, persisted_reminders)
+    await interaction.followup.send(
+        f"……うん、{label}に声を届ける",
+        ephemeral=True,
+    )
 
     async def reminder():
         await asyncio.sleep(delay_seconds)
@@ -1116,17 +1214,28 @@ async def slash_remind(
 
 async def slash_cancelremind(interaction: discord.Interaction):
     user_id = interaction.user.id
+    task = reminder_tasks.get(user_id)
+    has_task = bool(task and not task.done())
+    has_persisted = str(user_id) in persisted_reminders
+    if not has_task and not has_persisted:
+        await interaction.response.send_message(
+            "⚠️ 今はキャンセルできるリマインドがないみたい",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
     task = reminder_tasks.pop(user_id, None)
     if task and not task.done():
         task.cancel()
         response_text = "🔕 リマインドをキャンセルしたよ"
     else:
-        response_text = "⚠️ 今はキャンセルできるリマインドがないみたい"
+        response_text = "🔕 リマインドをキャンセルしたよ"
 
     if str(user_id) in persisted_reminders:
         persisted_reminders.pop(str(user_id), None)
         await write_json_async(reminders_file, persisted_reminders)
-    await interaction.response.send_message(response_text, ephemeral=True)
+    await interaction.followup.send(response_text, ephemeral=True)
 
 
 async def slash_reminders(interaction: discord.Interaction):
@@ -1190,7 +1299,7 @@ async def load_channel_history(channel, n=MAX_CHANNEL_LOG, before=None):
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/memory show：あなた個人の記憶を本人だけに表示
 ・/memory set field content：あなた個人の記憶を更新（完了表示は本人だけ）
-・/memory edit field content：記憶を直接編集。contentを省略すると削除（extra.xxx / secret.xxxにも対応）
+・/memory edit field content：記憶を直接置換。contentを省略すると削除（extra.xxxにも対応）
 ・/memory remove_item field item：likes・traitsから完全一致する項目を1件削除
 ・/servermemory show：このサーバーのメモを表示
 ・/servermemory set content：管理できる人がサーバーメモを更新
@@ -1512,6 +1621,7 @@ async def handle_mention(message, ctx):
             raw_content = response.choices[0].message.content.strip()
             print("原文：\n" + raw_content)
             reply, reaction, inner, profile_text = extract_from_json_or_brackets(raw_content)
+            send_ai_debug_log(inner, profile_text)
 
             # inner / profile の処理
             if inner.strip():
@@ -1536,7 +1646,6 @@ async def handle_mention(message, ctx):
             if not history_saved:
                 await append_chat_history(user_id, "user", prompt, user_display_name)
                 await append_chat_history(user_id, "assistant", f"{reply}\nつけたリアクション：{reaction}")
-                send_inner_to_log(inner)
                 history_saved = True
             await send_reply(message, reply, reaction)
             break
@@ -1620,6 +1729,7 @@ preferred_name: 本人が今後使ってほしい呼び名
 note: 本人が「覚えて」「今後」「これから」など保存の意図を示した継続的な情報
 likes: 本人が明言した継続的な好み・興味（カンマ区切り）
 traits: 本人が明言した継続的な傾向（カンマ区切り）
+extra.xxx: 今後の応答に必要な追加情報
 一時的な気分、その場限りの状態、会話からの推測、他人の情報、センシティブな情報、保存意思が曖昧な内容は記述しない
 過剰に一般化せず、本人が実際に述べた範囲だけを書く
 
@@ -1629,7 +1739,7 @@ traits: 本人が明言した継続的な傾向（カンマ区切り）
 
     if memory:
         prompt += """
-現在の記憶（必要な項目だけ更新）：
+現在の記憶（自動候補には追加・変更したい差分だけを書く）：
 [profile]
 """
         for key in ["preferred_name", "note", "likes", "traits"]:
@@ -1639,12 +1749,10 @@ traits: 本人が明言した継続的な傾向（カンマ区切り）
                     prompt += f"{key}: {', '.join(value)}\n"
                 else:
                     prompt += f"{key}: {value}\n"
-        for k, v in memory.get("extra", {}).items():
-            if isinstance(v, dict):
-                for sk, sv in v.items():
-                    prompt += f"{k}.{sk}: {sv}\n"
-            else:
-                prompt += f"{k}: {v}\n"
+        for k, v in normalize_extra_entries(memory.get("extra", {})).items():
+            if isinstance(v, (dict, list)):
+                v = json.dumps(v, ensure_ascii=False)
+            prompt += f"extra.{k}: {v}\n"
 
     prompt += """
 
@@ -1742,6 +1850,9 @@ async def setup_hook():
     load_chat_history()
     load_guild_notes()
     load_longterm_memory()
+    if migrate_secret_extra_entries():
+        await write_json_async(longterm_memory_file, longterm_memory)
+        await save_to_git_async("migrate secret memory to extra")
     load_pending_memory()
     load_reminders()
     # 期限が未来のものだけ再スケジュール

@@ -11,6 +11,14 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OWNER_ID = os.getenv("OWNER_ID")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
+LOG_INNER_TO_DISCORD = os.getenv("LOG_INNER_TO_DISCORD", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+INNER_LOG_LIMIT = max(0, int(os.getenv("INNER_LOG_LIMIT", "1000")))
+PROFILE_LOG_LIMIT = max(0, int(os.getenv("PROFILE_LOG_LIMIT", "1000")))
 
 _DISCORD_GUILD_ID_RAW = os.getenv("DISCORD_GUILD_ID", "").strip()
 try:

@@ -40,20 +40,6 @@
       },
       "raw_profile_text": "note: 虫は嫌いではなく、好きの強さが以前より静かになった\nlikes: グレイシア, 狐, 猫, 綿菓子, 積み木",
       "message_excerpt": "虫、好きではないということはないよ"
-    },
-    {
-      "id": "caea7f6c",
-      "created_at": "2026-06-24T19:05:26.151323",
-      "source": "auto_profile",
-      "profile": {
-        "preferred_name": null,
-        "note": "虫についての記述をnoteから削除",
-        "likes": [],
-        "traits": [],
-        "extra": {}
-      },
-      "raw_profile_text": "note: 虫についての記述をnoteから削除",
-      "message_excerpt": "noteの虫についての記述は削除していいよ"
     }
   ]
 }

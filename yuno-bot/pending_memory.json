@@ -1,1 +1,23 @@
-{}
+{
+  "290491500943507478": [
+    {
+      "id": "db99ddbe",
+      "schema_version": 1,
+      "created_at": "2026-06-25T00:30:44.921378",
+      "source": "auto_operations",
+      "summary": "かにころは哲学と数学が好き",
+      "reason": "本人が好きなものとして明示しており、今後の話題選びや応答の方向づけに役立つため",
+      "operations": [
+        {
+          "type": "append_items",
+          "field": "likes",
+          "items": [
+            "哲学",
+            "数学"
+          ]
+        }
+      ],
+      "message_excerpt": "哲学、数学が好き"
+    }
+  ]
+}

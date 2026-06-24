@@ -20,6 +20,26 @@
       },
       "raw_profile_text": "preferred_name: かにころ\nlikes: グレイシア, カービィ\nnote: 虫は今はあまり好きではない\nsecret.preferred_pokemon: グレイシア",
       "message_excerpt": "ポケモンはグレイシアが好きに変わった、虫は今はそんなに好きじゃない"
+    },
+    {
+      "id": "9e5fccd8",
+      "created_at": "2026-06-24T18:38:35.234053",
+      "source": "auto_profile",
+      "profile": {
+        "preferred_name": null,
+        "note": "虫への好きは以前より後ろへ下がった",
+        "likes": [
+          "グレイシア",
+          "狐",
+          "猫",
+          "綿菓子",
+          "積み木"
+        ],
+        "traits": [],
+        "extra": {}
+      },
+      "raw_profile_text": "likes: グレイシア, 狐, 猫, 綿菓子, 積み木\nnote: 虫への好きは以前より後ろへ下がった",
+      "message_excerpt": "狐、猫、綿菓子、積み木"
     }
   ]
 }

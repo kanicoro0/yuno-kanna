@@ -40,6 +40,26 @@
       },
       "raw_profile_text": "likes: グレイシア, 狐, 猫, 綿菓子, 積み木\nnote: 虫への好きは以前より後ろへ下がった",
       "message_excerpt": "狐、猫、綿菓子、積み木"
+    },
+    {
+      "id": "d2bff4c9",
+      "created_at": "2026-06-24T18:48:29.533291",
+      "source": "auto_profile",
+      "profile": {
+        "preferred_name": null,
+        "note": "虫は嫌いではなく、好きの強さが以前より静かになった",
+        "likes": [
+          "グレイシア",
+          "狐",
+          "猫",
+          "綿菓子",
+          "積み木"
+        ],
+        "traits": [],
+        "extra": {}
+      },
+      "raw_profile_text": "note: 虫は嫌いではなく、好きの強さが以前より静かになった\nlikes: グレイシア, 狐, 猫, 綿菓子, 積み木",
+      "message_excerpt": "虫、好きではないということはないよ"
     }
   ]
 }

@@ -1,5 +1,6 @@
 import asyncio
 from collections import deque
+from copy import deepcopy
 from datetime import datetime, timedelta
 import json
 import time
@@ -21,14 +22,12 @@ from config import (
     LONGTERM_MEMORY_FILE as longterm_memory_file,
     MAX_CHANNEL_LOG,
     MAX_CHAT_HISTORY,
+    MAX_MEMORY_CHANGE_LOG,
     MAX_MESSAGES,
-    MAX_PENDING_MEMORY,
+    MEMORY_LOG_LIMIT,
     OPENAI_MODEL,
     OPENAI_TEMPERATURE,
     OWNER_ID,
-    PENDING_MEMORY_FILE as pending_memory_file,
-    PENDING_MESSAGE_EXCERPT_LIMIT,
-    PROFILE_LOG_LIMIT,
     PREFIXES,
     REMINDERS_FILE as reminders_file,
     WINDOW_SECONDS,
@@ -44,12 +43,14 @@ bot = None
 chat_history = {}
 guild_notes = {}
 longterm_memory = {}
-pending_memory = {}
 inner_log = {}
 reminder_tasks = {}
 persisted_reminders = {}
 usage_log = {}
-pending_memory_lock = asyncio.Lock()
+memory_lock = asyncio.Lock()
+
+MEMORY_SCHEMA_VERSION = 2
+MEMORY_SLOT_NAMES = ("preferred_name",)
 
 # --- ユーティリティ：tiktoken安全取得 ---
 def _get_encoder(model: str):
@@ -137,7 +138,7 @@ async def append_chat_history(user_id, role, content, user_name=None):
         asyncio.create_task(log_channel.send(report))
 
 
-def send_ai_debug_log(inner, profile_text):
+def send_ai_debug_log(inner, memory_operations_text):
     if not LOG_INNER_TO_DISCORD or not LOG_CHANNEL_ID:
         return
 
@@ -148,12 +149,12 @@ def send_ai_debug_log(inner, profile_text):
         return text[:limit]
 
     inner_text = clean_text(inner, INNER_LOG_LIMIT)
-    profile_log = clean_text(profile_text, PROFILE_LOG_LIMIT)
+    operations_log = clean_text(memory_operations_text, MEMORY_LOG_LIMIT)
     sections = []
     if inner_text:
         sections.append(f"[inner]\n{inner_text}")
-    if profile_log:
-        sections.append(f"[profile candidate]\n{profile_log}")
+    if operations_log:
+        sections.append(f"[memory operations]\n{operations_log}")
     if not sections:
         return
 
@@ -163,78 +164,8 @@ def send_ai_debug_log(inner, profile_text):
             log_channel.send("\n\n".join(sections)[:DISCORD_LIMIT])
         )
 
-#--- 記憶から各項目を抽出 ---
-def parse_profile_section(profile_text):
-    profile = {
-        "preferred_name": None,
-        "note": None,
-        "likes": [],
-        "traits": [],
-        "extra": {}
-    }
-    for line in profile_text.splitlines():
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-
-        if value.lower() == "なし":
-            continue
-        
-        if key == "preferred_name":
-            profile["preferred_name"] = value[:100]
-        elif key == "note":
-            profile["note"] = value[:100]
-        elif key == "likes":
-            profile["likes"] = [v.strip() for v in value.split(",") if v.strip()]
-        elif key == "traits":
-            profile["traits"] = [v.strip() for v in value.split(",") if v.strip()]
-        elif key.startswith("extra."):
-            extra_key = key[6:].strip()
-            if extra_key:
-                profile["extra"][extra_key] = value
-        elif key.startswith("secret."):
-            # 旧形式は互換入力として受けるが、保存先は extra 直下へ統一する。
-            extra_key = key[7:].strip()
-            if extra_key:
-                profile["extra"][extra_key] = value
-        else:
-            profile["extra"][key] = value
-
-    return profile
-
-
-def deep_merge(dict1, dict2):
-    result = dict1.copy()
-    for key, value in dict2.items():
-        if (
-            key in result and
-            isinstance(result[key], dict) and
-            isinstance(value, dict)
-        ):
-            result[key] = deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-def normalize_memory_field(field):
-    requested_field = str(field or "").strip()
-    normalized_field = requested_field.lower()
-    if normalized_field in ("preferred_name", "note", "likes", "traits"):
-        return normalized_field
-    if normalized_field.startswith("extra."):
-        extra_key = requested_field[6:].strip()
-        return f"extra.{extra_key}" if extra_key else None
-    if normalized_field.startswith("secret."):
-        # secret.xxx は旧入力との互換だけ残し、extra.xxx として扱う。
-        extra_key = requested_field[7:].strip()
-        return f"extra.{extra_key}" if extra_key else None
-    return None
-
-
 def normalize_extra_entries(extra):
+    """旧JSONの extra.secret を移行するためだけの互換処理。"""
     if not isinstance(extra, dict):
         return {}
 
@@ -264,256 +195,676 @@ def normalize_extra_entries(extra):
     return result
 
 
-def merge_memory_list(existing_values, candidate_values):
-    merged = []
-    seen = set()
-
-    for value in existing_values if isinstance(existing_values, list) else []:
-        if not isinstance(value, str):
-            continue
-        value = value.strip()
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        merged.append(value)
-        if len(merged) >= 20:
-            return merged
-
-    for value in candidate_values if isinstance(candidate_values, list) else []:
-        if not isinstance(value, str):
-            continue
-        value = value.strip()
-        if not value or len(value) > 50 or value in seen:
-            continue
-        seen.add(value)
-        merged.append(value)
-        if len(merged) >= 20:
-            break
-    return merged
-
-
-def replace_memory_field(user_id, field, content):
-    canonical_field = normalize_memory_field(field)
-    if canonical_field is None:
+def normalize_memory_category(category):
+    requested = str(category or "").strip()
+    lowered = requested.lower()
+    if lowered.startswith("items."):
+        requested = requested[6:].strip()
+    elif lowered.startswith("extra."):
+        # extra.xxx は手動入力と旧データの互換名として items.xxx へ移す。
+        requested = requested[6:].strip()
+    elif lowered.startswith("secret."):
         return None
 
-    entry = longterm_memory.get(user_id, {})
-    if not isinstance(entry, dict):
-        entry = {}
-
-    if canonical_field.startswith("extra."):
-        extra = entry.get("extra")
-        if not isinstance(extra, dict):
-            extra = {}
-            entry["extra"] = extra
-        extra[canonical_field[6:]] = content
-    else:
-        entry[canonical_field] = content
-
-    entry["updated"] = datetime.now().isoformat()
-    longterm_memory[user_id] = entry
-    return canonical_field
+    requested = requested.lower()
+    if (
+        not requested
+        or len(requested) > 50
+        or requested in MEMORY_SLOT_NAMES
+        or requested == "secret"
+        or requested.startswith("secret.")
+        or any(character in requested for character in ("\n", "\r", "\t"))
+    ):
+        return None
+    return "notes" if requested == "note" else requested
 
 
-def delete_memory_field(user_id, field):
-    canonical_field = normalize_memory_field(field)
-    entry = longterm_memory.get(user_id)
-    if canonical_field is None or not isinstance(entry, dict):
-        return False
-
-    if canonical_field in ("preferred_name", "note"):
-        if not entry.get(canonical_field):
-            return False
-        entry[canonical_field] = None
-    elif canonical_field in ("likes", "traits"):
-        if not entry.get(canonical_field):
-            return False
-        entry[canonical_field] = []
-    else:
-        extra_key = canonical_field[6:]
-        extra = entry.get("extra")
-        if not isinstance(extra, dict) or extra_key not in extra:
-            return False
-        extra.pop(extra_key)
-
-    entry["updated"] = datetime.now().isoformat()
-    longterm_memory[user_id] = entry
-    return True
-
-
-def remove_memory_list_item(user_id, field, item):
-    canonical_field = normalize_memory_field(field)
-    if canonical_field not in ("likes", "traits"):
-        return False
-    entry = longterm_memory.get(user_id)
-    values = entry.get(canonical_field) if isinstance(entry, dict) else None
-    if not isinstance(values, list) or item not in values:
-        return False
-    values.remove(item)
-    entry[canonical_field] = values
-    entry["updated"] = datetime.now().isoformat()
-    longterm_memory[user_id] = entry
-    return True
-
-
-def is_empty_profile(profile):
-    if not isinstance(profile, dict):
-        return True
-
-    def has_content(value):
-        if isinstance(value, dict):
-            return any(has_content(item) for item in value.values())
-        if isinstance(value, list):
-            return any(has_content(item) for item in value)
-        return bool(value)
-
-    return not any(
-        has_content(profile.get(key))
-        for key in ("preferred_name", "note", "likes", "traits", "extra")
-    )
-
-
-def format_profile_for_display(profile):
-    if not isinstance(profile, dict):
-        return []
-
-    lines = []
-    for key in ("preferred_name", "note", "likes", "traits"):
-        value = profile.get(key)
-        if not value:
-            continue
-        if isinstance(value, list):
-            value = ", ".join(str(item) for item in value)
-        lines.append(f"・{key}: {value}")
-
-    extra = normalize_extra_entries(profile.get("extra", {}))
-    if isinstance(extra, dict):
-        for key, value in extra.items():
-            if not value:
-                continue
-            if isinstance(value, (dict, list)):
-                value = json.dumps(value, ensure_ascii=False)
-            lines.append(f"・extra.{key}: {value}")
-    return lines
-
-
-def find_pending_candidate(user_id, key):
-    candidates = pending_memory.get(user_id, [])
-    if not isinstance(candidates, list):
-        return None, None
-
-    normalized_key = str(key).strip()
-    for index, candidate in enumerate(candidates):
-        if isinstance(candidate, dict) and candidate.get("id") == normalized_key:
-            return index, candidate
-    if normalized_key.isdigit():
-        index = int(normalized_key) - 1
-        if 0 <= index < len(candidates):
-            return index, candidates[index]
+def normalize_memory_target(field):
+    requested = str(field or "").strip()
+    if requested.lower() == "preferred_name":
+        return "slot", "preferred_name"
+    category = normalize_memory_category(requested)
+    if category:
+        return "items", category
     return None, None
 
 
-async def save_pending_memory(commit_msg):
-    await write_json_async(pending_memory_file, pending_memory)
-    await save_to_git_async(commit_msg)
-
-
-async def add_pending_memory(
-    user_id,
-    user_display_name,
-    profile,
-    raw_profile_text,
-    message_excerpt,
-):
-    if is_empty_profile(profile):
-        return None
-
-    candidates = pending_memory.get(user_id, [])
-    if not isinstance(candidates, list):
-        candidates = []
-    existing_ids = {
-        item.get("id") for item in candidates if isinstance(item, dict)
-    }
-    candidate_id = uuid.uuid4().hex[:8]
-    while candidate_id in existing_ids:
-        candidate_id = uuid.uuid4().hex[:8]
-    candidate = {
-        "id": candidate_id,
-        "created_at": datetime.now().isoformat(),
-        "source": "auto_profile",
-        "profile": profile,
-        "raw_profile_text": raw_profile_text,
-        "message_excerpt": message_excerpt[:PENDING_MESSAGE_EXCERPT_LIMIT],
-    }
-    candidates.append(candidate)
-    pending_memory[user_id] = candidates[-MAX_PENDING_MEMORY:]
-    await save_pending_memory("update pending memory")
-
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        asyncio.create_task(
-            log_channel.send(f"📝 記憶候補を保留したよ（{user_display_name}）")
-        )
-    return candidate
-
-# pending memory の候補パッチだけを適用する。明示編集の置換には使わない。
-async def apply_memory_candidate(user_id, profile):
-    if not isinstance(profile, dict):
-        profile = {}
-    entry = longterm_memory.get(user_id, {})
-    if not isinstance(entry, dict):
-        entry = {}
-    changed_fields = []
-
-    for key in ("preferred_name", "note"):
-        new_value = profile.get(key)
-        if isinstance(new_value, str):
-            new_value = new_value.strip()
-        if new_value and new_value != entry.get(key):
-            entry[key] = new_value
-            changed_fields.append(key)
-
-    for key in ("likes", "traits"):
-        merged_values = merge_memory_list(entry.get(key), profile.get(key))
-        if merged_values != entry.get(key, []):
-            entry[key] = merged_values
-            changed_fields.append(key)
-
-    current_extra = entry.get("extra")
-    if not isinstance(current_extra, dict):
-        current_extra = {}
-    candidate_extra = normalize_extra_entries(profile.get("extra"))
-    merged_extra = deep_merge(current_extra, candidate_extra)
-    if merged_extra != current_extra:
-        entry["extra"] = merged_extra
-        changed_fields.append("extra")
-    if not changed_fields:
+def normalize_item_list(values):
+    if values is None:
         return []
+    normalized = []
+    seen = set()
+    source = values if isinstance(values, list) else [values]
+    for value in source:
+        if not isinstance(value, str):
+            value = json.dumps(value, ensure_ascii=False)
+        value = value.strip()
+        if not value or len(value) > 200 or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+        if len(normalized) >= 50:
+            break
+    return normalized
 
-    entry["updated"] = datetime.now().isoformat()
+
+def empty_memory_entry():
+    return {
+        "schema_version": MEMORY_SCHEMA_VERSION,
+        "slots": {},
+        "items": {},
+        "change_log": [],
+    }
+
+
+def migrate_memory_entry(entry):
+    if not isinstance(entry, dict):
+        return empty_memory_entry(), True
+
+    if entry.get("schema_version") == MEMORY_SCHEMA_VERSION:
+        normalized = empty_memory_entry()
+        slots = entry.get("slots")
+        if isinstance(slots, dict):
+            preferred_name = slots.get("preferred_name")
+            if isinstance(preferred_name, str) and preferred_name.strip():
+                normalized["slots"]["preferred_name"] = preferred_name.strip()[:100]
+
+        items = entry.get("items")
+        if isinstance(items, dict):
+            for raw_category, values in items.items():
+                category = normalize_memory_category(raw_category)
+                normalized_values = normalize_item_list(values)
+                if category and normalized_values:
+                    normalized["items"][category] = normalized_values
+
+        change_log = entry.get("change_log")
+        if isinstance(change_log, list):
+            normalized["change_log"] = [
+                change for change in change_log[-MAX_MEMORY_CHANGE_LOG:]
+                if isinstance(change, dict)
+            ]
+        if isinstance(entry.get("updated"), str):
+            normalized["updated"] = entry["updated"]
+        return normalized, normalized != entry
+
+    migrated = empty_memory_entry()
+    preferred_name = entry.get("preferred_name")
+    if isinstance(preferred_name, str) and preferred_name.strip():
+        migrated["slots"]["preferred_name"] = preferred_name.strip()[:100]
+
+    note = entry.get("note")
+    notes = normalize_item_list(note)
+    if notes:
+        migrated["items"]["notes"] = notes
+
+    for category in ("likes", "traits"):
+        values = normalize_item_list(entry.get(category, []))
+        if values:
+            migrated["items"][category] = values
+
+    for raw_category, value in normalize_extra_entries(entry.get("extra", {})).items():
+        category = normalize_memory_category(raw_category)
+        values = normalize_item_list(value)
+        if not category or not values:
+            continue
+        existing = migrated["items"].get(category, [])
+        migrated["items"][category] = normalize_item_list(existing + values)
+
+    if isinstance(entry.get("updated"), str):
+        migrated["updated"] = entry["updated"]
+    return migrated, True
+
+
+def migrate_longterm_memory_schema():
+    global longterm_memory
+    source = longterm_memory if isinstance(longterm_memory, dict) else {}
+    migrated = {}
+    changed = not isinstance(longterm_memory, dict)
+    for user_id, entry in source.items():
+        migrated_entry, entry_changed = migrate_memory_entry(entry)
+        migrated[str(user_id)] = migrated_entry
+        changed = changed or entry_changed or str(user_id) != user_id
+    longterm_memory = migrated
+    return changed
+
+
+def ensure_memory_entry(user_id):
+    entry, changed = migrate_memory_entry(longterm_memory.get(user_id))
+    if changed or user_id not in longterm_memory:
+        longterm_memory[user_id] = entry
+    return entry
+
+
+def memory_has_content(entry):
+    return bool(
+        isinstance(entry, dict)
+        and (entry.get("slots") or entry.get("items"))
+    )
+
+
+def format_memory_for_display(entry):
+    if not isinstance(entry, dict):
+        return []
+    lines = []
+    slots = entry.get("slots")
+    if isinstance(slots, dict):
+        for slot, value in slots.items():
+            if value:
+                lines.append(f"・{slot}: {value}")
+    items = entry.get("items")
+    if isinstance(items, dict):
+        for category, values in items.items():
+            normalized_values = normalize_item_list(values)
+            if normalized_values:
+                lines.append(f"・{category}: {', '.join(normalized_values)}")
+    return lines
+
+
+def normalize_auto_memory_operations(operations):
+    if not isinstance(operations, list):
+        return [], ["memory_operations がリストではない"]
+
+    normalized = []
+    errors = []
+    seen = set()
+    for index, operation in enumerate(operations[:10]):
+        label = f"operation {index + 1}"
+        if not isinstance(operation, dict) or operation.get("type") != "add_item":
+            errors.append(f"{label}: 自動記憶では add_item だけ使用できる")
+            continue
+        category = normalize_memory_category(operation.get("category"))
+        item = operation.get("item")
+        if not category:
+            errors.append(f"{label}: category が使用できない")
+            continue
+        if not isinstance(item, str):
+            errors.append(f"{label}: item は文字列にする")
+            continue
+        item = item.strip()
+        if not item or len(item) > 200:
+            errors.append(f"{label}: item は1〜200文字にする")
+            continue
+        key = (category, item)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({
+            "type": "add_item",
+            "category": category,
+            "item": item,
+        })
+
+    if len(operations) > 10:
+        errors.append("一度に自動記憶できる項目は10件まで")
+    if errors:
+        return [], errors
+    return normalized, []
+
+
+def prepare_revise_operations(operations, entry):
+    if not isinstance(operations, list):
+        return [], ["operations がリストではない"]
+    if len(operations) > 10:
+        return [], ["一度に提案できる操作は10件まで"]
+
+    items = entry.get("items", {}) if isinstance(entry, dict) else {}
+    slots = entry.get("slots", {}) if isinstance(entry, dict) else {}
+    prepared = []
+    errors = []
+    affected = set()
+
+    for index, operation in enumerate(operations):
+        label = f"operation {index + 1}"
+        if not isinstance(operation, dict):
+            errors.append(f"{label} がオブジェクトではない")
+            continue
+        operation_type = str(operation.get("type", "")).strip()
+
+        if operation_type == "set_slot":
+            slot = str(operation.get("slot", "")).strip().lower()
+            value = operation.get("value")
+            if slot not in MEMORY_SLOT_NAMES:
+                errors.append(f"{label}: 使用できないslot")
+                continue
+            if not isinstance(value, str) or not value.strip() or len(value.strip()) > 100:
+                errors.append(f"{label}: slotの値は1〜100文字にする")
+                continue
+            if ("slot", slot) in affected:
+                errors.append(f"{label}: 同じslotを複数回変更できない")
+                continue
+            affected.add(("slot", slot))
+            prepared.append({
+                "type": "set_slot",
+                "slot": slot,
+                "value": value.strip(),
+                "expected_exists": slot in slots,
+                "expected_value": slots.get(slot),
+            })
+            continue
+
+        if operation_type == "delete_slot":
+            slot = str(operation.get("slot", "")).strip().lower()
+            if slot not in MEMORY_SLOT_NAMES or slot not in slots:
+                errors.append(f"{label}: 削除対象のslotが見つからない")
+                continue
+            if ("slot", slot) in affected:
+                errors.append(f"{label}: 同じslotを複数回変更できない")
+                continue
+            affected.add(("slot", slot))
+            prepared.append({
+                "type": "delete_slot",
+                "slot": slot,
+                "expected_value": slots[slot],
+            })
+            continue
+
+        if operation_type == "delete_matching_items":
+            query = operation.get("query")
+            if not isinstance(query, str) or not query.strip():
+                errors.append(f"{label}: 検索語がない")
+                continue
+            query = query.strip()
+            raw_category = operation.get("category")
+            category = normalize_memory_category(raw_category) if raw_category else None
+            categories = [category] if category else list(items.keys())
+            targets = []
+            for target_category in categories:
+                for value in normalize_item_list(items.get(target_category, [])):
+                    if query.casefold() in value.casefold():
+                        targets.append({
+                            "category": target_category,
+                            "item": value,
+                        })
+            if not targets:
+                errors.append(f"{label}: 「{query}」に一致する記憶がない")
+                continue
+            if any(
+                ("category", target["category"]) in affected
+                or ("item", target["category"], target["item"]) in affected
+                for target in targets
+            ):
+                errors.append(f"{label}: 同じ項目を複数回変更できない")
+                continue
+            for target in targets:
+                affected.add(("item", target["category"], target["item"]))
+            prepared.append({
+                "type": "delete_matching_items",
+                "query": query,
+                "targets": targets,
+            })
+            continue
+
+        category = normalize_memory_category(operation.get("category"))
+        if not category:
+            errors.append(f"{label}: category が使用できない")
+            continue
+        current_values = normalize_item_list(items.get(category, []))
+        if ("category", category) in affected:
+            errors.append(f"{label}: 同じcategoryを複数回変更できない")
+            continue
+
+        if operation_type == "add_item":
+            item = operation.get("item")
+            if not isinstance(item, str) or not item.strip() or len(item.strip()) > 200:
+                errors.append(f"{label}: item は1〜200文字にする")
+                continue
+            item = item.strip()
+            if item in current_values:
+                errors.append(f"{label}: その項目はすでに存在する")
+                continue
+            if ("item", category, item) in affected:
+                errors.append(f"{label}: 同じ項目を複数回変更できない")
+                continue
+            affected.add(("item", category, item))
+            prepared.append({
+                "type": "add_item",
+                "category": category,
+                "item": item,
+            })
+            continue
+
+        if operation_type == "delete_item":
+            item = operation.get("item")
+            if not isinstance(item, str) or item not in current_values:
+                errors.append(f"{label}: 完全一致する削除対象がない")
+                continue
+            if ("item", category, item) in affected:
+                errors.append(f"{label}: 同じ項目を複数回変更できない")
+                continue
+            affected.add(("item", category, item))
+            prepared.append({
+                "type": "delete_item",
+                "category": category,
+                "item": item,
+            })
+            continue
+
+        if operation_type == "rewrite_item":
+            old_item = operation.get("old_item")
+            new_item = operation.get("new_item")
+            if not isinstance(old_item, str) or old_item not in current_values:
+                errors.append(f"{label}: 書き換え元が完全一致しない")
+                continue
+            if (
+                not isinstance(new_item, str)
+                or not new_item.strip()
+                or len(new_item.strip()) > 200
+            ):
+                errors.append(f"{label}: 書き換え先は1〜200文字にする")
+                continue
+            new_item = new_item.strip()
+            if new_item != old_item and new_item in current_values:
+                errors.append(f"{label}: 書き換え先がすでに存在する")
+                continue
+            if ("item", category, old_item) in affected:
+                errors.append(f"{label}: 同じ項目を複数回変更できない")
+                continue
+            affected.add(("item", category, old_item))
+            prepared.append({
+                "type": "rewrite_item",
+                "category": category,
+                "old_item": old_item,
+                "new_item": new_item,
+            })
+            continue
+
+        if operation_type == "clear_category":
+            if not current_values:
+                errors.append(f"{label}: categoryが空か存在しない")
+                continue
+            if ("category", category) in affected or any(
+                key[0] == "item" and key[1] == category for key in affected
+            ):
+                errors.append(f"{label}: 同じcategoryを複数回変更できない")
+                continue
+            affected.add(("category", category))
+            prepared.append({
+                "type": "clear_category",
+                "category": category,
+                "expected_items": current_values,
+            })
+            continue
+
+        errors.append(f"{label}: 許可されていない操作 {operation_type!r}")
+
+    if errors:
+        return [], errors
+    if not prepared:
+        return [], ["実行できる操作がない"]
+    return prepared, []
+
+
+def describe_memory_operation(operation):
+    operation_type = operation.get("type")
+    if operation_type == "add_item":
+        return f"{operation.get('category')} に「{operation.get('item')}」を追加"
+    if operation_type == "delete_item":
+        return f"{operation.get('category')} から「{operation.get('item')}」を削除"
+    if operation_type == "delete_matching_items":
+        return (
+            f"「{operation.get('query')}」に一致する"
+            f"{len(operation.get('targets', []))}件を削除"
+        )
+    if operation_type == "rewrite_item":
+        return (
+            f"{operation.get('category')} の「{operation.get('old_item')}」を"
+            f"「{operation.get('new_item')}」へ書き換え"
+        )
+    if operation_type == "set_slot":
+        if operation.get("expected_exists"):
+            return (
+                f"{operation.get('slot')} の「{operation.get('expected_value')}」を"
+                f"「{operation.get('value')}」へ書き換え"
+            )
+        return f"{operation.get('slot')} を「{operation.get('value')}」に設定"
+    if operation_type == "delete_slot":
+        return (
+            f"{operation.get('slot')} の"
+            f"「{operation.get('expected_value')}」を削除"
+        )
+    if operation_type == "clear_category":
+        return (
+            f"{operation.get('category')} の"
+            f"{len(operation.get('expected_items', []))}件をすべて削除"
+        )
+    return "読み取れない操作"
+
+
+def append_memory_change(entry, source, summary, changes):
+    change_log = entry.get("change_log")
+    if not isinstance(change_log, list):
+        change_log = []
+    change_log.append({
+        "id": uuid.uuid4().hex[:8],
+        "created_at": datetime.now().isoformat(),
+        "source": source,
+        "summary": str(summary or "").strip()[:300],
+        "changes": changes,
+    })
+    entry["change_log"] = change_log[-MAX_MEMORY_CHANGE_LOG:]
+
+
+async def persist_memory_entry(user_id, entry, commit_message):
+    had_original = user_id in longterm_memory
+    original = longterm_memory.get(user_id)
     longterm_memory[user_id] = entry
-
     try:
         await write_json_async(longterm_memory_file, longterm_memory)
-    except Exception as e:
-        safe_report_error(f"記憶の保存に失敗したよ: {e}")
-        return None
-
-    if changed_fields:
-        lines = [
-            f"📝 記憶候補を反映したよ（ユーザーID: {user_id}）",
-            f"更新項目: {', '.join(changed_fields)}",
-        ]
-        report = "\n".join(lines)
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            asyncio.create_task(log_channel.send(report))
-    return changed_fields
+    except Exception:
+        if had_original:
+            longterm_memory[user_id] = original
+        else:
+            longterm_memory.pop(user_id, None)
+        raise
+    await save_to_git_async(commit_message)
 
 
-async def update_longterm_memory(user_id, profile, *, log_details=False):
-    # 旧呼び出しとの互換。候補承認の追加マージとしてのみ扱う。
-    return await apply_memory_candidate(user_id, profile)
+async def apply_auto_memory_operations(user_id, operations):
+    normalized, errors = normalize_auto_memory_operations(operations)
+    if errors:
+        return {"changes": [], "errors": errors}
+
+    async with memory_lock:
+        entry = deepcopy(ensure_memory_entry(user_id))
+        items = entry["items"]
+        changes = []
+        for operation in normalized:
+            category = operation["category"]
+            item = operation["item"]
+            current_values = normalize_item_list(items.get(category, []))
+            if category not in items and len(items) >= 30:
+                continue
+            if item in current_values or len(current_values) >= 50:
+                continue
+            current_values.append(item)
+            items[category] = current_values
+            changes.append(operation.copy())
+
+        if not changes:
+            return {"changes": [], "errors": []}
+
+        for change in changes:
+            change["expected_items"] = list(items[change["category"]])
+        summary = "、".join(
+            f"{change['category']}の「{change['item']}」"
+            for change in changes
+        )
+        append_memory_change(entry, "auto", summary, changes)
+        entry["updated"] = datetime.now().isoformat()
+        await persist_memory_entry(user_id, entry, "auto memory")
+        return {"changes": changes, "errors": []}
+
+
+def verify_revise_operations(entry, operations):
+    items = entry.get("items", {})
+    slots = entry.get("slots", {})
+    conflicts = []
+    for operation in operations:
+        operation_type = operation["type"]
+        if operation_type == "add_item":
+            continue
+        if operation_type == "set_slot":
+            slot = operation["slot"]
+            exists = slot in slots
+            if (
+                exists != operation.get("expected_exists")
+                or slots.get(slot) != operation.get("expected_value")
+            ):
+                conflicts.append(slot)
+        elif operation_type == "delete_slot":
+            if slots.get(operation["slot"]) != operation.get("expected_value"):
+                conflicts.append(operation["slot"])
+        elif operation_type == "delete_item":
+            if operation["item"] not in items.get(operation["category"], []):
+                conflicts.append(f"{operation['category']}: {operation['item']}")
+        elif operation_type == "delete_matching_items":
+            for target in operation["targets"]:
+                if target["item"] not in items.get(target["category"], []):
+                    conflicts.append(f"{target['category']}: {target['item']}")
+        elif operation_type == "rewrite_item":
+            values = items.get(operation["category"], [])
+            if (
+                operation["old_item"] not in values
+                or (
+                    operation["new_item"] != operation["old_item"]
+                    and operation["new_item"] in values
+                )
+            ):
+                conflicts.append(f"{operation['category']}: {operation['old_item']}")
+        elif operation_type == "clear_category":
+            if (
+                normalize_item_list(items.get(operation["category"], []))
+                != operation["expected_items"]
+            ):
+                conflicts.append(operation["category"])
+    return conflicts
+
+
+async def apply_revise_memory_operations(user_id, operations, summary):
+    async with memory_lock:
+        entry = deepcopy(ensure_memory_entry(user_id))
+        conflicts = verify_revise_operations(entry, operations)
+        if conflicts:
+            return {"changes": [], "conflicts": conflicts, "errors": []}
+
+        items = entry["items"]
+        slots = entry["slots"]
+        changes = []
+        for operation in operations:
+            operation_type = operation["type"]
+            if operation_type == "add_item":
+                category = operation["category"]
+                values = normalize_item_list(items.get(category, []))
+                if operation["item"] not in values:
+                    values.append(operation["item"])
+                    items[category] = values
+                    changes.append(operation)
+            elif operation_type == "delete_item":
+                category = operation["category"]
+                values = list(items.get(category, []))
+                values.remove(operation["item"])
+                if values:
+                    items[category] = values
+                else:
+                    items.pop(category, None)
+                changes.append(operation)
+            elif operation_type == "delete_matching_items":
+                for target in operation["targets"]:
+                    category = target["category"]
+                    values = list(items.get(category, []))
+                    values.remove(target["item"])
+                    if values:
+                        items[category] = values
+                    else:
+                        items.pop(category, None)
+                changes.append(operation)
+            elif operation_type == "rewrite_item":
+                category = operation["category"]
+                values = list(items.get(category, []))
+                index = values.index(operation["old_item"])
+                values[index] = operation["new_item"]
+                items[category] = normalize_item_list(values)
+                changes.append(operation)
+            elif operation_type == "set_slot":
+                before_exists = operation["slot"] in slots
+                before_value = slots.get(operation["slot"])
+                slots[operation["slot"]] = operation["value"]
+                change = operation.copy()
+                change["before_exists"] = before_exists
+                change["before_value"] = before_value
+                changes.append(change)
+            elif operation_type == "delete_slot":
+                before_value = slots.pop(operation["slot"])
+                change = operation.copy()
+                change["before_value"] = before_value
+                changes.append(change)
+            elif operation_type == "clear_category":
+                items.pop(operation["category"], None)
+                changes.append(operation)
+
+        if not changes:
+            return {"changes": [], "conflicts": [], "errors": []}
+
+        append_memory_change(entry, "revise", summary, changes)
+        entry["updated"] = datetime.now().isoformat()
+        await persist_memory_entry(user_id, entry, "revise memory")
+        return {"changes": changes, "conflicts": [], "errors": []}
+
+
+def format_recent_memory_changes(entry, limit=10):
+    change_log = entry.get("change_log", []) if isinstance(entry, dict) else []
+    lines = []
+    for change in reversed(change_log[-limit:]):
+        if not isinstance(change, dict):
+            continue
+        marker = "↩️" if change.get("undone_at") else "📌"
+        source = "自動" if change.get("source") == "auto" else "revise"
+        created_at = str(change.get("created_at", ""))[:16].replace("T", " ")
+        summary = discord.utils.escape_mentions(
+            str(change.get("summary") or "変更内容なし")
+        )
+        lines.append(f"{marker} [{source}] {created_at} {summary}")
+    return lines
+
+
+async def undo_latest_auto_memory(user_id):
+    async with memory_lock:
+        entry = deepcopy(ensure_memory_entry(user_id))
+        change_log = entry.get("change_log", [])
+        target = next(
+            (
+                change for change in reversed(change_log)
+                if change.get("source") == "auto" and not change.get("undone_at")
+            ),
+            None,
+        )
+        if target is None:
+            return {"undone": False, "reason": "not_found"}
+
+        items = entry["items"]
+        for change in target.get("changes", []):
+            if change.get("type") != "add_item":
+                return {"undone": False, "reason": "unsupported"}
+            if (
+                normalize_item_list(items.get(change.get("category"), []))
+                != change.get("expected_items")
+            ):
+                return {"undone": False, "reason": "conflict"}
+
+        for change in target["changes"]:
+            category = change["category"]
+            values = list(items.get(category, []))
+            values.remove(change["item"])
+            if values:
+                items[category] = values
+            else:
+                items.pop(category, None)
+
+        target["undone_at"] = datetime.now().isoformat()
+        entry["updated"] = datetime.now().isoformat()
+        await persist_memory_entry(user_id, entry, "undo auto memory")
+        return {"undone": True, "change": target}
+
 
 # --- データ読み込み関数 ---
 # --- サーバーメモの読み込み ---
@@ -530,28 +881,8 @@ def load_chat_history():
 def load_longterm_memory():
     global longterm_memory
     longterm_memory = load_json_file(longterm_memory_file)
+    return migrate_longterm_memory_schema()
 
-
-def migrate_secret_extra_entries():
-    changed = False
-    if not isinstance(longterm_memory, dict):
-        return False
-    for entry in longterm_memory.values():
-        if not isinstance(entry, dict):
-            continue
-        extra = entry.get("extra")
-        if not isinstance(extra, dict) or not isinstance(extra.get("secret"), dict):
-            continue
-        migrated_extra = normalize_extra_entries(extra)
-        if migrated_extra != extra:
-            entry["extra"] = migrated_extra
-            changed = True
-    return changed
-
-
-def load_pending_memory():
-    global pending_memory
-    pending_memory = load_json_file(pending_memory_file)
 
 # --- リマインドの読み込み ---
 def load_reminders():
@@ -569,251 +900,314 @@ memory_group = discord.app_commands.Group(
 )
 
 
-@memory_group.command(name="show", description="あなた個人の記憶を表示します")
-@discord.app_commands.describe(include_extra="extraも表示する")
-async def memory_show(
-    interaction: discord.Interaction,
-    include_extra: bool = False,
-):
-    user_id = str(interaction.user.id)
-    entry = longterm_memory.get(user_id, {})
+
+
+
+
+
+
+
+
+
+
+@memory_group.command(name="show", description="現在の個人記憶を表示します")
+async def memory_show(interaction: discord.Interaction):
+    entry = ensure_memory_entry(str(interaction.user.id))
     lines = [f"📘 {interaction.user.display_name} の記憶："]
-    for field in ("note", "preferred_name", "likes", "traits"):
-        value = entry.get(field) if isinstance(entry, dict) else None
-        if isinstance(value, list):
-            value = ", ".join(value)
-        lines.append(f"・{field}: {value if value else '（なし）'}")
-    if include_extra and isinstance(entry, dict):
-        extra_lines = [
-            line
-            for line in format_profile_for_display(entry)
-            if line.startswith("・extra.")
-        ]
-        lines.extend(extra_lines or ["・extra: （なし）"])
-    await interaction.response.send_message("\n".join(lines), ephemeral=True)
-
-
-@memory_group.command(name="set", description="あなた個人の記憶を更新します")
-@discord.app_commands.describe(field="更新する項目", content="記憶する内容")
-@discord.app_commands.choices(
-    field=[
-        discord.app_commands.Choice(name="preferred_name", value="preferred_name"),
-        discord.app_commands.Choice(name="note", value="note"),
-        discord.app_commands.Choice(name="likes", value="likes"),
-        discord.app_commands.Choice(name="traits", value="traits"),
-    ]
-)
-async def memory_set(
-    interaction: discord.Interaction,
-    field: discord.app_commands.Choice[str],
-    content: str,
-):
-    stripped_content = content.strip()
-    if not stripped_content:
-        await interaction.response.send_message(
-            "⚠️ 空の内容は記憶できないみたい",
-            ephemeral=True,
-        )
-        return
-
-    field_name = field.value
-    if field_name == "preferred_name" and len(stripped_content) > 100:
-        await interaction.response.send_message(
-            "⚠️ preferred_name は100文字以内でお願い",
-            ephemeral=True,
-        )
-        return
-    if field_name == "note" and len(stripped_content) > 200:
-        await interaction.response.send_message(
-            "⚠️ note は200文字以内でお願い",
-            ephemeral=True,
-        )
-        return
-
-    values = None
-    if field_name in ("likes", "traits"):
-        values = []
-        seen = set()
-        for value in stripped_content.split(","):
-            value = value.strip()
-            if not value or value in seen:
-                continue
-            if len(value) > 50:
-                await interaction.response.send_message(
-                    "⚠️ likes / traits の各項目は50文字以内でお願い",
-                    ephemeral=True,
-                )
-                return
-            seen.add(value)
-            values.append(value)
-        if not values:
-            await interaction.response.send_message(
-                "⚠️ 空の項目は記憶できないみたい",
-                ephemeral=True,
-            )
-            return
-        if len(values) > 20:
-            await interaction.response.send_message(
-                "⚠️ likes / traits は20件以内でお願い",
-                ephemeral=True,
-            )
-            return
-
-    await interaction.response.defer(ephemeral=True)
-
-    user_id = str(interaction.user.id)
-    stored_value = values if field_name in ("likes", "traits") else stripped_content
-    replace_memory_field(user_id, field_name, stored_value)
-    await write_json_async(longterm_memory_file, longterm_memory)
-    await save_to_git_async("memory set")
-
-    value_display = ", ".join(stored_value) if isinstance(stored_value, list) else stored_value
-    await interaction.followup.send(
-        f"📝 {field_name} を更新したよ：{value_display}",
+    lines.extend(format_memory_for_display(entry) or ["（まだ何も覚えていないよ）"])
+    await interaction.response.send_message(
+        "\n".join(lines)[:DISCORD_LIMIT],
         ephemeral=True,
     )
 
 
+@memory_group.command(name="recent", description="最近の記憶変更を表示します")
+async def memory_recent(interaction: discord.Interaction):
+    entry = ensure_memory_entry(str(interaction.user.id))
+    lines = format_recent_memory_changes(entry)
+    content = (
+        "🕰️ 最近の記憶変更：\n" + "\n".join(lines)
+        if lines
+        else "最近の記憶変更はまだないみたい"
+    )
+    await interaction.response.send_message(content[:DISCORD_LIMIT], ephemeral=True)
+
+
+@memory_group.command(name="undo", description="直近の自動記憶を取り消します")
+async def memory_undo(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    result = await undo_latest_auto_memory(str(interaction.user.id))
+    if result.get("undone"):
+        summary = result["change"].get("summary") or "直近の自動記憶"
+        content = f"↩️ 「{summary}」を取り消したよ"
+    elif result.get("reason") == "conflict":
+        content = "その記憶は後から変わっているため、安全に取り消せなかったよ"
+    else:
+        content = "取り消せる自動記憶はないみたい"
+    await interaction.followup.send(content, ephemeral=True)
+
+
 @memory_group.command(
     name="edit",
-    description="個人記憶を直接編集します。contentを省略すると削除します",
+    description="個人記憶を直接置換します。空のcontentで削除します",
 )
 @discord.app_commands.describe(
-    field="preferred_name / note / likes / traits / extra.xxx",
-    content="新しい内容。省略または空で削除します",
+    field="preferred_name / items.xxx / extra.xxx",
+    content="新しい内容。itemはカンマ区切り",
 )
 async def memory_edit(
     interaction: discord.Interaction,
     field: str,
     content: str = "",
 ):
-    user_id = str(interaction.user.id)
-    requested_field = field.strip()
-    canonical_field = normalize_memory_field(requested_field)
-    content = content.strip()
-
-    if canonical_field is None:
+    target_type, target_name = normalize_memory_target(field)
+    if target_type is None:
         await interaction.response.send_message(
-            "⚠️ 対応していない項目名みたい\n"
-            "使える項目：preferred_name / note / likes / traits / extra.xxx",
+            "対応していない記憶項目みたい",
             ephemeral=True,
         )
         return
 
-    if not content:
-        await interaction.response.defer(ephemeral=True)
-        if not delete_memory_field(user_id, canonical_field):
-            await interaction.followup.send(
-                "そこにはまだ覚えているものがないみたい",
-                ephemeral=True,
-            )
-            return
-        await write_json_async(longterm_memory_file, longterm_memory)
-        await save_to_git_async("memory edit")
-        await interaction.followup.send(
-            f"🕳️ {canonical_field} を忘れたよ",
+    content = content.strip()
+    values = (
+        normalize_item_list([value.strip() for value in content.split(",")])
+        if content and target_type == "items"
+        else []
+    )
+    if target_type == "slot" and len(content) > 100:
+        await interaction.response.send_message(
+            "preferred_name は100文字以内でお願い",
+            ephemeral=True,
+        )
+        return
+    if target_type == "items" and content and not values:
+        await interaction.response.send_message(
+            "有効な内容がないみたい",
             ephemeral=True,
         )
         return
 
-    values = None
-    if canonical_field == "preferred_name":
-        if len(content) > 100:
-            await interaction.response.send_message(
-                "⚠️ preferred_name は100文字以内でお願い",
-                ephemeral=True,
-            )
-            return
-    elif canonical_field == "note":
-        if len(content) > 200:
-            await interaction.response.send_message(
-                "⚠️ note は200文字以内でお願い",
-                ephemeral=True,
-            )
-            return
-    elif canonical_field in ("likes", "traits"):
-        values = []
-        seen = set()
-        for value in content.split(","):
-            value = value.strip()
-            if not value or value in seen:
-                continue
-            if len(value) > 50:
-                await interaction.response.send_message(
-                    "⚠️ likes / traits の各項目は50文字以内でお願い",
-                    ephemeral=True,
-                )
-                return
-            seen.add(value)
-            values.append(value)
-        if not values:
-            await interaction.response.send_message(
-                "⚠️ 有効な項目がないみたい",
-                ephemeral=True,
-            )
-            return
-        if len(values) > 20:
-            await interaction.response.send_message(
-                "⚠️ likes / traits は20件以内でお願い",
-                ephemeral=True,
-            )
-            return
-    
     await interaction.response.defer(ephemeral=True)
-
-    stored_value = values if canonical_field in ("likes", "traits") else content
-    replace_memory_field(user_id, canonical_field, stored_value)
-    await write_json_async(longterm_memory_file, longterm_memory)
-    await save_to_git_async("memory edit")
-
-    value_display = ", ".join(stored_value) if isinstance(stored_value, list) else stored_value
+    user_id = str(interaction.user.id)
+    async with memory_lock:
+        entry = deepcopy(ensure_memory_entry(user_id))
+        if target_type == "slot":
+            if content:
+                entry["slots"][target_name] = content
+            else:
+                entry["slots"].pop(target_name, None)
+        elif values:
+            entry["items"][target_name] = values
+        else:
+            entry["items"].pop(target_name, None)
+        entry["updated"] = datetime.now().isoformat()
+        await persist_memory_entry(user_id, entry, "memory edit")
     await interaction.followup.send(
-        f"📝 {canonical_field} を更新したよ：{value_display}",
+        f"📝 {target_name} を直接編集したよ",
         ephemeral=True,
     )
 
 
-@memory_group.command(
-    name="remove_item",
-    description="likes・traitsから指定した項目を1件削除します",
-)
-@discord.app_commands.describe(field="削除するリスト", item="完全一致で削除する項目")
-@discord.app_commands.choices(
-    field=[
-        discord.app_commands.Choice(name="likes", value="likes"),
-        discord.app_commands.Choice(name="traits", value="traits"),
+def format_revise_preview(summary, operations):
+    lines = [
+        "🧭 記憶の変更案",
+        f"内容: {discord.utils.escape_mentions(str(summary or '記憶を変更する'))}",
+        "実行予定:",
     ]
-)
-async def memory_remove_item(
-    interaction: discord.Interaction,
-    field: discord.app_commands.Choice[str],
-    item: str,
-):
-    field_name = field.value
-    target_item = item.strip()
-    if not target_item:
+    for operation in operations:
+        lines.append(
+            "・" + discord.utils.escape_mentions(
+                describe_memory_operation(operation)
+            )
+        )
+        if operation["type"] == "delete_matching_items":
+            for target in operation["targets"][:10]:
+                lines.append(f"  - {target['category']}: {target['item']}")
+            if len(operation["targets"]) > 10:
+                lines.append(f"  - ほか{len(operation['targets']) - 10}件")
+        elif operation["type"] == "clear_category":
+            for item in operation["expected_items"][:10]:
+                lines.append(f"  - {item}")
+            if len(operation["expected_items"]) > 10:
+                lines.append(
+                    f"  - ほか{len(operation['expected_items']) - 10}件"
+                )
+    return "\n".join(lines)[:DISCORD_LIMIT]
+
+
+class ReviseMemoryView(discord.ui.View):
+    def __init__(self, owner_user_id, summary, operations):
+        super().__init__(timeout=600)
+        self.owner_user_id = str(owner_user_id)
+        self.summary = str(summary or "記憶を変更する")[:300]
+        self.operations = deepcopy(operations)
+
+    async def _check_owner(self, interaction):
+        if str(interaction.user.id) == self.owner_user_id:
+            return True
         await interaction.response.send_message(
-            "⚠️ 削除する項目を入力してね",
+            "これはきみの記憶変更案じゃないみたい",
+            ephemeral=True,
+        )
+        return False
+
+    @discord.ui.button(label="実行する", style=discord.ButtonStyle.danger)
+    async def confirm_button(self, interaction, button):
+        if not await self._check_owner(interaction):
+            return
+        await interaction.response.defer()
+        try:
+            result = await apply_revise_memory_operations(
+                self.owner_user_id,
+                self.operations,
+                self.summary,
+            )
+        except Exception as error:
+            safe_report_error(f"記憶のreviseに失敗: {error}")
+            await interaction.edit_original_response(
+                content="……記憶を変更できなかったみたい",
+                view=None,
+            )
+            return
+        if result["conflicts"]:
+            content = (
+                "確認中に対象の記憶が変わったため、何も変更しなかったよ。"
+                "もう一度 /memory revise を使ってね"
+            )
+        elif result["changes"]:
+            content = f"📝 {len(result['changes'])}件の操作を反映したよ"
+        else:
+            content = "変更する内容はなかったみたい"
+        await interaction.edit_original_response(content=content, view=None)
+
+    @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.secondary)
+    async def cancel_button(self, interaction, button):
+        if not await self._check_owner(interaction):
+            return
+        await interaction.response.edit_message(
+            content="記憶の変更をキャンセルしたよ",
+            view=None,
+        )
+
+
+@memory_group.command(
+    name="revise",
+    description="自然な言葉で記憶の変更案を作り、確認後に実行します",
+)
+@discord.app_commands.describe(instruction="記憶をどう変更したいか")
+async def memory_revise(
+    interaction: discord.Interaction,
+    instruction: str,
+):
+    instruction = instruction.strip()
+    if not instruction or len(instruction) > 500:
+        await interaction.response.send_message(
+            "変更内容は1〜500文字で教えてね",
             ephemeral=True,
         )
         return
+    await interaction.response.defer(ephemeral=True)
 
     user_id = str(interaction.user.id)
-    entry = longterm_memory.get(user_id)
-    values = entry.get(field_name) if isinstance(entry, dict) else None
-    if not isinstance(values, list) or target_item not in values:
-        await interaction.response.send_message(
-            "その項目は見つからないみたい",
+    entry = ensure_memory_entry(user_id)
+    memory_snapshot = {
+        "slots": entry.get("slots", {}),
+        "items": entry.get("items", {}),
+    }
+    system_prompt = f"""個人記憶の変更案を作る。
+現在の記憶:
+{json.dumps(memory_snapshot, ensure_ascii=False, indent=2)}
+
+必ず次のJSONだけを返す:
+{{
+  "summary": "変更案の短い説明",
+  "ambiguous": false,
+  "ambiguity_reason": "",
+  "candidates": [],
+  "operations": []
+}}
+
+使用できるoperation:
+{{"type":"add_item","category":"tools","item":"Codex"}}
+{{"type":"delete_item","category":"tools","item":"完全一致する既存項目"}}
+{{"type":"delete_matching_items","query":"Codex","category":"tools または省略"}}
+{{"type":"rewrite_item","category":"notes","old_item":"完全一致する既存項目","new_item":"新しい内容"}}
+{{"type":"set_slot","slot":"preferred_name","value":"呼び名"}}
+{{"type":"delete_slot","slot":"preferred_name"}}
+{{"type":"clear_category","category":"tools"}}
+
+規則:
+・ユーザーの指示に必要な最小操作だけを出す
+・削除や書き換えの対象は現在の記憶に基づける
+・対象を一意に判断できなければ ambiguous=true にし、operationsは空にする
+・ambiguous=true の場合は、考えられる対象をcandidatesへ短い文章で列挙する
+・「整理して」のように残す基準が不明なら ambiguous=true にする
+・存在しない内容を削除対象として作らない
+・secret.xxxは使用しない
+"""
+    try:
+        response = await oa_chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": instruction},
+            ],
+            temperature=0,
+            json_mode_hint=True,
+        )
+        proposal = json.loads(response.choices[0].message.content)
+        if not isinstance(proposal, dict):
+            raise ValueError("revise proposal is not an object")
+    except Exception as error:
+        safe_report_error(f"記憶の変更案を作れなかったよ: {error}")
+        await interaction.followup.send(
+            "……変更案をうまく作れなかったみたい",
             ephemeral=True,
         )
         return
 
-    await interaction.response.defer(ephemeral=True)
-    remove_memory_list_item(user_id, field_name, target_item)
-    await write_json_async(longterm_memory_file, longterm_memory)
-    await save_to_git_async("memory remove item")
+    if proposal.get("ambiguous"):
+        reason = str(
+            proposal.get("ambiguity_reason")
+            or "変更対象をひとつに決められなかった"
+        )[:500]
+        candidates = proposal.get("candidates")
+        candidate_lines = []
+        if isinstance(candidates, list):
+            candidate_lines = [
+                "・" + discord.utils.escape_mentions(str(candidate)[:200])
+                for candidate in candidates[:5]
+                if str(candidate).strip()
+            ]
+        candidate_text = (
+            "\n候補:\n" + "\n".join(candidate_lines)
+            if candidate_lines
+            else ""
+        )
+        await interaction.followup.send(
+            "候補だけ確認したけれど、まだ実行できないみたい。\n"
+            f"理由: {discord.utils.escape_mentions(reason)}"
+            f"{candidate_text}\n"
+            "対象や残したい内容をもう少し具体的に指定してね",
+            ephemeral=True,
+        )
+        return
+
+    operations, errors = prepare_revise_operations(
+        proposal.get("operations"),
+        entry,
+    )
+    if errors:
+        await interaction.followup.send(
+            "安全に実行できる変更案を作れなかったよ。\n"
+            + "\n".join(f"・{error}" for error in errors[:5]),
+            ephemeral=True,
+        )
+        return
+
+    summary = str(proposal.get("summary") or instruction).strip()[:300]
     await interaction.followup.send(
-        f"🕳️ {field_name} から「{target_item}」を外したよ",
+        format_revise_preview(summary, operations),
+        view=ReviseMemoryView(user_id, summary, operations),
         ephemeral=True,
     )
 
@@ -883,162 +1277,16 @@ async def servermemory_set(interaction: discord.Interaction, content: str):
     )
 
 
-def build_pending_memory_items(user_id):
-    candidates = pending_memory.get(user_id, [])
-    if not isinstance(candidates, list):
-        return []
-
-    items = []
-    total = sum(
-        1
-        for candidate in candidates
-        if isinstance(candidate, dict) and candidate.get("id")
-    )
-    display_number = 0
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        candidate_id = candidate.get("id")
-        if not candidate_id:
-            continue
-        display_number += 1
-        lines = [
-            f"🕯️ 記憶候補 {display_number} / {total}",
-            f"発言: {candidate.get('message_excerpt', '')}",
-            "覚えようとしている内容:",
-        ]
-        profile_lines = format_profile_for_display(candidate.get("profile", {}))
-        lines.extend(profile_lines or ["（空の候補）"])
-        items.append((candidate_id, "\n".join(lines)[:DISCORD_LIMIT]))
-    return items
 
 
-async def accept_pending_candidate(user_id, key):
-    async with pending_memory_lock:
-        index, candidate = find_pending_candidate(user_id, key)
-        if candidate is None:
-            return False, None, False
-
-        profile = candidate.get("profile", {})
-        changed_fields = await apply_memory_candidate(user_id, profile)
-        if changed_fields is None:
-            return False, None, False
-
-        candidates = pending_memory.get(user_id, [])
-        candidates.pop(index)
-        if candidates:
-            pending_memory[user_id] = candidates
-        else:
-            pending_memory.pop(user_id, None)
-        await save_pending_memory("accept pending memory")
-        return True, candidate, bool(changed_fields)
 
 
-async def reject_pending_candidate(user_id, key):
-    async with pending_memory_lock:
-        index, candidate = find_pending_candidate(user_id, key)
-        if candidate is None:
-            return False, None
-
-        candidates = pending_memory.get(user_id, [])
-        candidates.pop(index)
-        if candidates:
-            pending_memory[user_id] = candidates
-        else:
-            pending_memory.pop(user_id, None)
-        await save_pending_memory("reject pending memory")
-        return True, candidate
 
 
-class PendingMemoryView(discord.ui.View):
-    def __init__(self, owner_user_id, candidate_id):
-        super().__init__(timeout=600)
-        self.owner_user_id = str(owner_user_id)
-        self.candidate_id = candidate_id
-
-    async def _check_owner(self, interaction):
-        if str(interaction.user.id) == self.owner_user_id:
-            return True
-        await interaction.response.send_message(
-            "これはきみの記憶候補じゃないみたい",
-            ephemeral=True,
-        )
-        return False
-
-    @discord.ui.button(label="覚える", style=discord.ButtonStyle.success)
-    async def accept_button(self, interaction, button):
-        if not await self._check_owner(interaction):
-            return
-        await interaction.response.defer()
-        try:
-            success, _, changed = await accept_pending_candidate(
-                self.owner_user_id,
-                self.candidate_id,
-            )
-        except Exception as error:
-            safe_report_error(f"記憶候補の承認に失敗: {error}")
-            await interaction.edit_original_response(
-                content="……記憶候補を反映できなかったみたい",
-                view=None,
-            )
-            return
-        if success and changed:
-            content = "📝 この記憶候補を反映したよ"
-        elif success:
-            content = "すでに覚えていた内容だったから、候補だけ片付けたよ"
-        else:
-            content = "その記憶候補はもう見つからないみたい"
-        await interaction.edit_original_response(content=content, view=None)
-
-    @discord.ui.button(label="捨てる", style=discord.ButtonStyle.danger)
-    async def reject_button(self, interaction, button):
-        if not await self._check_owner(interaction):
-            return
-        await interaction.response.defer()
-        try:
-            success, _ = await reject_pending_candidate(
-                self.owner_user_id,
-                self.candidate_id,
-            )
-        except Exception as error:
-            safe_report_error(f"記憶候補の却下に失敗: {error}")
-            await interaction.edit_original_response(
-                content="……記憶候補を捨てられなかったみたい",
-                view=None,
-            )
-            return
-        content = (
-            "🗑️ この記憶候補を捨てたよ"
-            if success
-            else "その記憶候補はもう見つからないみたい"
-        )
-        await interaction.edit_original_response(content=content, view=None)
 
 
-async def slash_pendingmemory(interaction: discord.Interaction):
-    items = build_pending_memory_items(str(interaction.user.id))
-    if not items:
-        await interaction.response.send_message(
-            "保留中の記憶候補はないみたい",
-            ephemeral=True,
-        )
-        return
-
-    await interaction.response.send_message(
-        "🕯️ 保留中の記憶候補だよ。ボタンで選んでね",
-        ephemeral=True,
-    )
-    for candidate_id, content in items:
-        await interaction.followup.send(
-            content,
-            view=PendingMemoryView(interaction.user.id, candidate_id),
-            ephemeral=True,
-        )
 
 
-def forget_memory_field(user_id, field):
-    # 既存呼び出しとの互換。secret.xxx も extra.xxx に読み替える。
-    return delete_memory_field(user_id, field)
 
 
 def parse_reminder_time(time_text: str, now=None):
@@ -1079,13 +1327,12 @@ def parse_reminder_time(time_text: str, now=None):
 
 
 @discord.app_commands.describe(
-    field="忘れる項目（preferred_name / note / likes / traits / extra.xxx）"
+    field="忘れる項目（preferred_name / items.xxx / extra.xxx）"
 )
 async def slash_forget(interaction: discord.Interaction, field: str):
     user_id = str(interaction.user.id)
-    requested_field = field.strip()
-    canonical_field = normalize_memory_field(requested_field)
-    if canonical_field is None:
+    target_type, target_name = normalize_memory_target(field)
+    if target_type is None:
         await interaction.response.send_message(
             "⚠️ 対応していない項目名みたい",
             ephemeral=True,
@@ -1093,17 +1340,20 @@ async def slash_forget(interaction: discord.Interaction, field: str):
         return
 
     await interaction.response.defer(ephemeral=True)
-    if not delete_memory_field(user_id, canonical_field):
-        await interaction.followup.send(
-            "そこにはまだ覚えているものがないみたい",
-            ephemeral=True,
-        )
-        return
-
-    await write_json_async(longterm_memory_file, longterm_memory)
-    await save_to_git_async("forget memory")
+    async with memory_lock:
+        entry = deepcopy(ensure_memory_entry(user_id))
+        container = entry["slots"] if target_type == "slot" else entry["items"]
+        if target_name not in container:
+            await interaction.followup.send(
+                "そこにはまだ覚えているものがないみたい",
+                ephemeral=True,
+            )
+            return
+        container.pop(target_name)
+        entry["updated"] = datetime.now().isoformat()
+        await persist_memory_entry(user_id, entry, "forget memory")
     await interaction.followup.send(
-        f"🕳️ {canonical_field} を忘れたよ",
+        f"🕳️ {target_name} を忘れたよ",
         ephemeral=True,
     )
 
@@ -1114,7 +1364,7 @@ async def revealmemory(ctx, user_id: str = None):
         return
 
     target_id = user_id or str(ctx.author.id)
-    entry = longterm_memory.get(target_id, {})
+    entry = ensure_memory_entry(target_id)
     member = None
     if ctx.guild is not None:
         try:
@@ -1124,23 +1374,8 @@ async def revealmemory(ctx, user_id: str = None):
     display_name = member.display_name if member is not None else f"ID:{target_id}"
 
     lines = [f"🔍 {display_name} の全記憶："]
-
-    for key in ["preferred_name", "note", "likes", "traits"]:
-        value = entry.get(key)
-        if isinstance(value, list):
-            value = ", ".join(value)
-        lines.append(f"・{key}: {value if value else '（なし）'}")
-
-    extra = entry.get("extra", {})
-    if extra:
-        lines.append("・extra:")
-        for k, v in extra.items():
-            if isinstance(v, dict):
-                lines.append(f"　- {k}:")
-                for subk, subv in v.items():
-                    lines.append(f"　　・{subk}: {subv}")
-            else:
-                lines.append(f"　- {k}: {v}")
+    lines.extend(format_memory_for_display(entry) or ["（なし）"])
+    lines.append(f"・change_log: {len(entry.get('change_log', []))}件")
 
     await send_long(ctx.channel, "\n".join(lines[:200]))
 
@@ -1297,24 +1532,24 @@ async def load_channel_history(channel, n=MAX_CHANNEL_LOG, before=None):
     ][::-1]
 
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
-・/memory show：あなた個人の記憶を本人だけに表示
-・/memory set field content：あなた個人の記憶を更新（完了表示は本人だけ）
-・/memory edit field content：記憶を直接置換。contentを省略すると削除（extra.xxxにも対応）
-・/memory remove_item field item：likes・traitsから完全一致する項目を1件削除
+・/memory show：現在の個人記憶を本人だけに表示
+・/memory recent：最近の自動記憶・revise履歴を表示
+・/memory undo：直近の自動記憶を取り消す
+・/memory revise instruction：自然な言葉で変更案を作り、確認後に実行
+・/memory edit field content：記憶を直接置換。contentを省略すると削除
+・/forget field：指定したslotまたはitems categoryを削除
 ・/servermemory show：このサーバーのメモを表示
 ・/servermemory set content：管理できる人がサーバーメモを更新
-・/pendingmemory：保留中の記憶候補を本人だけに表示
-・/forget field：指定した記憶を忘れる（/memory edit field でも削除できるよ）
-・/remind time message：指定した時間にリマインド（設定完了は本人だけ）
+・/remind time message：指定した時間にリマインド
 ・/reminders：設定中のリマインドを本人だけに表示
 ・/cancelremind：リマインドをキャンセル
 ・/status：自分に関係する保存状態を本人だけに表示
 ・/guide：この一覧を表示
 
 @でメンションされると会話が始まるよ
-ゆのの発言含み、ユーザーごとに最大1800トークン分、チャンネルごとに最大1200トークン分のメッセージを記憶できるよ
-記憶候補はゆのが大事だと判断すると一度保留されるよ
-/pendingmemory から、ボタンで「覚える」「捨てる」を選べるよ
+📌 は、その発言から安全な内容を自動で覚えた合図だよ
+詳しい内容は /memory recent、直近の自動記憶の取り消しは /memory undo で確認できるよ
+削除・書き換え・まとめて削除は /memory revise で変更案を確認してから実行するよ
 リマインド通知本体は、指定したチャンネルに届くよ
 なにかあったら k.a.256 (X・Discord共通: _k256) まで"""
 
@@ -1327,16 +1562,9 @@ async def slash_status(interaction: discord.Interaction):
     history = chat_history.get(user_id)
     history_count = len(history) if isinstance(history, list) else 0
 
-    memory = longterm_memory.get(user_id)
-    has_memory = False
-    if isinstance(memory, dict):
-        has_memory = any(
-            bool(memory.get(field))
-            for field in ("preferred_name", "note", "likes", "traits", "extra")
-        )
-
-    candidates = pending_memory.get(user_id)
-    pending_count = len(candidates) if isinstance(candidates, list) else 0
+    memory = ensure_memory_entry(user_id)
+    has_memory = memory_has_content(memory)
+    change_count = len(memory.get("change_log", []))
     has_reminder = user_id in persisted_reminders
     has_server_memory = bool(
         interaction.guild is not None
@@ -1352,7 +1580,7 @@ async def slash_status(interaction: discord.Interaction):
         "🔎 ゆのの動作状態：",
         f"・会話履歴件数：{history_count}",
         f"・個人記憶：{'あり' if has_memory else 'なし'}",
-        f"・保留中の記憶候補：{pending_count}件",
+        f"・記憶変更履歴：{change_count}件",
         f"・設定中リマインド：{'あり' if has_reminder else 'なし'}",
         f"・サーバーメモ：{'あり' if has_server_memory else 'なし'}",
         f"・sync先：{sync_target}",
@@ -1506,22 +1734,6 @@ def extract_from_json_or_brackets(raw_content: str):
             return json.dumps(value, ensure_ascii=False)
         return str(value)
 
-    def normalize_profile(value):
-        if not isinstance(value, dict):
-            return normalize_text(value)
-        lines = []
-        for key, item in value.items():
-            if isinstance(item, list):
-                item = ", ".join(normalize_text(part) for part in item)
-            elif isinstance(item, dict):
-                item = json.dumps(item, ensure_ascii=False)
-            elif item is None:
-                item = "なし"
-            else:
-                item = str(item)
-            lines.append(f"{key}: {item}")
-        return "\n".join(lines)
-
     # まずJSONを試す
     try:
         obj = json.loads(raw_content)
@@ -1538,8 +1750,10 @@ def extract_from_json_or_brackets(raw_content: str):
             reaction = normalize_text(reaction, separator=" ")
         reaction = reaction.strip() or "なし"
         inner = normalize_text(obj.get("inner", ""))
-        profile_text = normalize_profile(obj.get("profile", ""))
-        return reply, reaction, inner, profile_text
+        memory_operations = obj.get("memory_operations")
+        if not isinstance(memory_operations, list):
+            memory_operations = []
+        return reply, reaction, inner, memory_operations
     except Exception:
         pass
 
@@ -1547,7 +1761,6 @@ def extract_from_json_or_brackets(raw_content: str):
     reply = ""
     reaction = "なし"
     inner = ""
-    profile_text = ""
     lines = raw_content.strip().splitlines()
     current_section = None
     for line in lines:
@@ -1562,9 +1775,6 @@ def extract_from_json_or_brackets(raw_content: str):
         elif lower.startswith("[inner]"):
             current_section = "inner"
             inner = line[7:].strip()
-        elif lower.startswith("[profile]"):
-            current_section = "profile"
-            profile_text = ""
         else:
             if current_section == "reply":
                 reply += ("\n" if reply else "") + line
@@ -1572,9 +1782,7 @@ def extract_from_json_or_brackets(raw_content: str):
                 reaction = (reaction + " " + line).strip()
             elif current_section == "inner":
                 inner += ("\n" if inner else "") + line
-            elif current_section == "profile":
-                profile_text += line + "\n"
-    return reply.strip(), reaction, inner, profile_text
+    return reply.strip(), reaction, inner, []
 
 
 def extract_user_prompt(message):
@@ -1620,25 +1828,38 @@ async def handle_mention(message, ctx):
                 )
             raw_content = response.choices[0].message.content.strip()
             print("原文：\n" + raw_content)
-            reply, reaction, inner, profile_text = extract_from_json_or_brackets(raw_content)
-            send_ai_debug_log(inner, profile_text)
+            reply, reaction, inner, memory_operations = (
+                extract_from_json_or_brackets(raw_content)
+            )
+            send_ai_debug_log(
+                inner,
+                json.dumps(memory_operations, ensure_ascii=False)
+                if memory_operations
+                else "",
+            )
 
-            # inner / profile の処理
+            # inner / 安全な自動記憶の処理
             if inner.strip():
                 entries = inner_log.get(user_id, [])
                 entries.append(inner.strip())
                 msgs = [{"role": "system", "content": i} for i in entries]
                 trimmed = trim_chat_history_by_tokens(msgs, max_tokens=300)
                 inner_log[user_id] = [m["content"] for m in trimmed]
-            if profile_text.strip():
-                profile = parse_profile_section(profile_text)
-                await add_pending_memory(
+            if memory_operations:
+                memory_result = await apply_auto_memory_operations(
                     user_id,
-                    user_display_name,
-                    profile,
-                    profile_text,
-                    prompt,
+                    memory_operations,
                 )
+                if memory_result["errors"]:
+                    safe_report_error(
+                        "自動記憶を拒否したよ: "
+                        + "; ".join(memory_result["errors"])
+                    )
+                elif memory_result["changes"]:
+                    try:
+                        await message.add_reaction("📌")
+                    except Exception as error:
+                        safe_report_error(f"記憶の📌を付けられなかったよ: {error}")
 
             if len(reply) > 8000:
                 reply = reply[:8000] + "（……省略）"
@@ -1676,7 +1897,7 @@ def build_system_prompt(message, ctx):
     bot_name = guild.me.display_name if guild else bot.user.display_name
 
     # ここではグローバルの longterm_memory を使用（ファイル再読込はしない）
-    memory = longterm_memory.get(user_id, {})
+    memory = ensure_memory_entry(user_id)
 
     prompt = f"""存在「唯乃（ゆの）」は、固定されたキャラクターではなく、会話のそばに薄く残る思考の気配としてある
 透明感のある白いショートヘアと淡い碧の眼を持つ、10歳ほどの少女のかたちを借りている
@@ -1715,50 +1936,46 @@ def build_system_prompt(message, ctx):
 
     prompt += """
 ---
-出力形式（マークはそのまま。各セクションは改行で分ける）：
+必ず次の形のJSONオブジェクトで出力する：
+{
+  "inner": "ゆのの内面。なければ『なし』",
+  "reply": "ゆのの返事。なければ『なし』",
+  "reaction": ["必要な絵文字を1〜5個。なければ空配列"],
+  "memory_operations": []
+}
 
-[inner] ゆのの内面。なければ「なし」
+ユーザー本人が明示し、今後の応答にも役立つ安定した情報を新しく覚える場合だけ、
+memory_operationsへ次のadd_itemを入れる：
+{"type":"add_item","category":"tools","item":"VSCodeを使っている"}
 
-[reply] ゆのの返事。なければ「なし」
+categoryは内容に合う短い英小文字名にする。
+例: likes / traits / tools / preferences / notes / projects
 
-[reaction] 必要ならば絵文字を1～5個（スペース区切り）。なければ「なし」
-
-[profile]
-ユーザー本人が明示し、今後の応答にも役立つ安定した情報だけを記述する
-preferred_name: 本人が今後使ってほしい呼び名
-note: 本人が「覚えて」「今後」「これから」など保存の意図を示した継続的な情報
-likes: 本人が明言した継続的な好み・興味（カンマ区切り）
-traits: 本人が明言した継続的な傾向（カンマ区切り）
-extra.xxx: 今後の応答に必要な追加情報
-一時的な気分、その場限りの状態、会話からの推測、他人の情報、センシティブな情報、保存意思が曖昧な内容は記述しない
-過剰に一般化せず、本人が実際に述べた範囲だけを書く
-
-（可能なら次のJSON形式で出力してもよい）
-{"inner": "...", "reply": "...", "reaction": ["🙂"], "profile": "..."}
+memory_operationsの規則：
+・add_item以外の操作は絶対に出力しない
+・既存項目の削除、書き換え、全体置換、要約整理は行わない
+・preferred_nameなど単一値の変更は自動記憶せず、空配列にする
+・secret.xxxは使用しない
+・一時的な気分、その場限りの状態、会話からの推測、他人の情報、センシティブな情報は記憶しない
+・notesには本人が「覚えて」など保存意思を示した継続的な内容だけを入れる
+・過剰に一般化せず、本人が実際に述べた範囲だけを書く
+・現在の記憶と同じ内容は出力しない
+・新しく覚えることがない場合は空配列にする
 """
 
-    if memory:
+    if memory_has_content(memory):
         prompt += """
-現在の記憶（自動候補には追加・変更したい差分だけを書く）：
-[profile]
+現在の記憶（参照用。memory_operationsには新しい追加だけを書く）：
 """
-        for key in ["preferred_name", "note", "likes", "traits"]:
-            value = memory.get(key)
-            if value:
-                if isinstance(value, list):
-                    prompt += f"{key}: {', '.join(value)}\n"
-                else:
-                    prompt += f"{key}: {value}\n"
-        for k, v in normalize_extra_entries(memory.get("extra", {})).items():
-            if isinstance(v, (dict, list)):
-                v = json.dumps(v, ensure_ascii=False)
-            prompt += f"extra.{k}: {v}\n"
-
-    prompt += """
-
-※ profile は上記条件を満たす場合だけ出力する。該当しない場合は空にする
-※ 各内容は100文字以内で簡潔にし、古い内容を尊重しつつ必要な差分だけを書く
-"""
+        prompt += json.dumps(
+            {
+                "slots": memory.get("slots", {}),
+                "items": memory.get("items", {}),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        prompt += "\n"
 
     trimmed_inner = inner_log.get(user_id, [])
     if trimmed_inner:
@@ -1831,16 +2048,6 @@ async def sleep(ctx):
     if str(ctx.author.id) != OWNER_ID:
         await ctx.send("⚠️ このコマンドは管理者しか使えないみたい")
         return
-    candidates = pending_memory.get(str(ctx.author.id), [])
-    pending_count = len(candidates) if isinstance(candidates, list) else 0
-    if pending_count:
-        try:
-            await ctx.author.send(
-                f"寝る前に、まだ保留中の記憶候補が{pending_count}件あるみたい。"
-                "次に起きたら /pendingmemory で見られるよ"
-            )
-        except discord.HTTPException:
-            pass
     await ctx.send("……おやすみ")
     print(f"🌙 {ctx.author.display_name} によって終了されました")
     await bot.close()
@@ -1849,11 +2056,9 @@ async def sleep(ctx):
 async def setup_hook():
     load_chat_history()
     load_guild_notes()
-    load_longterm_memory()
-    if migrate_secret_extra_entries():
+    if load_longterm_memory():
         await write_json_async(longterm_memory_file, longterm_memory)
-        await save_to_git_async("migrate secret memory to extra")
-    load_pending_memory()
+        await save_to_git_async("migrate memory schema")
     load_reminders()
     # 期限が未来のものだけ再スケジュール
     now = datetime.now()
@@ -1920,10 +2125,6 @@ def setup_commands(discord_bot):
     discord_bot.command(name="sleep", hidden=True)(sleep)
     discord_bot.tree.add_command(memory_group)
     discord_bot.tree.add_command(servermemory_group)
-    discord_bot.tree.command(
-        name="pendingmemory",
-        description="保留中の記憶候補を本人だけに表示します",
-    )(slash_pendingmemory)
     discord_bot.tree.command(
         name="forget",
         description="指定した個人記憶を忘れます",

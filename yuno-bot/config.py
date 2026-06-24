@@ -18,7 +18,7 @@ LOG_INNER_TO_DISCORD = os.getenv("LOG_INNER_TO_DISCORD", "1").strip().lower() in
     "on",
 )
 INNER_LOG_LIMIT = max(0, int(os.getenv("INNER_LOG_LIMIT", "1000")))
-PROFILE_LOG_LIMIT = max(0, int(os.getenv("PROFILE_LOG_LIMIT", "1000")))
+MEMORY_LOG_LIMIT = max(0, int(os.getenv("MEMORY_LOG_LIMIT", "1000")))
 
 _DISCORD_GUILD_ID_RAW = os.getenv("DISCORD_GUILD_ID", "").strip()
 try:
@@ -43,12 +43,10 @@ MAX_CHAT_HISTORY = 128
 MAX_CHANNEL_LOG = 64
 MAX_MESSAGES = 32
 WINDOW_SECONDS = 3600
-MAX_PENDING_MEMORY = 20
-PENDING_MESSAGE_EXCERPT_LIMIT = 100
+MAX_MEMORY_CHANGE_LOG = 50
 
 CHAT_HISTORY_FILE = os.path.join(BASE_DIR, "chat_history.json")
 LONGTERM_MEMORY_FILE = os.path.join(BASE_DIR, "longterm_memory.json")
 GUILD_NOTES_FILE = os.path.join(BASE_DIR, "guild_notes.json")
 REMINDERS_FILE = os.path.join(BASE_DIR, "reminders.json")
-PENDING_MEMORY_FILE = os.path.join(BASE_DIR, "pending_memory.json")
 LAST_PROMPT_FILE = os.path.join(BASE_DIR, "last_prompt.json")

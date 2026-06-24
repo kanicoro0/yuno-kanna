@@ -9,7 +9,6 @@ from config import (
     ENABLE_GIT_SAVE,
     GUILD_NOTES_FILE,
     LONGTERM_MEMORY_FILE,
-    PENDING_MEMORY_FILE,
     REMINDERS_FILE,
 )
 
@@ -46,7 +45,6 @@ async def save_to_git_async(commit_msg: str, error_reporter=None):
                 GUILD_NOTES_FILE,
                 LONGTERM_MEMORY_FILE,
                 REMINDERS_FILE,
-                PENDING_MEMORY_FILE,
             )
             if os.path.isfile(path)
         ]

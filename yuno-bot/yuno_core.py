@@ -108,6 +108,24 @@ def configure_modules(discord_bot):
     owner_tools.configure(discord_bot=discord_bot)
 
 
+async def sync_slash_commands():
+    """Slash command sync policy for multi-server operation.
+
+    The bot is used in multiple servers, so the normal command source should be
+    global commands.  If DISCORD_GUILD_ID is set, treat it only as a one-time /
+    temporary cleanup target for stale guild commands that may duplicate the
+    global commands in that server.
+    """
+    if DISCORD_GUILD_ID:
+        guild = discord.Object(id=DISCORD_GUILD_ID)
+        bot.tree.clear_commands(guild=guild)
+        await bot.tree.sync(guild=guild)
+        print(f"Stale guild slash commands cleared from {DISCORD_GUILD_ID}")
+
+    await bot.tree.sync()
+    print("Slash commands synced globally")
+
+
 async def setup_hook():
     _load_json_mapping(CHAT_HISTORY_FILE, chat_history)
     _load_json_mapping(GUILD_NOTES_FILE, guild_notes)
@@ -116,14 +134,7 @@ async def setup_hook():
     await reminders.restore_reminders()
     await save_to_git_async("起動時保存")
     try:
-        if DISCORD_GUILD_ID:
-            guild = discord.Object(id=DISCORD_GUILD_ID)
-            bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-            print(f"Slash commands synced to guild {DISCORD_GUILD_ID}")
-        else:
-            await bot.tree.sync()
-            print("Slash commands synced globally")
+        await sync_slash_commands()
     except Exception as error:
         safe_report_error(f"Slash commandの同期に失敗: {error}")
 

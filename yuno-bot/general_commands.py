@@ -1,5 +1,9 @@
-from config import DISCORD_GUILD_ID, ENABLE_GIT_SAVE, OWNER_ID
-from memory_model import ensure_memory_entry, memory_has_content
+from config import DISCORD_GUILD_ID, DISCORD_LIMIT, ENABLE_GIT_SAVE, OWNER_ID
+from memory_model import (
+    ensure_memory_entry,
+    format_memory_flat_for_display,
+    memory_has_content,
+)
 
 
 chat_history = {}
@@ -41,6 +45,17 @@ YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 
 async def slash_guide(interaction):
     await interaction.response.send_message(YUNO_GUIDE, ephemeral=True)
+
+
+async def slash_memory_show_flat(interaction):
+    user_id = str(interaction.user.id)
+    entry = ensure_memory_entry(user_id)
+    lines = [f"📘 {interaction.user.display_name} の記憶（フラット表示）："]
+    lines.extend(format_memory_flat_for_display(entry) or ["（まだ何も覚えていないよ）"])
+    await interaction.response.send_message(
+        "\n".join(lines)[:DISCORD_LIMIT],
+        ephemeral=True,
+    )
 
 
 async def slash_status(interaction):

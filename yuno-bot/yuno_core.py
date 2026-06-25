@@ -166,6 +166,10 @@ def setup_commands(discord_bot):
         name="export_v3",
         description="v3仮変換JSONを確認します",
     )(general_commands.slash_memory_export_v3)
+    memory_ui.memory_group.command(
+        name="export_v3_file",
+        description="v3仮変換JSONをファイルで出力します",
+    )(general_commands.slash_memory_export_v3_file)
     discord_bot.tree.add_command(memory_ui.memory_group)
     discord_bot.tree.add_command(server_memory.servermemory_group)
     discord_bot.tree.command(

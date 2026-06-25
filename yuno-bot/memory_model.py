@@ -485,6 +485,145 @@ def format_memory_flat_for_display(entry):
                 lines.append(f"・{value}")
     return lines
 
+
+FLAT_DISPLAY_HANDLING_CATEGORIES = {
+    "傾向",
+    "好み",
+    "話し方",
+    "避けたいこと",
+}
+
+
+def _flat_memory_display_bucket(*, collection="", source_category=""):
+    category = canonicalize_memory_category(source_category)
+    if collection == "interaction_preferences" or category in FLAT_DISPLAY_HANDLING_CATEGORIES:
+        return "handling"
+    return "remembered"
+
+
+def _append_flat_memory_value(target, seen, value):
+    text = str(value or "").strip()
+    if not text or text in seen:
+        return
+    seen.add(text)
+    target.append(text)
+
+
+def _append_flat_memory_section(lines, title, values):
+    cleaned = [str(value).strip() for value in values if str(value).strip()]
+    if not cleaned:
+        return
+    if lines:
+        lines.append("")
+    lines.append(title)
+    lines.extend(f"・{value}" for value in cleaned)
+
+
+def _format_flat_memory_display(*, slots=None, remembered=None, handling=None):
+    lines = []
+    slot_lines = []
+    slots = slots if isinstance(slots, dict) else {}
+    for slot in MEMORY_SLOT_NAMES:
+        value = slots.get(slot)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if slot == "preferred_name":
+            slot_lines.append(value.strip())
+        else:
+            slot_lines.append(f"{memory_slot_label(slot)}: {value.strip()}")
+
+    _append_flat_memory_section(lines, "呼び名", slot_lines)
+    _append_flat_memory_section(lines, "覚えていること", remembered or [])
+    _append_flat_memory_section(lines, "話し方・扱い方", handling or [])
+    return lines
+
+
+def _format_v2_flat_memory_sections(entry):
+    """v2互換entryを、保存カテゴリではなく自然表示の棚へ並べる。"""
+    if not isinstance(entry, dict):
+        return []
+
+    remembered = []
+    handling = []
+    seen_handling = set()
+    seen_remembered = set()
+
+    items = entry.get("items")
+    if isinstance(items, dict):
+        for category in MEMORY_CATEGORY_ORDER:
+            bucket = _flat_memory_display_bucket(source_category=category)
+            target = handling if bucket == "handling" else remembered
+            seen = seen_handling if bucket == "handling" else seen_remembered
+            for value in normalize_item_list(items.get(category, [])):
+                _append_flat_memory_value(target, seen, value)
+
+        # canonical外の旧カテゴリが残っていても、表示では落とさず自然な棚へ寄せる。
+        for category, values in items.items():
+            if category in MEMORY_CATEGORY_ORDER:
+                continue
+            bucket = _flat_memory_display_bucket(source_category=category)
+            target = handling if bucket == "handling" else remembered
+            seen = seen_handling if bucket == "handling" else seen_remembered
+            for value in normalize_item_list(values):
+                _append_flat_memory_value(target, seen, value)
+
+    # 同じ本文が両方に出る場合は、扱い方側を優先する。
+    remembered = [value for value in remembered if value not in seen_handling]
+    return _format_flat_memory_display(
+        slots=entry.get("slots"),
+        remembered=remembered,
+        handling=handling,
+    )
+
+
+def _format_v3_flat_memory_sections(entry):
+    """v3 record実体から、activeな記憶だけを自然表示へ変換する。"""
+    if not isinstance(entry, dict):
+        return []
+
+    records = []
+    for collection, fallback, _, record in _v3_active_records(entry):
+        text = _v3_record_text(record)
+        if not text:
+            continue
+        category = _v3_record_category(record, fallback)
+        bucket = _flat_memory_display_bucket(
+            collection=collection,
+            source_category=category,
+        )
+        records.append((bucket, text))
+
+    remembered = []
+    handling = []
+    seen_handling = set()
+    seen_remembered = set()
+
+    # 重複時は「話し方・扱い方」を優先するため、先に集める。
+    for bucket, text in records:
+        if bucket == "handling":
+            _append_flat_memory_value(handling, seen_handling, text)
+    for bucket, text in records:
+        if bucket != "handling":
+            if text in seen_handling:
+                continue
+            _append_flat_memory_value(remembered, seen_remembered, text)
+
+    return _format_flat_memory_display(
+        slots=entry.get("slots"),
+        remembered=remembered,
+        handling=handling,
+    )
+
+
+def format_memory_flat_sections_for_user(user_id):
+    """show_flat用。v3では互換viewではなくrecord実体のactive状態を尊重する。"""
+    user_id = str(user_id)
+    if memory_root_is_v3():
+        entry = memory_user_store().get(user_id)
+        return _format_v3_flat_memory_sections(entry)
+    return _format_v2_flat_memory_sections(ensure_memory_entry(user_id))
+
+
 def normalize_auto_memory_operations(operations):
     if not isinstance(operations, list):
         return [], ["memory_operations がリストではない"]

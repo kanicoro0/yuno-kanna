@@ -4,12 +4,9 @@ import discord
 
 from config import DISCORD_GUILD_ID, DISCORD_LIMIT, ENABLE_GIT_SAVE, OWNER_ID
 from memory_model import (
-    MEMORY_CATEGORY_ORDER,
-    MEMORY_SLOT_NAMES,
     ensure_memory_entry,
+    format_memory_flat_sections_for_user,
     memory_has_content,
-    memory_slot_label,
-    normalize_item_list,
 )
 from memory_v3_preview import (
     build_memory_v3_preview,
@@ -26,145 +23,11 @@ guild_notes = {}
 persisted_reminders = {}
 
 
-FLAT_HANDLING_CATEGORIES = {
-    "傾向",
-    "好み",
-    "話し方",
-    "避けたいこと",
-}
-
-FRAGMENT_MAX_LENGTH = 12
-FRAGMENT_SENTENCE_MARKERS = (
-    " ",
-    "　",
-    "、",
-    "。",
-    "，",
-    "．",
-    ":",
-    "：",
-    "について",
-    "として",
-    "という",
-    "ように",
-    "くらい",
-    "ではない",
-    "がよい",
-    "している",
-    "伝わる",
-    "追う",
-    "追いかける",
-)
-
-
 def configure(*, history, notes, persisted):
     global chat_history, guild_notes, persisted_reminders
     chat_history = history
     guild_notes = notes
     persisted_reminders = persisted
-
-
-def _append_section(lines, title, values):
-    cleaned = [value for value in values if str(value).strip()]
-    if not cleaned:
-        return
-    if lines:
-        lines.append("")
-    lines.append(title)
-    lines.extend(f"・{value}" for value in cleaned)
-
-
-def _append_unique(target, seen, values):
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        target.append(value)
-
-
-def _looks_like_fragment(value):
-    text = str(value or "").strip()
-    if not text:
-        return False
-    if len(text) > FRAGMENT_MAX_LENGTH:
-        return False
-    return not any(marker in text for marker in FRAGMENT_SENTENCE_MARKERS)
-
-
-def _append_memory_items(*, target, fragments, handling, seen, category, values):
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        if category in FLAT_HANDLING_CATEGORIES:
-            handling.append(value)
-        elif _looks_like_fragment(value):
-            fragments.append(value)
-        else:
-            target.append(value)
-
-
-def _split_memory_by_preview_role(entry):
-    remembered = []
-    fragments = []
-    handling = []
-    seen_items = set()
-
-    items = entry.get("items") if isinstance(entry, dict) else None
-    if not isinstance(items, dict):
-        return remembered, fragments, handling
-
-    for category in MEMORY_CATEGORY_ORDER:
-        _append_memory_items(
-            target=remembered,
-            fragments=fragments,
-            handling=handling,
-            seen=seen_items,
-            category=category,
-            values=normalize_item_list(items.get(category, [])),
-        )
-
-    # canonical外のカテゴリが残っていても、previewでは落とさず saved 側へ寄せる。
-    for category, values in items.items():
-        if category in MEMORY_CATEGORY_ORDER:
-            continue
-        _append_memory_items(
-            target=remembered,
-            fragments=fragments,
-            handling=handling,
-            seen=seen_items,
-            category=category,
-            values=normalize_item_list(values),
-        )
-
-    return remembered, fragments, handling
-
-
-def format_memory_flat_sections(entry):
-    """schema v2のまま、表示上だけ薄く役割別に並べる。"""
-    if not isinstance(entry, dict):
-        return []
-
-    lines = []
-    slot_lines = []
-    slots = entry.get("slots")
-    if isinstance(slots, dict):
-        for slot in MEMORY_SLOT_NAMES:
-            value = slots.get(slot)
-            if not value:
-                continue
-            if slot == "preferred_name":
-                slot_lines.append(str(value))
-            else:
-                slot_lines.append(f"{memory_slot_label(slot)}: {value}")
-
-    remembered, fragments, handling = _split_memory_by_preview_role(entry)
-
-    _append_section(lines, "呼び名", slot_lines)
-    _append_section(lines, "覚えていること", remembered)
-    _append_section(lines, "断片", fragments)
-    _append_section(lines, "話し方・扱い方", handling)
-    return lines
 
 
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
@@ -200,9 +63,11 @@ async def slash_guide(interaction):
 
 async def slash_memory_show_flat(interaction):
     user_id = str(interaction.user.id)
-    entry = ensure_memory_entry(user_id)
-    lines = [f"📘 {interaction.user.display_name} の記憶（フラット表示）："]
-    lines.extend(format_memory_flat_sections(entry) or ["（まだ何も覚えていないよ）"])
+    lines = [f"📘 {interaction.user.display_name} の記憶（自然表示）："]
+    lines.extend(
+        format_memory_flat_sections_for_user(user_id)
+        or ["まだ覚えていることはないみたい"]
+    )
     await interaction.response.send_message(
         "\n".join(lines)[:DISCORD_LIMIT],
         ephemeral=True,

@@ -1,14 +1,25 @@
 from config import DISCORD_GUILD_ID, DISCORD_LIMIT, ENABLE_GIT_SAVE, OWNER_ID
 from memory_model import (
+    MEMORY_CATEGORY_ORDER,
+    MEMORY_SLOT_NAMES,
     ensure_memory_entry,
-    format_memory_flat_for_display,
     memory_has_content,
+    memory_slot_label,
+    normalize_item_list,
 )
 
 
 chat_history = {}
 guild_notes = {}
 persisted_reminders = {}
+
+
+FLAT_HANDLING_CATEGORIES = {
+    "傾向",
+    "好み",
+    "話し方",
+    "避けたいこと",
+}
 
 
 def configure(*, history, notes, persisted):
@@ -18,9 +29,70 @@ def configure(*, history, notes, persisted):
     persisted_reminders = persisted
 
 
+def _append_section(lines, title, values):
+    cleaned = [value for value in values if str(value).strip()]
+    if not cleaned:
+        return
+    if lines:
+        lines.append("")
+    lines.append(title)
+    lines.extend(f"・{value}" for value in cleaned)
+
+
+def _append_unique(target, seen, values):
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        target.append(value)
+
+
+def format_memory_flat_sections(entry):
+    """schema v2のまま、表示上だけ薄く役割別に並べる。"""
+    if not isinstance(entry, dict):
+        return []
+
+    lines = []
+    slot_lines = []
+    remembered = []
+    handling = []
+    seen_items = set()
+
+    slots = entry.get("slots")
+    if isinstance(slots, dict):
+        for slot in MEMORY_SLOT_NAMES:
+            value = slots.get(slot)
+            if not value:
+                continue
+            if slot == "preferred_name":
+                slot_lines.append(str(value))
+            else:
+                slot_lines.append(f"{memory_slot_label(slot)}: {value}")
+
+    items = entry.get("items")
+    if isinstance(items, dict):
+        for category in MEMORY_CATEGORY_ORDER:
+            values = normalize_item_list(items.get(category, []))
+            if category in FLAT_HANDLING_CATEGORIES:
+                _append_unique(handling, seen_items, values)
+            else:
+                _append_unique(remembered, seen_items, values)
+
+        # canonical外のカテゴリが残っていても、表示実験では落とさず末尾に出す。
+        for category, values in items.items():
+            if category in MEMORY_CATEGORY_ORDER:
+                continue
+            _append_unique(remembered, seen_items, normalize_item_list(values))
+
+    _append_section(lines, "呼び名", slot_lines)
+    _append_section(lines, "覚えていること", remembered)
+    _append_section(lines, "話し方・扱い方", handling)
+    return lines
+
+
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/memory show：現在の個人記憶を本人だけに表示
-・/memory show_flat：現在の個人記憶をカテゴリなしで表示
+・/memory show_flat：現在の個人記憶をカテゴリ棚なしで表示
 ・/memory edit：記憶一覧を開いて追加・編集・削除
 ・/memory edit instruction：自然な言葉で変更案を作り、確認後に実行
 ・/memory recent：最近の自動記憶・手動編集履歴を表示
@@ -51,7 +123,7 @@ async def slash_memory_show_flat(interaction):
     user_id = str(interaction.user.id)
     entry = ensure_memory_entry(user_id)
     lines = [f"📘 {interaction.user.display_name} の記憶（フラット表示）："]
-    lines.extend(format_memory_flat_for_display(entry) or ["（まだ何も覚えていないよ）"])
+    lines.extend(format_memory_flat_sections(entry) or ["（まだ何も覚えていないよ）"])
     await interaction.response.send_message(
         "\n".join(lines)[:DISCORD_LIMIT],
         ephemeral=True,

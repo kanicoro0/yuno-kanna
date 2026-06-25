@@ -206,6 +206,9 @@ async def build_memory_instruction_proposal(instruction, entry):
 ・「整理して」のように残す基準が不明なら ambiguous=true にする
 ・存在しない内容を削除対象として作らない
 ・categoryは上記の日本語カテゴリだけを使う
+・item / old_item / new_item は必ず1件の記憶だけを書く
+・item / old_item / new_item 内に改行、箇条書き、複数項目の列挙を入れない
+・複数のことを追加する場合は、複数のadd_item operationに分ける
 ・secret.xxxは使用しない
 """
     response = await oa_chat(

@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import datetime
 import json
+import re
 import uuid
 
 import discord
@@ -108,6 +109,34 @@ MEMORY_CATEGORY_GUIDANCE = (
 
 MEMORY_ITEM_PAGE_SIZE = 20
 
+MEMORY_ITEM_BULLET_RE = re.compile(
+    r"^\s*(?:[-–—*•・･‣⁃◦○●◎◇◆□■※]|[0-9０-９]+[.)．、]|[①-⑳])\s*"
+)
+
+
+def split_memory_item_text(value, *, max_length=200):
+    """記憶itemを、表示可能な1行単位へ機械的に分割する。"""
+    if value is None:
+        return []
+    if not isinstance(value, str):
+        value = json.dumps(value, ensure_ascii=False)
+
+    text = value.replace("\r\n", "\n").replace("\r", "\n")
+    parts = []
+    for raw_line in text.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = MEMORY_ITEM_BULLET_RE.sub("", line).strip()
+        if not line:
+            continue
+        line = re.sub(r"[ \t]+", " ", line)
+        if not line:
+            continue
+        parts.append(line[:max_length])
+    return parts
+
+
 def normalize_extra_entries(extra):
     """旧JSONの extra.secret を移行するためだけの互換処理。"""
     if not isinstance(extra, dict):
@@ -176,7 +205,10 @@ def canonicalize_memory_item(category, item):
     canonical = canonicalize_memory_category(category)
     if not canonical or not isinstance(item, str):
         return canonical, item
-    item = item.strip()
+    item_parts = split_memory_item_text(item)
+    item = item_parts[0] if item_parts else ""
+    if not item:
+        return canonical, item
     source = _memory_category_source(category)
     is_unknown = (
         canonical == "その他"
@@ -214,35 +246,18 @@ def normalize_item_list(values):
     seen = set()
     source = values if isinstance(values, list) else [values]
     for value in source:
-        if not isinstance(value, str):
-            value = json.dumps(value, ensure_ascii=False)
-        value = value.strip()
-        if not value or len(value) > 200 or value in seen:
-            continue
-        seen.add(value)
-        normalized.append(value)
-        if len(normalized) >= 50:
-            break
+        for item in split_memory_item_text(value):
+            if item in seen:
+                continue
+            seen.add(item)
+            normalized.append(item)
+            if len(normalized) >= 50:
+                return normalized
     return normalized
 
 def normalize_legacy_item_list(values):
-    """旧データは長文を捨てず、新規入力と同じ上限へ機械的に切り詰める。"""
-    if values is None:
-        return []
-    normalized = []
-    seen = set()
-    source = values if isinstance(values, list) else [values]
-    for value in source:
-        if not isinstance(value, str):
-            value = json.dumps(value, ensure_ascii=False)
-        value = value.strip()[:200]
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        normalized.append(value)
-        if len(normalized) >= 50:
-            break
-    return normalized
+    """旧データも、複数行や箇条書きを1 item単位へ機械的に分割する。"""
+    return normalize_item_list(values)
 
 def merge_canonical_memory_items(items, raw_category, values):
     category = canonicalize_memory_category(raw_category)
@@ -428,37 +443,47 @@ def normalize_auto_memory_operations(operations):
             if not isinstance(item, str):
                 errors.append(f"{label}: item は文字列にする")
                 continue
-            item = item.strip()
-            if not item or len(item) > 200:
+            item_parts = split_memory_item_text(item)
+            if not item_parts:
                 errors.append(f"{label}: item は1〜200文字にする")
                 continue
-            _, item = canonicalize_memory_item(raw_category, item)
-            op_key = (operation_type, category, item)
-            if op_key in seen:
+            if operation_type == "delete_item" and len(item_parts) != 1:
+                errors.append(f"{label}: delete_item は1件だけ指定する")
                 continue
-            seen.add(op_key)
-            normalized.append({
-                "type": operation_type,
-                "category": category,
-                "item": item,
-            })
+            for item_part in item_parts:
+                _, item_value = canonicalize_memory_item(raw_category, item_part)
+                if not item_value:
+                    continue
+                op_key = (operation_type, category, item_value)
+                if op_key in seen:
+                    continue
+                if len(normalized) >= 10:
+                    errors.append("一度に自動記憶できる項目は10件まで")
+                    break
+                seen.add(op_key)
+                normalized.append({
+                    "type": operation_type,
+                    "category": category,
+                    "item": item_value,
+                })
             continue
 
         if operation_type == "rewrite_item":
             old_item = operation.get("old_item")
             new_item = operation.get("new_item")
-            if not isinstance(old_item, str) or not old_item.strip():
-                errors.append(f"{label}: old_item は文字列にする")
+            if not isinstance(old_item, str) or not isinstance(new_item, str):
+                errors.append(f"{label}: old_item / new_item は文字列にする")
                 continue
-            if (
-                not isinstance(new_item, str)
-                or not new_item.strip()
-                or len(new_item.strip()) > 200
-            ):
-                errors.append(f"{label}: new_item は1〜200文字にする")
+            old_parts = split_memory_item_text(old_item)
+            new_parts = split_memory_item_text(new_item)
+            if len(old_parts) != 1 or len(new_parts) != 1:
+                errors.append(f"{label}: rewrite_item は1件だけ指定する")
                 continue
-            _, old_item = canonicalize_memory_item(raw_category, old_item.strip())
-            _, new_item = canonicalize_memory_item(raw_category, new_item.strip())
+            _, old_item = canonicalize_memory_item(raw_category, old_parts[0])
+            _, new_item = canonicalize_memory_item(raw_category, new_parts[0])
+            if not old_item or not new_item:
+                errors.append(f"{label}: old_item / new_item は1〜200文字にする")
+                continue
             op_key = (operation_type, category, old_item)
             if op_key in seen:
                 continue
@@ -470,7 +495,7 @@ def normalize_auto_memory_operations(operations):
                 "new_item": new_item,
             })
 
-    if len(operations) > 10:
+    if len(operations) > 10 or len(normalized) > 10:
         errors.append("一度に自動記憶できる項目は10件まで")
     if errors:
         return [], errors
@@ -585,29 +610,37 @@ def prepare_memory_edit_operations(operations, entry):
 
         if operation_type == "add_item":
             item = operation.get("item")
-            if not isinstance(item, str) or not item.strip() or len(item.strip()) > 200:
+            if not isinstance(item, str):
+                errors.append(f"{label}: item は文字列にする")
+                continue
+            item_parts = split_memory_item_text(item)
+            if not item_parts:
                 errors.append(f"{label}: item は1〜200文字にする")
                 continue
-            item = item.strip()
-            _, item = canonicalize_memory_item(raw_category, item)
-            if item in current_values:
-                errors.append(f"{label}: その項目はすでに存在する")
-                continue
-            if ("item", category, item) in affected:
-                errors.append(f"{label}: 同じ項目を複数回変更できない")
-                continue
-            affected.add(("item", category, item))
-            prepared.append({
-                "type": "add_item",
-                "category": category,
-                "item": item,
-            })
+            added_any = False
+            for item_part in item_parts:
+                _, item_value = canonicalize_memory_item(raw_category, item_part)
+                if not item_value or item_value in current_values:
+                    continue
+                if ("item", category, item_value) in affected:
+                    continue
+                affected.add(("item", category, item_value))
+                prepared.append({
+                    "type": "add_item",
+                    "category": category,
+                    "item": item_value,
+                })
+                added_any = True
+            if not added_any:
+                errors.append(f"{label}: 追加できる新しい項目がない")
             continue
 
         if operation_type == "delete_item":
             item = operation.get("item")
             if isinstance(item, str):
-                _, item = canonicalize_memory_item(raw_category, item)
+                item_parts = split_memory_item_text(item)
+                if len(item_parts) == 1:
+                    _, item = canonicalize_memory_item(raw_category, item_parts[0])
             if not isinstance(item, str) or item not in current_values:
                 errors.append(f"{label}: 完全一致する削除対象がない")
                 continue
@@ -626,19 +659,20 @@ def prepare_memory_edit_operations(operations, entry):
             old_item = operation.get("old_item")
             new_item = operation.get("new_item")
             if isinstance(old_item, str):
-                _, old_item = canonicalize_memory_item(raw_category, old_item)
+                old_parts = split_memory_item_text(old_item)
+                if len(old_parts) == 1:
+                    _, old_item = canonicalize_memory_item(raw_category, old_parts[0])
             if not isinstance(old_item, str) or old_item not in current_values:
                 errors.append(f"{label}: 書き換え元が完全一致しない")
                 continue
-            if (
-                not isinstance(new_item, str)
-                or not new_item.strip()
-                or len(new_item.strip()) > 200
-            ):
+            if not isinstance(new_item, str):
                 errors.append(f"{label}: 書き換え先は1〜200文字にする")
                 continue
-            new_item = new_item.strip()
-            _, new_item = canonicalize_memory_item(raw_category, new_item)
+            new_parts = split_memory_item_text(new_item)
+            if len(new_parts) != 1:
+                errors.append(f"{label}: 書き換え先は1件だけ指定する")
+                continue
+            _, new_item = canonicalize_memory_item(raw_category, new_parts[0])
             if new_item != old_item and new_item in current_values:
                 errors.append(f"{label}: 書き換え先がすでに存在する")
                 continue

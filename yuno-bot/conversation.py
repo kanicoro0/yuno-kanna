@@ -42,6 +42,24 @@ guild_notes = {}
 inner_log = {}
 usage_log = {}
 safe_report_error = print
+SYSTEM_MEMORY_REACTIONS = {"📌", "🗑️", "📝"}
+
+
+def is_system_memory_reaction(emoji):
+    return str(emoji) in SYSTEM_MEMORY_REACTIONS
+
+
+def sanitize_ai_reaction_text(reaction):
+    if not reaction or reaction == "なし":
+        return "なし"
+    tokens = []
+    for emoji in str(reaction).split():
+        if any(character in emoji for character in ("[", "]", "�")):
+            continue
+        if is_system_memory_reaction(emoji):
+            continue
+        tokens.append(emoji)
+    return " ".join(tokens[:5]) or "なし"
 
 
 def configure(*, discord_bot, history, notes, inner, usage, error_reporter):
@@ -144,7 +162,9 @@ async def load_channel_history(channel, n=MAX_CHANNEL_LOG, before=None):
             "name": "ゆの" if msg.author.id == bot.user.id else msg.author.display_name,
             "content": msg.clean_content.strip(),
             "reactions": [
-                f"{r.emoji}×{r.count}" for r in msg.reactions if r.count > 0
+                f"{r.emoji}×{r.count}"
+                for r in msg.reactions
+                if r.count > 0 and not is_system_memory_reaction(r.emoji)
             ]
         }
         async for msg in channel.history(limit=n, before=before)
@@ -386,6 +406,7 @@ async def handle_mention(message, ctx):
             reply, reaction, inner, memory_operations = (
                 extract_from_json_or_brackets(raw_content)
             )
+            reaction = sanitize_ai_reaction_text(reaction)
 
             # inner / 安全な自動記憶の処理
             if inner.strip():
@@ -513,6 +534,10 @@ def build_system_prompt(message, ctx):
   "memory_operations": []
 }}
 
+reactionの規則:
+・📌 / 🗑️ / 📝 は記憶変更に成功したときだけプログラム側が付ける予約絵文字なので、reactionでは絶対に使わない
+・記憶変更を示したい場合はreactionではなくmemory_operationsを使う
+
 ユーザー本人が明示し、今後の応答にも役立つ安定した情報を覚える・直す・消す必要がある場合だけ、
 memory_operationsへ小さく明確な操作を書く。追加AI呼び出しや確認UIはないので、曖昧なら操作を書かず、replyで自然に聞き返す。
 
@@ -540,6 +565,9 @@ memory_operationsの規則：
 ・覚え書きには本人が「覚えて」など保存意思を示した継続的な内容だけを入れる
 ・過剰に一般化せず、本人が実際に述べた範囲だけを書く
 ・現在の記憶と同じ内容は出力しない
+・item / old_item / new_item は必ず1件の記憶だけを書く
+・item / old_item / new_item 内に改行、箇条書き、複数項目の列挙を入れない
+・複数のことを覚える場合は、複数のadd_item operationに分ける
 ・明確に操作できる記憶変更がない場合は空配列にする
 """
 
@@ -609,11 +637,8 @@ async def send_reply(message, reply, reaction):
     if reply and reply != "なし":
         await send_long(message.channel, reply)
 
-    reactions = []
-    if reaction and reaction != "なし":
-        for r in reaction.split():
-            if not any(c in r for c in ["[", "]", "�"]):
-                reactions.append(r)
+    allowed_reactions = sanitize_ai_reaction_text(reaction)
+    reactions = [] if allowed_reactions == "なし" else allowed_reactions.split()
 
     for r in reactions[:5]:
         try:

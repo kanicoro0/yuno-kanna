@@ -493,6 +493,11 @@ FLAT_DISPLAY_HANDLING_CATEGORIES = {
     "避けたいこと",
 }
 
+MEMORY_RECORD_TYPES = {
+    "memory",
+    "interaction_preference",
+}
+
 
 def _flat_memory_display_bucket(*, collection="", source_category=""):
     category = canonicalize_memory_category(source_category)
@@ -586,10 +591,11 @@ def _format_v3_flat_memory_sections(entry):
         text = _v3_record_text(record)
         if not text:
             continue
-        category = _v3_record_category(record, fallback)
-        bucket = _flat_memory_display_bucket(
-            collection=collection,
-            source_category=category,
+        record_type = _v3_record_type(record, collection, fallback)
+        bucket = (
+            "handling"
+            if record_type == "interaction_preference"
+            else "remembered"
         )
         records.append((bucket, text))
 
@@ -845,6 +851,26 @@ def _v3_record_category(record, fallback):
     return canonicalize_memory_category(record.get("source_category") or fallback) or fallback
 
 
+def _v3_record_type_for_collection(collection):
+    if collection == "interaction_preferences":
+        return "interaction_preference"
+    return "memory"
+
+
+def _v3_record_type(record, collection="", fallback_category=""):
+    """recordの主分類。既存recordはcollection/source_categoryから読み取り時に推定する。"""
+    if isinstance(record, dict):
+        record_type = str(record.get("type", "")).strip()
+        if record_type in MEMORY_RECORD_TYPES:
+            return record_type
+    if collection == "interaction_preferences":
+        return "interaction_preference"
+    category = _v3_record_category(record, fallback_category) if isinstance(record, dict) else fallback_category
+    if category in FLAT_DISPLAY_HANDLING_CATEGORIES:
+        return "interaction_preference"
+    return "memory"
+
+
 def _v3_active_records(entry):
     for collection, fallback_category in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS.items():
         records = entry.get(collection, {})
@@ -962,6 +988,7 @@ def format_memory_records_for_display(
             "record_id": record_id,
             "stored_id": stored_id if isinstance(stored_id, str) else "",
             "status": record_status,
+            "type": _v3_record_type(record, found_collection, fallback),
             "source_category": record.get("source_category") or fallback,
             "created_at": record.get("created_at") if isinstance(record.get("created_at"), str) else "",
             "updated_at": record.get("updated_at") if isinstance(record.get("updated_at"), str) else "",
@@ -1024,7 +1051,8 @@ def format_memory_records_for_display(
             "",
             (
                 f"[{row['record_id']}] {row['collection']} / "
-                f"{row['status']} / {row['source_category']}{id_note}"
+                f"{row['status']} / type: {row['type']} / "
+                f"source: {row['source_category']}{id_note}"
             ),
         ])
         if timestamp_line:
@@ -1070,6 +1098,7 @@ def format_memory_record_detail_for_display(
         lines.append(f'id field: {stored_id}')
     fields = [
         ("status", record.get("status", "active")),
+        ("type", _v3_record_type(record, collection, fallback)),
         ("source_category", record.get("source_category") or fallback),
         ("source_schema", record.get("source_schema")),
         ("created_at", record.get("created_at")),
@@ -1183,6 +1212,7 @@ def _v3_add_record(entry, category, item):
     records[record_id] = {
         "id": record_id,
         "text": item,
+        "type": _v3_record_type_for_collection(collection),
         "status": "active",
         "source_schema": MEMORY_V3_SCHEMA_VERSION,
         "source_category": category,

@@ -7,7 +7,12 @@ from memory_model import (
     memory_slot_label,
     normalize_item_list,
 )
-from memory_v3_preview import build_memory_v3_preview, format_memory_v3_preview
+from memory_v3_preview import (
+    build_memory_v3_preview,
+    format_memory_v3_preview,
+    format_memory_v3_validation,
+    validate_memory_v3_preview,
+)
 
 
 chat_history = {}
@@ -160,6 +165,7 @@ YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/memory show：現在の個人記憶を本人だけに表示
 ・/memory show_flat：現在の個人記憶をカテゴリ棚なしで表示
 ・/memory preview_v3：現在の個人記憶をv3風に仮表示
+・/memory validate_v3：v3仮変換が安全な形か確認
 ・/memory edit：記憶一覧を開いて追加・編集・削除
 ・/memory edit instruction：自然な言葉で変更案を作り、確認後に実行
 ・/memory recent：最近の自動記憶・手動編集履歴を表示
@@ -203,6 +209,17 @@ async def slash_memory_preview_v3(interaction):
     preview = build_memory_v3_preview(entry)
     await interaction.response.send_message(
         "\n".join(format_memory_v3_preview(preview))[:DISCORD_LIMIT],
+        ephemeral=True,
+    )
+
+
+async def slash_memory_validate_v3(interaction):
+    user_id = str(interaction.user.id)
+    entry = ensure_memory_entry(user_id)
+    preview = build_memory_v3_preview(entry)
+    validation = validate_memory_v3_preview(preview)
+    await interaction.response.send_message(
+        "\n".join(format_memory_v3_validation(validation))[:DISCORD_LIMIT],
         ephemeral=True,
     )
 

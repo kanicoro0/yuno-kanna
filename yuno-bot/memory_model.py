@@ -719,6 +719,81 @@ def _v3_active_records(entry):
             yield collection, fallback_category, record_id, record
 
 
+def _v3_all_records(entry):
+    for collection, fallback_category in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS.items():
+        records = entry.get(collection, {})
+        if not isinstance(records, dict):
+            continue
+        for record_id, record in records.items():
+            if isinstance(record, dict):
+                yield collection, fallback_category, record_id, record
+
+
+def _v3_find_record_by_id(entry, record_id, collection=None):
+    if not isinstance(record_id, str) or not record_id.strip():
+        return None, None, None, None
+
+    if collection in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS:
+        records = entry.get(collection, {})
+        if isinstance(records, dict):
+            record = records.get(record_id)
+            if isinstance(record, dict):
+                return (
+                    collection,
+                    MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS[collection],
+                    record_id,
+                    record,
+                )
+
+    for found_collection, fallback, found_id, record in _v3_all_records(entry):
+        if found_id == record_id:
+            return found_collection, fallback, found_id, record
+    return None, None, None, None
+
+
+def _v3_find_record_any(
+    entry,
+    category,
+    item,
+    *,
+    status=None,
+    record_id=None,
+    collection=None,
+):
+    category = canonicalize_memory_category(category)
+    if not category:
+        return None, None, None
+
+    if record_id:
+        found_collection, fallback, found_id, record = _v3_find_record_by_id(
+            entry,
+            record_id,
+            collection,
+        )
+        if record is not None:
+            if (
+                _v3_record_category(record, fallback) == category
+                and record.get("text") == item
+                and (status is None or record.get("status", "active") == status)
+            ):
+                return found_collection, found_id, record
+
+    for found_collection, fallback, found_id, record in _v3_all_records(entry):
+        if status is not None and record.get("status", "active") != status:
+            continue
+        if _v3_record_category(record, fallback) != category:
+            continue
+        if record.get("text") == item:
+            return found_collection, found_id, record
+
+    return None, None, None
+
+
+def _v3_restore_record(record):
+    record["status"] = "active"
+    record["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+
 def _v3_find_record(entry, category, item):
     category = canonicalize_memory_category(category)
     for collection, fallback, record_id, record in _v3_active_records(entry):
@@ -804,14 +879,23 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 if not current_items:
                     continue
                 removed = []
-                for _, fallback, _, record in list(_v3_active_records(entry)):
+                removed_targets = []
+                for collection, fallback, record_id, record in list(_v3_active_records(entry)):
                     if _v3_record_category(record, fallback) == category:
-                        removed.append(record.get("text"))
+                        text_value = record.get("text")
+                        removed.append(text_value)
+                        removed_targets.append({
+                            "category": category,
+                            "item": text_value,
+                            "collection": collection,
+                            "record_id": record_id,
+                        })
                         _v3_delete_record(record)
                 changes.append({
                     "type": "clear_category",
                     "category": category,
                     "old_items": normalize_item_list(removed),
+                    "targets": removed_targets,
                 })
                 continue
 
@@ -829,6 +913,8 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                     removed_targets.append({
                         "category": target.get("category"),
                         "item": target.get("item"),
+                        "collection": collection,
+                        "record_id": record_id,
                     })
                 if not removed_targets:
                     conflicts.append(operation)
@@ -848,28 +934,52 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 _, _, existing = _v3_find_record(entry, category, item)
                 if existing is not None:
                     continue
-                _v3_add_record(entry, category, item)
-                changes.append({**operation, "before_exists": False})
+                collection, _ = _v3_item_collection(category, item)
+                record_id = _v3_add_record(entry, category, item)
+                changes.append({
+                    **operation,
+                    "before_exists": False,
+                    "collection": collection,
+                    "record_id": record_id,
+                })
                 continue
 
             if operation_type == "delete_item":
-                _, _, record = _v3_find_record(entry, category, operation["item"])
+                collection, record_id, record = _v3_find_record(
+                    entry,
+                    category,
+                    operation["item"],
+                )
                 if record is None:
                     conflicts.append(operation)
                     continue
                 _v3_delete_record(record)
-                changes.append({**operation, "before_exists": True})
+                changes.append({
+                    **operation,
+                    "before_exists": True,
+                    "collection": collection,
+                    "record_id": record_id,
+                })
                 continue
 
             if operation_type == "rewrite_item":
-                _, _, record = _v3_find_record(entry, category, operation["old_item"])
+                collection, record_id, record = _v3_find_record(
+                    entry,
+                    category,
+                    operation["old_item"],
+                )
                 if record is None:
                     conflicts.append(operation)
                     continue
                 record["text"] = operation["new_item"]
                 record["source_category"] = category
                 record["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                changes.append({**operation, "before_exists": True})
+                changes.append({
+                    **operation,
+                    "before_exists": True,
+                    "collection": collection,
+                    "record_id": record_id,
+                })
                 continue
 
         if changes:
@@ -1387,12 +1497,246 @@ def _undo_operation(entry, operation):
 
     return False
 
+def _v3_operation_record_kwargs(operation):
+    return {
+        "record_id": operation.get("record_id"),
+        "collection": operation.get("collection"),
+    }
+
+
+def _v3_restore_deleted_item(entry, operation, category, item):
+    collection, record_id, record = _v3_find_record_any(
+        entry,
+        category,
+        item,
+        status="deleted",
+        **_v3_operation_record_kwargs(operation),
+    )
+    if record is None:
+        return False
+    _v3_restore_record(record)
+    return True
+
+
+def _v3_can_undo_change(entry, change):
+    for operation in reversed(change.get("changes", [])):
+        operation_type = operation.get("type")
+
+        if operation_type == "add_item":
+            _, _, record = _v3_find_record_any(
+                entry,
+                operation.get("category"),
+                operation.get("item"),
+                status="active",
+                **_v3_operation_record_kwargs(operation),
+            )
+            if record is None:
+                return False
+
+        elif operation_type == "delete_item":
+            _, _, active_record = _v3_find_record_any(
+                entry,
+                operation.get("category"),
+                operation.get("item"),
+                status="active",
+            )
+            if active_record is not None:
+                return False
+            _, _, deleted_record = _v3_find_record_any(
+                entry,
+                operation.get("category"),
+                operation.get("item"),
+                status="deleted",
+                **_v3_operation_record_kwargs(operation),
+            )
+            if deleted_record is None:
+                return False
+
+        elif operation_type == "rewrite_item":
+            _, _, new_record = _v3_find_record_any(
+                entry,
+                operation.get("category"),
+                operation.get("new_item"),
+                status="active",
+                **_v3_operation_record_kwargs(operation),
+            )
+            if new_record is None:
+                return False
+            _, _, old_record = _v3_find_record_any(
+                entry,
+                operation.get("category"),
+                operation.get("old_item"),
+                status="active",
+            )
+            if old_record is not None and old_record is not new_record:
+                return False
+
+        elif operation_type == "set_slot":
+            current = entry.get("slots", {}).get(operation.get("slot"))
+            if current != operation.get("value"):
+                return False
+
+        elif operation_type == "delete_slot":
+            if operation.get("slot") in entry.get("slots", {}):
+                return False
+
+        elif operation_type == "clear_category":
+            category = operation.get("category")
+            if _v3_category_items(entry, category):
+                return False
+            targets = operation.get("targets")
+            if isinstance(targets, list) and targets:
+                for target in targets:
+                    _, _, record = _v3_find_record_any(
+                        entry,
+                        target.get("category", category),
+                        target.get("item"),
+                        status="deleted",
+                        record_id=target.get("record_id"),
+                        collection=target.get("collection"),
+                    )
+                    if record is None:
+                        return False
+            else:
+                for item in operation.get("old_items", []):
+                    _, _, record = _v3_find_record_any(
+                        entry,
+                        category,
+                        item,
+                        status="deleted",
+                    )
+                    if record is None:
+                        return False
+
+        elif operation_type == "delete_matching_items":
+            for target in operation.get("targets", []):
+                _, _, active_record = _v3_find_record_any(
+                    entry,
+                    target.get("category"),
+                    target.get("item"),
+                    status="active",
+                )
+                if active_record is not None:
+                    return False
+                _, _, deleted_record = _v3_find_record_any(
+                    entry,
+                    target.get("category"),
+                    target.get("item"),
+                    status="deleted",
+                    record_id=target.get("record_id"),
+                    collection=target.get("collection"),
+                )
+                if deleted_record is None:
+                    return False
+
+        else:
+            return False
+
+    return True
+
+
+def _v3_undo_operation(entry, operation):
+    operation_type = operation.get("type")
+
+    if operation_type == "add_item":
+        _, _, record = _v3_find_record_any(
+            entry,
+            operation.get("category"),
+            operation.get("item"),
+            status="active",
+            **_v3_operation_record_kwargs(operation),
+        )
+        if record is None:
+            return False
+        _v3_delete_record(record)
+        return True
+
+    if operation_type == "delete_item":
+        return _v3_restore_deleted_item(
+            entry,
+            operation,
+            operation.get("category"),
+            operation.get("item"),
+        )
+
+    if operation_type == "rewrite_item":
+        _, _, record = _v3_find_record_any(
+            entry,
+            operation.get("category"),
+            operation.get("new_item"),
+            status="active",
+            **_v3_operation_record_kwargs(operation),
+        )
+        if record is None:
+            return False
+        record["text"] = operation.get("old_item")
+        record["source_category"] = operation.get("category")
+        record["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        return True
+
+    if operation_type == "set_slot":
+        slots = entry.setdefault("slots", {})
+        before = operation.get("before_value")
+        if before is None:
+            slots.pop(operation.get("slot"), None)
+        else:
+            slots[operation.get("slot")] = before
+        return True
+
+    if operation_type == "delete_slot":
+        before = operation.get("before_value")
+        if before is not None:
+            entry.setdefault("slots", {})[operation.get("slot")] = before
+        return True
+
+    if operation_type == "clear_category":
+        targets = operation.get("targets")
+        if isinstance(targets, list) and targets:
+            for target in targets:
+                if not _v3_restore_deleted_item(
+                    entry,
+                    target,
+                    target.get("category", operation.get("category")),
+                    target.get("item"),
+                ):
+                    return False
+            return True
+
+        for item in operation.get("old_items", []):
+            fallback_operation = {"type": "delete_item"}
+            if not _v3_restore_deleted_item(
+                entry,
+                fallback_operation,
+                operation.get("category"),
+                item,
+            ):
+                return False
+        return True
+
+    if operation_type == "delete_matching_items":
+        for target in operation.get("targets", []):
+            if not _v3_restore_deleted_item(
+                entry,
+                target,
+                target.get("category"),
+                target.get("item"),
+            ):
+                return False
+        return True
+
+    return False
+
+
 async def undo_latest_memory_change(user_id, *, source=None):
     if not memory_writes_supported():
         return {"undone": False, "reason": "v3_read_only"}
 
     async with memory_lock:
-        entry = ensure_memory_entry(user_id)
+        if memory_root_is_v3():
+            entry = _v3_raw_user_entry(user_id)
+        else:
+            entry = ensure_memory_entry(user_id)
+
         change_log = entry.get("change_log", [])
         target = None
         for change in reversed(change_log):
@@ -1404,11 +1748,20 @@ async def undo_latest_memory_change(user_id, *, source=None):
             break
         if not target:
             return {"undone": False, "reason": "empty"}
-        if not _can_undo_change(entry, target):
-            return {"undone": False, "reason": "conflict", "change": target}
-        for operation in reversed(target.get("changes", [])):
-            if not _undo_operation(entry, operation):
-                return {"undone": False, "reason": "unsupported", "change": target}
+
+        if memory_root_is_v3():
+            if not _v3_can_undo_change(entry, target):
+                return {"undone": False, "reason": "conflict", "change": target}
+            for operation in reversed(target.get("changes", [])):
+                if not _v3_undo_operation(entry, operation):
+                    return {"undone": False, "reason": "unsupported", "change": target}
+        else:
+            if not _can_undo_change(entry, target):
+                return {"undone": False, "reason": "conflict", "change": target}
+            for operation in reversed(target.get("changes", [])):
+                if not _undo_operation(entry, operation):
+                    return {"undone": False, "reason": "unsupported", "change": target}
+
         target["undone"] = True
         target["undone_at"] = datetime.now().isoformat(timespec="seconds")
         entry["updated"] = target["undone_at"]

@@ -1,5 +1,6 @@
 from config import LONGTERM_MEMORY_FILE, OWNER_ID
-from memory_model import ensure_memory_entry, format_memory_for_display, longterm_memory
+import memory_model
+from memory_model import ensure_memory_entry, format_memory_for_display
 from memory_v3_preview import build_memory_v3_preview, validate_memory_v3_preview
 
 
@@ -78,7 +79,10 @@ async def memory_migration_plan_v3(ctx):
     error_lines = []
     warning_lines = []
 
-    user_ids = sorted(str(user_id) for user_id in longterm_memory.keys())
+    # memory_model.configure() swaps memory_model.longterm_memory at runtime.
+    # Do not import longterm_memory directly, or this command may see the initial empty dict.
+    memory_store = memory_model.longterm_memory
+    user_ids = sorted(str(user_id) for user_id in memory_store.keys())
     for user_id in user_ids:
         entry = ensure_memory_entry(user_id)
         total_users += 1

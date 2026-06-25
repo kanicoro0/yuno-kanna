@@ -150,6 +150,10 @@ def setup_commands(discord_bot):
     configure_modules(discord_bot)
     discord_bot.command(name="revealmemory", hidden=True)(owner_tools.revealmemory)
     discord_bot.command(name="sleep", hidden=True)(owner_tools.sleep)
+    memory_ui.memory_group.command(
+        name="show_flat",
+        description="現在の個人記憶をカテゴリなしで表示します",
+    )(general_commands.slash_memory_show_flat)
     discord_bot.tree.add_command(memory_ui.memory_group)
     discord_bot.tree.add_command(server_memory.servermemory_group)
     discord_bot.tree.command(

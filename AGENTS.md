@@ -42,8 +42,8 @@ Also do not commit:
 
 ## Current design constraints
 
-- Keep `schema_version` at `2`.
-- Do not introduce schema v3 unless explicitly requested.
+- Keep `schema_version` at `2` unless the user explicitly asks to work on schema v3.
+- Do not introduce schema v3 as a side effect of an unrelated task.
 - Do not reintroduce `/pendingmemory`.
 - Do not reintroduce `/forget`.
 - Do not add confirmation UI for automatic memory changes.
@@ -85,6 +85,20 @@ Canonical memory categories are Japanese:
 English or legacy category names may exist only as aliases for reading old data.
 
 `preferred_name` belongs in `slots.preferred_name`, not in `items`.
+
+## Schema v3 planning
+
+Schema v3 planning is documented in `MEMORY_V3_PLAN.md`.
+
+When working on memory v3, do not treat the existing category buckets as the natural final structure. The intended direction is:
+
+- saved memories should become independent id-based records;
+- categories should not be the canonical storage location;
+- saved memory, reference history, and worklog/state should be separated;
+- migration should be staged and reversible;
+- runtime behavior should not change during planning-only tasks.
+
+The first safe implementation step is to keep schema v2 and experiment with flatter memory display before changing storage or automatic memory operations.
 
 ## Automatic memory operations
 

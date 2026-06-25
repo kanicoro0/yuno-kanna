@@ -21,6 +21,29 @@ FLAT_HANDLING_CATEGORIES = {
     "避けたいこと",
 }
 
+FRAGMENT_MAX_LENGTH = 12
+FRAGMENT_SENTENCE_MARKERS = (
+    " ",
+    "　",
+    "、",
+    "。",
+    "，",
+    "．",
+    ":",
+    "：",
+    "について",
+    "として",
+    "という",
+    "ように",
+    "くらい",
+    "ではない",
+    "がよい",
+    "している",
+    "伝わる",
+    "追う",
+    "追いかける",
+)
+
 
 def configure(*, history, notes, persisted):
     global chat_history, guild_notes, persisted_reminders
@@ -47,6 +70,28 @@ def _append_unique(target, seen, values):
         target.append(value)
 
 
+def _looks_like_fragment(value):
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if len(text) > FRAGMENT_MAX_LENGTH:
+        return False
+    return not any(marker in text for marker in FRAGMENT_SENTENCE_MARKERS)
+
+
+def _append_memory_items(*, target, fragments, handling, seen, category, values):
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        if category in FLAT_HANDLING_CATEGORIES:
+            handling.append(value)
+        elif _looks_like_fragment(value):
+            fragments.append(value)
+        else:
+            target.append(value)
+
+
 def format_memory_flat_sections(entry):
     """schema v2のまま、表示上だけ薄く役割別に並べる。"""
     if not isinstance(entry, dict):
@@ -55,6 +100,7 @@ def format_memory_flat_sections(entry):
     lines = []
     slot_lines = []
     remembered = []
+    fragments = []
     handling = []
     seen_items = set()
 
@@ -72,20 +118,31 @@ def format_memory_flat_sections(entry):
     items = entry.get("items")
     if isinstance(items, dict):
         for category in MEMORY_CATEGORY_ORDER:
-            values = normalize_item_list(items.get(category, []))
-            if category in FLAT_HANDLING_CATEGORIES:
-                _append_unique(handling, seen_items, values)
-            else:
-                _append_unique(remembered, seen_items, values)
+            _append_memory_items(
+                target=remembered,
+                fragments=fragments,
+                handling=handling,
+                seen=seen_items,
+                category=category,
+                values=normalize_item_list(items.get(category, [])),
+            )
 
         # canonical外のカテゴリが残っていても、表示実験では落とさず末尾に出す。
         for category, values in items.items():
             if category in MEMORY_CATEGORY_ORDER:
                 continue
-            _append_unique(remembered, seen_items, normalize_item_list(values))
+            _append_memory_items(
+                target=remembered,
+                fragments=fragments,
+                handling=handling,
+                seen=seen_items,
+                category=category,
+                values=normalize_item_list(values),
+            )
 
     _append_section(lines, "呼び名", slot_lines)
     _append_section(lines, "覚えていること", remembered)
+    _append_section(lines, "断片", fragments)
     _append_section(lines, "話し方・扱い方", handling)
     return lines
 

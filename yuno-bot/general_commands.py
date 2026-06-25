@@ -170,11 +170,8 @@ def format_memory_flat_sections(entry):
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/memory show：現在の個人記憶を本人だけに表示
 ・/memory show_flat：現在の個人記憶をカテゴリ棚なしで表示
-・/memory records：v3 record実体を読み取り専用で表示
-・/memory preview_v3：現在の個人記憶をv3風に仮表示
-・/memory validate_v3：v3仮変換が安全な形か確認
-・/memory export_v3：v3仮変換JSONを確認
-・/memory export_v3_file：v3仮変換JSONをファイルで出力
+・/memory records：記憶recordsを読み取り専用で表示
+・/memory record：記憶recordを1件だけ読み取り専用で表示
 ・/memory edit：記憶一覧を開いて追加・編集・削除
 ・/memory edit instruction：自然な言葉で変更案を作り、確認後に実行
 ・/memory recent：最近の自動記憶・手動編集履歴を表示

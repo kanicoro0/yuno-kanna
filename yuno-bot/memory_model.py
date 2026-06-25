@@ -729,6 +729,51 @@ def _v3_all_records(entry):
                 yield collection, fallback_category, record_id, record
 
 
+def _v3_record_text(record):
+    text = record.get("text") if isinstance(record, dict) else ""
+    if not isinstance(text, str):
+        text = json.dumps(text, ensure_ascii=False)
+    return text.strip()
+
+
+def _truncate_text(text, limit):
+    text = str(text or "")
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[:limit - 3] + "..."
+
+
+def _fit_lines_to_limit(lines, limit):
+    result = []
+    total = 0
+    for line in lines:
+        line = str(line)
+        extra = len(line) + (1 if result else 0)
+        if total + extra > limit:
+            remaining = max(0, limit - total - (1 if result else 0))
+            if remaining > 0:
+                result.append(_truncate_text(line, remaining))
+            break
+        result.append(line)
+        total += extra
+    return result
+
+
+def _v3_record_status_counts(entry, collection):
+    counts = {"active": 0, "deleted": 0, "other": 0}
+    for found_collection, _, _, record in _v3_all_records(entry):
+        if collection != "all" and found_collection != collection:
+            continue
+        status = str(record.get("status", "active")).strip() or "active"
+        if status in ("active", "deleted"):
+            counts[status] += 1
+        else:
+            counts["other"] += 1
+    return counts
+
+
 def format_memory_records_for_display(
     user_id,
     *,
@@ -736,8 +781,9 @@ def format_memory_records_for_display(
     collection="all",
     page=1,
     page_size=10,
+    limit=2000,
 ):
-    """v3 record実体を読み取り専用で表示する。保存データは変更しない。"""
+    """record実体を読み取り専用で表示する。保存データは変更しない。"""
     status = str(status or "active").strip().lower()
     collection = str(collection or "all").strip().lower()
     if status not in {"active", "deleted", "all"}:
@@ -756,12 +802,14 @@ def format_memory_records_for_display(
     page_size = max(1, min(int(page_size), 20))
 
     if not memory_root_is_v3():
-        return ["🧾 v3 records 表示は、schema_version: 3 の記憶で使えるよ"]
+        return ["🧾 記憶records\nこの表示はrecord形式の記憶で使えるよ"]
 
     entry = memory_user_store().get(str(user_id))
     if not isinstance(entry, dict):
         return ["🧾 記憶records\nまだrecordはないみたい"]
 
+    slots = entry.get("slots") if isinstance(entry.get("slots"), dict) else {}
+    counts = _v3_record_status_counts(entry, collection)
     rows = []
     for found_collection, fallback, record_id, record in _v3_all_records(entry):
         if collection != "all" and found_collection != collection:
@@ -769,15 +817,16 @@ def format_memory_records_for_display(
         record_status = str(record.get("status", "active")).strip() or "active"
         if status != "all" and record_status != status:
             continue
-        text = record.get("text")
-        if not isinstance(text, str):
-            text = json.dumps(text, ensure_ascii=False)
+        stored_id = record.get("id")
         rows.append({
             "collection": found_collection,
-            "record_id": record.get("id") if isinstance(record.get("id"), str) else record_id,
+            "record_id": record_id,
+            "stored_id": stored_id if isinstance(stored_id, str) else "",
             "status": record_status,
             "source_category": record.get("source_category") or fallback,
-            "text": text.strip(),
+            "created_at": record.get("created_at") if isinstance(record.get("created_at"), str) else "",
+            "updated_at": record.get("updated_at") if isinstance(record.get("updated_at"), str) else "",
+            "text": _v3_record_text(record),
         })
 
     collection_order = {
@@ -798,8 +847,21 @@ def format_memory_records_for_display(
     lines = [
         "🧾 記憶records",
         f"status: {status} / collection: {collection} / page: {page}/{total_pages}",
+        (
+            "summary: "
+            f"active {counts['active']} / "
+            f"deleted {counts['deleted']} / "
+            f"other {counts['other']}"
+        ),
         f"records: {total}",
     ]
+    slot_lines = []
+    for slot in MEMORY_SLOT_NAMES:
+        value = slots.get(slot)
+        if isinstance(value, str) and value.strip():
+            slot_lines.append(f"・{memory_slot_label(slot)}: {value.strip()}")
+    if slot_lines:
+        lines.extend(["", "slots:", *slot_lines])
     if not page_rows:
         lines.append("該当するrecordはないみたい")
         return lines
@@ -808,15 +870,82 @@ def format_memory_records_for_display(
         text = discord.utils.escape_mentions(row["text"])
         if len(text) > 140:
             text = text[:137] + "..."
+        id_note = (
+            f" / id:{row['stored_id']}"
+            if row["stored_id"] and row["stored_id"] != row["record_id"]
+            else ""
+        )
+        timestamps = []
+        if row["created_at"]:
+            timestamps.append(f"created:{row['created_at'][:19]}")
+        if row["updated_at"]:
+            timestamps.append(f"updated:{row['updated_at'][:19]}")
+        timestamp_line = " / ".join(timestamps)
         lines.extend([
             "",
             (
                 f"[{row['record_id']}] {row['collection']} / "
-                f"{row['status']} / {row['source_category']}"
+                f"{row['status']} / {row['source_category']}{id_note}"
             ),
-            text or "（textなし）",
         ])
-    return lines
+        if timestamp_line:
+            lines.append(timestamp_line)
+        lines.append(text or "（textなし）")
+    return _fit_lines_to_limit(lines, limit)
+
+
+def format_memory_record_detail_for_display(
+    user_id,
+    *,
+    collection,
+    record_id,
+    limit=2000,
+):
+    """1件のrecord実体を読み取り専用で表示する。保存データは変更しない。"""
+    collection = str(collection or "").strip().lower()
+    record_id = str(record_id or "").strip()
+    if collection not in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS:
+        return ["collection は memories / keywords / interaction_preferences から選んでね"]
+    if not record_id:
+        return ["record_id を指定してね"]
+    if not memory_root_is_v3():
+        return ["🧾 記憶record\nこの表示はrecord形式の記憶で使えるよ"]
+
+    entry = memory_user_store().get(str(user_id))
+    if not isinstance(entry, dict):
+        return ["🧾 記憶record\nまだrecordはないみたい"]
+
+    records = entry.get(collection)
+    record = records.get(record_id) if isinstance(records, dict) else None
+    if not isinstance(record, dict):
+        return [f"🧾 記憶record\n{collection}/{record_id} は見つからなかったよ"]
+
+    fallback = MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS[collection]
+    stored_id = record.get("id") if isinstance(record.get("id"), str) else ""
+    lines = [
+        "🧾 記憶record",
+        f"collection: {collection}",
+        f"record_id: {record_id}",
+    ]
+    if stored_id and stored_id != record_id:
+        lines.append(f'id field: {stored_id}')
+    fields = [
+        ("status", record.get("status", "active")),
+        ("source_category", record.get("source_category") or fallback),
+        ("source_schema", record.get("source_schema")),
+        ("created_at", record.get("created_at")),
+        ("updated_at", record.get("updated_at")),
+        ("deleted_at", record.get("deleted_at")),
+        ("restored_at", record.get("restored_at")),
+    ]
+    for label, value in fields:
+        if value is not None and value != "":
+            lines.append(f"{label}: {value}")
+
+    header = "\n".join(lines + ["", "text:"])
+    available = max(0, int(limit) - len(header) - 1)
+    text = discord.utils.escape_mentions(_v3_record_text(record))
+    return [header, _truncate_text(text or "（textなし）", available)]
 
 
 def _v3_find_record_by_id(entry, record_id, collection=None):
@@ -880,8 +1009,10 @@ def _v3_find_record_any(
 
 
 def _v3_restore_record(record):
+    now = datetime.now().isoformat(timespec="seconds")
     record["status"] = "active"
-    record["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    record["restored_at"] = now
+    record["updated_at"] = now
 
 
 def _v3_find_record(entry, category, item):
@@ -909,19 +1040,24 @@ def _v3_add_record(entry, category, item):
     collection, prefix = _v3_item_collection(category, item)
     records = entry.setdefault(collection, {})
     record_id = _v3_next_record_id(records, prefix)
+    now = datetime.now().isoformat(timespec="seconds")
     records[record_id] = {
         "id": record_id,
         "text": item,
         "status": "active",
         "source_schema": MEMORY_V3_SCHEMA_VERSION,
         "source_category": category,
+        "created_at": now,
+        "updated_at": now,
     }
     return record_id
 
 
 def _v3_delete_record(record):
+    now = datetime.now().isoformat(timespec="seconds")
     record["status"] = "deleted"
-    record["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    record["deleted_at"] = now
+    record["updated_at"] = now
 
 
 async def apply_v3_memory_operations(user_id, operations, *, summary, source):

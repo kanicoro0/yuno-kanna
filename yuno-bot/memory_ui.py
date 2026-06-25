@@ -13,6 +13,7 @@ from memory_model import (
     apply_memory_edit_operations,
     describe_memory_operation,
     ensure_memory_entry,
+    format_memory_record_detail_for_display,
     format_memory_for_display,
     format_memory_records_for_display,
     format_recent_memory_changes,
@@ -60,7 +61,7 @@ async def memory_recent(interaction: discord.Interaction):
     await interaction.response.send_message(content[:DISCORD_LIMIT], ephemeral=True)
 
 
-@memory_group.command(name="records", description="v3記憶recordの実体を読み取り専用で表示します")
+@memory_group.command(name="records", description="記憶recordsを読み取り専用で表示します")
 @discord.app_commands.describe(
     status="表示するrecord状態。省略時はactiveのみ",
     collection="表示するcollection。省略時はすべて",
@@ -93,6 +94,39 @@ async def memory_records(
         status=status,
         collection=collection,
         page=page,
+        limit=DISCORD_LIMIT,
+    )
+    await interaction.response.send_message(
+        "\n".join(lines)[:DISCORD_LIMIT],
+        ephemeral=True,
+    )
+
+
+@memory_group.command(name="record", description="記憶recordを1件だけ読み取り専用で表示します")
+@discord.app_commands.describe(
+    collection="recordのcollection",
+    record_id="表示するrecord_id",
+)
+@discord.app_commands.choices(
+    collection=[
+        discord.app_commands.Choice(name="memories", value="memories"),
+        discord.app_commands.Choice(name="keywords", value="keywords"),
+        discord.app_commands.Choice(
+            name="interaction_preferences",
+            value="interaction_preferences",
+        ),
+    ],
+)
+async def memory_record(
+    interaction: discord.Interaction,
+    collection: str,
+    record_id: str,
+):
+    lines = format_memory_record_detail_for_display(
+        str(interaction.user.id),
+        collection=collection,
+        record_id=record_id,
+        limit=DISCORD_LIMIT,
     )
     await interaction.response.send_message(
         "\n".join(lines)[:DISCORD_LIMIT],

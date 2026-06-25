@@ -151,7 +151,7 @@ def setup_commands(discord_bot):
     discord_bot.command(name="revealmemory", hidden=True)(owner_tools.revealmemory)
     discord_bot.command(name="memory_migration_plan_v3", hidden=True)(owner_tools.memory_migration_plan_v3)
     discord_bot.command(name="sleep", hidden=True)(owner_tools.sleep)
-    # show_flat は自然表示の主導線。将来 /memory show へ昇格する可能性がある。
+    # show_flat は旧導線互換。通常導線は /memory show の自然表示へ寄せる。
     memory_ui.memory_group.command(
         name="show_flat",
         description="現在の個人記憶を自然な表示で確認します",

@@ -506,11 +506,6 @@ def memory_category_display_group(category):
     return "覚えていること"
 
 
-def memory_category_edit_label(category):
-    label = memory_category_label(category)
-    return f"{memory_category_display_group(category)}（{label}）"
-
-
 def _flat_memory_display_bucket(*, collection="", source_category=""):
     category = canonicalize_memory_category(source_category)
     if collection == "interaction_preferences" or category in FLAT_DISPLAY_HANDLING_CATEGORIES:
@@ -1756,12 +1751,12 @@ async def apply_memory_edit_operations(user_id, operations, summary="手動編�
 def describe_memory_operation(operation):
     operation_type = operation.get("type")
     if operation_type == "add_item":
-        return f"{memory_category_label(operation.get('category'))} に追加: {operation.get('item')}"
+        return f"{memory_category_display_group(operation.get('category'))} に追加: {operation.get('item')}"
     if operation_type == "delete_item":
-        return f"{memory_category_label(operation.get('category'))} から削除: {operation.get('item')}"
+        return f"{memory_category_display_group(operation.get('category'))} から削除: {operation.get('item')}"
     if operation_type == "rewrite_item":
         return (
-            f"{memory_category_label(operation.get('category'))} を書き換え: "
+            f"{memory_category_display_group(operation.get('category'))} を書き換え: "
             f"{operation.get('old_item')} → {operation.get('new_item')}"
         )
     if operation_type == "set_slot":
@@ -1769,7 +1764,7 @@ def describe_memory_operation(operation):
     if operation_type == "delete_slot":
         return f"{memory_slot_label(operation.get('slot'))} を削除"
     if operation_type == "clear_category":
-        return f"{memory_category_label(operation.get('category'))} を全削除"
+        return f"{memory_category_display_group(operation.get('category'))} を全削除"
     if operation_type == "delete_matching_items":
         return f"{operation.get('query')} に一致する記憶を削除"
     return "記憶を変更"

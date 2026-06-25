@@ -31,8 +31,7 @@ def configure(*, history, notes, persisted):
 
 
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
-・/memory show_flat：現在の個人記憶を自然な表示で確認（呼び名 / 覚えていること / 話し方・扱い方）
-・/memory show：現在の個人記憶を旧カテゴリ別に確認
+・/memory show：現在の個人記憶を自然な表示で確認（呼び名 / 覚えていること / 話し方・扱い方）
 ・/memory records：記憶recordsを管理用に一覧表示
 ・/memory record：記憶recordを1件だけ詳しく表示
 ・/memory edit：記憶の種類を選んで追加・編集・削除

@@ -9,15 +9,14 @@ from memory_model import (
     MEMORY_CATEGORY_GUIDANCE,
     MEMORY_CATEGORY_ORDER,
     MEMORY_ITEM_PAGE_SIZE,
-    MEMORY_SLOT_NAMES,
     apply_memory_edit_operations,
     describe_memory_operation,
     ensure_memory_entry,
     format_memory_record_detail_for_display,
-    format_memory_for_display,
+    format_memory_flat_sections_for_user,
     format_memory_records_for_display,
     format_recent_memory_changes,
-    memory_category_edit_label,
+    memory_category_display_group,
     memory_category_label,
     memory_slot_label,
     normalize_item_list,
@@ -28,6 +27,22 @@ from memory_model import (
 
 
 safe_report_error = print
+
+MEMORY_EDIT_GROUPS = (
+    ("slot", "preferred_name"),
+    ("group", "覚えていること"),
+    ("group", "話し方・扱い方"),
+)
+
+MEMORY_EDIT_GROUP_DEFAULT_CATEGORY = {
+    "覚えていること": "覚え書き",
+    "話し方・扱い方": "話し方",
+}
+
+MEMORY_EDIT_GROUP_DESCRIPTIONS = {
+    "覚えていること": "事実、関心、作業、好きなもの",
+    "話し方・扱い方": "返答態度、避けること、接し方",
+}
 
 
 def configure(*, error_reporter):
@@ -40,12 +55,15 @@ memory_group = discord.app_commands.Group(
     description="あなた個人の記憶を表示・編集します",
 )
 
-# 現在の /memory show は /memory edit と対応するカテゴリ別表示として残す。
-@memory_group.command(name="show", description="現在の個人記憶をカテゴリ別に表示します")
+# /memory show は自然表示の主導線。旧カテゴリ別表示は通常導線から外す。
+@memory_group.command(name="show", description="現在の個人記憶を自然な表示で確認します")
 async def memory_show(interaction: discord.Interaction):
-    entry = ensure_memory_entry(str(interaction.user.id))
+    user_id = str(interaction.user.id)
     lines = [f"📘 {interaction.user.display_name} の記憶："]
-    lines.extend(format_memory_for_display(entry) or ["（まだ何も覚えていないよ）"])
+    lines.extend(
+        format_memory_flat_sections_for_user(user_id)
+        or ["まだ覚えていることはないみたい"]
+    )
     await interaction.response.send_message(
         "\n".join(lines)[:DISCORD_LIMIT],
         ephemeral=True,
@@ -346,6 +364,7 @@ class MemoryCategorySelect(discord.ui.Select):
         self.editor_view.selected_type = target_type
         self.editor_view.selected_name = target_name
         self.editor_view.selected_item = None
+        self.editor_view.selected_item_category = None
         self.editor_view.item_page = 0
         self.editor_view.refresh_components()
         await interaction.response.edit_message(
@@ -354,14 +373,17 @@ class MemoryCategorySelect(discord.ui.Select):
         )
 
 class MemoryItemSelect(discord.ui.Select):
-    def __init__(self, editor_view, values, page_start):
+    def __init__(self, editor_view, entries, page_start):
         options = [
             discord.SelectOption(
-                label=value[:100],
+                label=entry["item"][:100],
                 value=str(page_start + index),
-                default=editor_view.selected_item == value,
+                default=(
+                    editor_view.selected_item == entry["item"]
+                    and editor_view.selected_item_category == entry["category"]
+                ),
             )
-            for index, value in enumerate(values)
+            for index, entry in enumerate(entries)
         ]
         selected_item = editor_view.selected_item
         placeholder = (
@@ -381,10 +403,12 @@ class MemoryItemSelect(discord.ui.Select):
     async def callback(self, interaction):
         if not await self.editor_view.check_owner(interaction):
             return
-        values = self.editor_view.current_item_values()
+        entries = self.editor_view.current_item_entries()
         index = int(self.values[0])
-        self.editor_view.selected_item = (
-            values[index] if 0 <= index < len(values) else None
+        selected = entries[index] if 0 <= index < len(entries) else None
+        self.editor_view.selected_item = selected["item"] if selected else None
+        self.editor_view.selected_item_category = (
+            selected["category"] if selected else None
         )
         self.editor_view.refresh_components()
         await interaction.response.edit_message(
@@ -426,15 +450,26 @@ class MemoryItemModal(discord.ui.Modal):
                 "value": new_value,
             }
         elif self.mode == "add":
+            category = MEMORY_EDIT_GROUP_DEFAULT_CATEGORY.get(
+                self.editor_view.selected_name,
+                "覚え書き",
+            )
             raw_operation = {
                 "type": "add_item",
-                "category": self.editor_view.selected_name,
+                "category": category,
                 "item": new_value,
             }
         else:
+            category = (
+                self.editor_view.selected_item_category
+                or MEMORY_EDIT_GROUP_DEFAULT_CATEGORY.get(
+                    self.editor_view.selected_name,
+                    "覚え書き",
+                )
+            )
             raw_operation = {
                 "type": "rewrite_item",
-                "category": self.editor_view.selected_name,
+                "category": category,
                 "old_item": self.editor_view.selected_item,
                 "new_item": new_value,
             }
@@ -450,10 +485,12 @@ class MemoryItemModal(discord.ui.Modal):
             )
             return
         summary = describe_memory_operation(operations[0])
-        if self.mode == "add" and self.editor_view.selected_type == "items":
+        if self.mode == "add" and self.editor_view.selected_type == "group":
             self.editor_view.selected_item = operations[0]["item"]
-        elif self.mode == "edit" and self.editor_view.selected_type == "items":
+            self.editor_view.selected_item_category = operations[0]["category"]
+        elif self.mode == "edit" and self.editor_view.selected_type == "group":
             self.editor_view.selected_item = operations[0]["new_item"]
+            self.editor_view.selected_item_category = operations[0]["category"]
         await self.editor_view.apply_direct_operations(
             interaction,
             operations,
@@ -467,6 +504,7 @@ class MemoryEditView(discord.ui.View):
         self.selected_type = None
         self.selected_name = None
         self.selected_item = None
+        self.selected_item_category = None
         self.category_page = 0
         self.item_page = 0
         self.refresh_components()
@@ -484,20 +522,30 @@ class MemoryEditView(discord.ui.View):
         return ensure_memory_entry(self.owner_user_id)
 
     def category_targets(self):
+        return list(MEMORY_EDIT_GROUPS)
+
+    def current_item_entries(self):
+        if self.selected_type != "group" or not self.selected_name:
+            return []
         entry = self.current_entry()
-        targets = [("slot", slot) for slot in MEMORY_SLOT_NAMES]
-        targets.extend(
-            ("items", category)
-            for category in ordered_memory_categories(entry)
-        )
-        return targets
+        items = entry.get("items", {})
+        if not isinstance(items, dict):
+            return []
+        entries = []
+        seen = set()
+        for category in ordered_memory_categories(entry):
+            if memory_category_display_group(category) != self.selected_name:
+                continue
+            for value in normalize_item_list(items.get(category, [])):
+                key = (category, value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                entries.append({"category": category, "item": value})
+        return entries
 
     def current_item_values(self):
-        if self.selected_type != "items" or not self.selected_name:
-            return []
-        return normalize_item_list(
-            self.current_entry().get("items", {}).get(self.selected_name, [])
-        )
+        return [entry["item"] for entry in self.current_item_entries()]
 
     async def apply_direct_operations(self, interaction, operations, summary):
         try:
@@ -580,10 +628,14 @@ class MemoryEditView(discord.ui.View):
                 has_value = bool(entry.get("slots", {}).get(target_name))
                 description = "設定済み" if has_value else "未設定"
             else:
-                label = memory_category_edit_label(target_name)
-                count = len(normalize_item_list(
-                    entry.get("items", {}).get(target_name, [])
-                ))
+                label = target_name
+                previous_type = self.selected_type
+                previous_name = self.selected_name
+                self.selected_type = target_type
+                self.selected_name = target_name
+                count = len(self.current_item_entries())
+                self.selected_type = previous_type
+                self.selected_name = previous_name
                 description = f"{count}件"
             options.append(discord.SelectOption(
                 label=label[:100],
@@ -597,26 +649,29 @@ class MemoryEditView(discord.ui.View):
         if options:
             self.add_item(MemoryCategorySelect(self, options))
 
-        values = self.current_item_values()
+        item_entries = self.current_item_entries()
+        values = [entry["item"] for entry in item_entries]
         max_item_page = max(
             0,
             (len(values) - 1) // MEMORY_ITEM_PAGE_SIZE,
         )
         self.item_page = min(self.item_page, max_item_page)
         item_start = self.item_page * MEMORY_ITEM_PAGE_SIZE
-        item_page_values = values[
+        item_page_entries = item_entries[
             item_start:item_start + MEMORY_ITEM_PAGE_SIZE
         ]
-        selected_item_visible = (
-            self.selected_item in item_page_values
-            if self.selected_item
-            else False
+        item_page_values = [entry["item"] for entry in item_page_entries]
+        selected_item_visible = any(
+            self.selected_item == entry["item"]
+            and self.selected_item_category == entry["category"]
+            for entry in item_page_entries
         )
         if self.selected_item and not selected_item_visible:
             self.selected_item = None
+            self.selected_item_category = None
         if item_page_values:
             self.add_item(
-                MemoryItemSelect(self, item_page_values, item_start)
+                MemoryItemSelect(self, item_page_entries, item_start)
             )
 
         slot_value = (
@@ -628,7 +683,7 @@ class MemoryEditView(discord.ui.View):
         self.edit_button.disabled = not (
             (self.selected_type == "slot" and slot_value)
             or (
-                self.selected_type == "items"
+                self.selected_type == "group"
                 and selected_item_visible
             )
         )
@@ -644,25 +699,32 @@ class MemoryEditView(discord.ui.View):
         if self.selected_type is None:
             lines = [
                 "🗂️ 編集する記憶の種類を選んでね",
-                "・呼び名: 1件だけの名前",
-                "・覚えていること: 事実、関心、作業、好きなもの",
-                "・話し方・扱い方: 返答態度、避けること、接し方",
+                "",
+                "種類:",
+                "・呼び名：1件だけの名前",
+                "・覚えていること：事実、関心、作業、好きなもの",
+                "・話し方・扱い方：返答態度、避けること、接し方",
             ]
+            current_lines = []
             for target_type, target_name in self.category_targets():
                 if target_type == "slot":
                     value = entry.get("slots", {}).get(target_name)
                     if value:
-                        lines.append(
+                        current_lines.append(
                             f"・{memory_slot_label(target_name)}: {value}"
                         )
                 else:
-                    count = len(normalize_item_list(
-                        entry.get("items", {}).get(target_name, [])
-                    ))
+                    previous_type = self.selected_type
+                    previous_name = self.selected_name
+                    self.selected_type = target_type
+                    self.selected_name = target_name
+                    count = len(self.current_item_entries())
+                    self.selected_type = previous_type
+                    self.selected_name = previous_name
                     if count:
-                        lines.append(
-                            f"・{memory_category_edit_label(target_name)}: {count}件"
-                        )
+                        current_lines.append(f"・{target_name}：{count}件")
+            if current_lines:
+                lines.extend(["", "現在:", *current_lines])
             return "\n".join(lines)[:DISCORD_LIMIT]
 
         if self.selected_type == "slot":
@@ -676,7 +738,7 @@ class MemoryEditView(discord.ui.View):
         start = self.item_page * MEMORY_ITEM_PAGE_SIZE
         page_values = values[start:start + MEMORY_ITEM_PAGE_SIZE]
         lines = [
-            f"🗂️ {memory_category_edit_label(self.selected_name)}",
+            f"🗂️ {self.selected_name}",
             f"{len(values)}件",
         ]
         if self.selected_item:
@@ -716,9 +778,16 @@ class MemoryEditView(discord.ui.View):
                 "slot": self.selected_name,
             }
         else:
+            category = (
+                self.selected_item_category
+                or MEMORY_EDIT_GROUP_DEFAULT_CATEGORY.get(
+                    self.selected_name,
+                    "覚え書き",
+                )
+            )
             raw_operation = {
                 "type": "delete_item",
-                "category": self.selected_name,
+                "category": category,
                 "item": self.selected_item,
             }
         operations, errors = prepare_memory_edit_operations(
@@ -734,6 +803,7 @@ class MemoryEditView(discord.ui.View):
             return
         summary = describe_memory_operation(operations[0])
         self.selected_item = None
+        self.selected_item_category = None
         await self.apply_direct_operations(interaction, operations, summary)
 
     @discord.ui.button(label="前へ", style=discord.ButtonStyle.secondary, row=3)
@@ -743,6 +813,7 @@ class MemoryEditView(discord.ui.View):
         if self.selected_type:
             self.item_page = max(0, self.item_page - 1)
             self.selected_item = None
+            self.selected_item_category = None
         else:
             self.category_page = max(0, self.category_page - 1)
         self.refresh_components()
@@ -758,6 +829,7 @@ class MemoryEditView(discord.ui.View):
         if self.selected_type:
             self.item_page += 1
             self.selected_item = None
+            self.selected_item_category = None
         else:
             self.category_page += 1
         self.refresh_components()
@@ -773,6 +845,7 @@ class MemoryEditView(discord.ui.View):
         self.selected_type = None
         self.selected_name = None
         self.selected_item = None
+        self.selected_item_category = None
         self.item_page = 0
         self.refresh_components()
         await interaction.response.edit_message(

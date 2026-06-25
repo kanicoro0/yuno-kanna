@@ -1,9 +1,11 @@
 """Dry-run helpers for previewing a future memory schema v3.
 
 This module must not mutate or persist memory data.  It converts the current
-schema v2 entry into a v3-shaped object so the UI can inspect and validate the
-shape before any migration is attempted.
+schema v2 entry into a v3-shaped object so the UI can inspect, validate, and
+export the shape before any migration is attempted.
 """
+
+import json
 
 from memory_model import (
     MEMORY_CATEGORY_ORDER,
@@ -227,6 +229,11 @@ def validate_memory_v3_preview(preview):
     }
 
 
+def export_memory_v3_preview(preview):
+    """Return deterministic JSON text for the dry-run v3 object."""
+    return json.dumps(preview, ensure_ascii=False, indent=2, sort_keys=True)
+
+
 def _format_records(title, records):
     lines = []
     if not records:
@@ -323,3 +330,46 @@ def format_memory_v3_validation(validation):
             lines.append(f"・ほか{len(warnings) - 20}件")
 
     return lines
+
+
+def format_memory_v3_export(preview, validation, *, limit=1900):
+    """Format a compact export preview, including JSON when it fits."""
+    counts = summarize_memory_v3_preview(preview)
+    ok = bool(isinstance(validation, dict) and validation.get("ok"))
+    json_text = export_memory_v3_preview(preview)
+    header = [
+        "🧪 v3 export / dry run",
+        "保存形式はまだ変更していないよ",
+        "✅ validation OK" if ok else "❌ validation NG",
+        "",
+        "counts",
+        f"・slots: {counts.get('slots', 0)}",
+        f"・memories: {counts.get('memories', 0)}",
+        f"・keywords: {counts.get('keywords', 0)}",
+        f"・interaction_preferences: {counts.get('interaction_preferences', 0)}",
+        f"・total_records: {counts.get('total_records', 0)}",
+        f"・json_chars: {len(json_text)}",
+    ]
+    if not ok:
+        header.extend([
+            "",
+            "validation が通っていないので JSON は表示しないよ",
+        ])
+        return header
+
+    opening = "```json"
+    closing = "```"
+    overhead = len("\n".join(header)) + len("\n\n") + len(opening) + len("\n") + len("\n") + len(closing)
+    if len(json_text) + overhead <= limit:
+        return header + ["", opening, json_text, closing]
+
+    header.extend([
+        "",
+        "JSON が長いので、この画面では全文を省略しているよ",
+        "次の段階でファイル出力または backup/export コマンドに進める",
+        "",
+        opening,
+        json_text[: max(0, limit - overhead - 160)] + "\n... truncated ...",
+        closing,
+    ])
+    return header

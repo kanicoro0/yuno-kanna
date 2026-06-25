@@ -162,6 +162,10 @@ def setup_commands(discord_bot):
         name="validate_v3",
         description="v3仮変換が安全な形か確認します",
     )(general_commands.slash_memory_validate_v3)
+    memory_ui.memory_group.command(
+        name="export_v3",
+        description="v3仮変換JSONを確認します",
+    )(general_commands.slash_memory_export_v3)
     discord_bot.tree.add_command(memory_ui.memory_group)
     discord_bot.tree.add_command(server_memory.servermemory_group)
     discord_bot.tree.command(

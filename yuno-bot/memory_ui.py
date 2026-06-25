@@ -17,6 +17,7 @@ from memory_model import (
     format_memory_for_display,
     format_memory_records_for_display,
     format_recent_memory_changes,
+    memory_category_edit_label,
     memory_category_label,
     memory_slot_label,
     normalize_item_list,
@@ -330,7 +331,7 @@ def format_ambiguous_memory_proposal(proposal):
 class MemoryCategorySelect(discord.ui.Select):
     def __init__(self, editor_view, options):
         super().__init__(
-            placeholder="カテゴリを選ぶ",
+            placeholder="記憶の種類を選ぶ",
             options=options,
             min_values=1,
             max_values=1,
@@ -579,7 +580,7 @@ class MemoryEditView(discord.ui.View):
                 has_value = bool(entry.get("slots", {}).get(target_name))
                 description = "設定済み" if has_value else "未設定"
             else:
-                label = memory_category_label(target_name)
+                label = memory_category_edit_label(target_name)
                 count = len(normalize_item_list(
                     entry.get("items", {}).get(target_name, [])
                 ))
@@ -641,7 +642,12 @@ class MemoryEditView(discord.ui.View):
     def render(self):
         entry = self.current_entry()
         if self.selected_type is None:
-            lines = ["🗂️ 編集する記憶カテゴリを選んでね"]
+            lines = [
+                "🗂️ 編集する記憶の種類を選んでね",
+                "・呼び名: 1件だけの名前",
+                "・覚えていること: 事実、関心、作業、好きなもの",
+                "・話し方・扱い方: 返答態度、避けること、接し方",
+            ]
             for target_type, target_name in self.category_targets():
                 if target_type == "slot":
                     value = entry.get("slots", {}).get(target_name)
@@ -655,7 +661,7 @@ class MemoryEditView(discord.ui.View):
                     ))
                     if count:
                         lines.append(
-                            f"・{memory_category_label(target_name)}: {count}件"
+                            f"・{memory_category_edit_label(target_name)}: {count}件"
                         )
             return "\n".join(lines)[:DISCORD_LIMIT]
 
@@ -670,7 +676,7 @@ class MemoryEditView(discord.ui.View):
         start = self.item_page * MEMORY_ITEM_PAGE_SIZE
         page_values = values[start:start + MEMORY_ITEM_PAGE_SIZE]
         lines = [
-            f"🗂️ {memory_category_label(self.selected_name)}",
+            f"🗂️ {memory_category_edit_label(self.selected_name)}",
             f"{len(values)}件",
         ]
         if self.selected_item:

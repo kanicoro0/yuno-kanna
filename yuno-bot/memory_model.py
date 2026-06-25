@@ -499,6 +499,18 @@ MEMORY_RECORD_TYPES = {
 }
 
 
+def memory_category_display_group(category):
+    category = canonicalize_memory_category(category)
+    if category in FLAT_DISPLAY_HANDLING_CATEGORIES:
+        return "話し方・扱い方"
+    return "覚えていること"
+
+
+def memory_category_edit_label(category):
+    label = memory_category_label(category)
+    return f"{memory_category_display_group(category)}（{label}）"
+
+
 def _flat_memory_display_bucket(*, collection="", source_category=""):
     category = canonicalize_memory_category(source_category)
     if collection == "interaction_preferences" or category in FLAT_DISPLAY_HANDLING_CATEGORIES:

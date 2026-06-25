@@ -7,6 +7,7 @@ from memory_model import (
     memory_slot_label,
     normalize_item_list,
 )
+from memory_v3_preview import build_memory_v3_preview, format_memory_v3_preview
 
 
 chat_history = {}
@@ -155,62 +156,6 @@ def format_memory_flat_sections(entry):
     return lines
 
 
-def _format_preview_records(title, prefix, values):
-    lines = []
-    if not values:
-        return lines
-    lines.append(title)
-    for index, value in enumerate(values, start=1):
-        lines.append(f"{prefix}_{index:03d}: {value}")
-    return lines
-
-
-def format_memory_v3_preview(entry):
-    """schema v2の記憶を、書き換えずにv3風の仮構造として表示する。"""
-    if not isinstance(entry, dict):
-        return []
-
-    lines = [
-        "🧪 v3 preview / dry run",
-        "保存形式はまだ変更していないよ",
-    ]
-
-    slots = entry.get("slots")
-    slot_lines = []
-    if isinstance(slots, dict):
-        for slot in MEMORY_SLOT_NAMES:
-            value = slots.get(slot)
-            if value:
-                slot_lines.append(f"{slot}: {value}")
-
-    remembered, fragments, handling = _split_memory_by_preview_role(entry)
-
-    if slot_lines:
-        lines.append("")
-        lines.append("slots")
-        lines.extend(f"・{line}" for line in slot_lines)
-
-    saved_lines = _format_preview_records("saved_memories", "m", remembered)
-    if saved_lines:
-        lines.append("")
-        lines.extend(saved_lines)
-
-    fragment_lines = _format_preview_records("fragments", "f", fragments)
-    if fragment_lines:
-        lines.append("")
-        lines.extend(fragment_lines)
-
-    handling_lines = _format_preview_records("handling", "h", handling)
-    if handling_lines:
-        lines.append("")
-        lines.extend(handling_lines)
-
-    if len(lines) <= 2:
-        lines.append("")
-        lines.append("（まだpreviewできる記憶がないよ）")
-    return lines
-
-
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/memory show：現在の個人記憶を本人だけに表示
 ・/memory show_flat：現在の個人記憶をカテゴリ棚なしで表示
@@ -255,8 +200,9 @@ async def slash_memory_show_flat(interaction):
 async def slash_memory_preview_v3(interaction):
     user_id = str(interaction.user.id)
     entry = ensure_memory_entry(user_id)
+    preview = build_memory_v3_preview(entry)
     await interaction.response.send_message(
-        "\n".join(format_memory_v3_preview(entry))[:DISCORD_LIMIT],
+        "\n".join(format_memory_v3_preview(preview))[:DISCORD_LIMIT],
         ephemeral=True,
     )
 

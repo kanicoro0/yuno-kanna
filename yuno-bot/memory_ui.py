@@ -39,7 +39,8 @@ memory_group = discord.app_commands.Group(
     description="あなた個人の記憶を表示・編集します",
 )
 
-@memory_group.command(name="show", description="現在の個人記憶を表示します")
+# 現在の /memory show は /memory edit と対応するカテゴリ別表示として残す。
+@memory_group.command(name="show", description="現在の個人記憶をカテゴリ別に表示します")
 async def memory_show(interaction: discord.Interaction):
     entry = ensure_memory_entry(str(interaction.user.id))
     lines = [f"📘 {interaction.user.display_name} の記憶："]
@@ -49,7 +50,7 @@ async def memory_show(interaction: discord.Interaction):
         ephemeral=True,
     )
 
-@memory_group.command(name="recent", description="最近の記憶変更を表示します")
+@memory_group.command(name="recent", description="最近の記憶変更履歴を表示します")
 async def memory_recent(interaction: discord.Interaction):
     entry = ensure_memory_entry(str(interaction.user.id))
     lines = format_recent_memory_changes(entry)
@@ -61,7 +62,8 @@ async def memory_recent(interaction: discord.Interaction):
     await interaction.response.send_message(content[:DISCORD_LIMIT], ephemeral=True)
 
 
-@memory_group.command(name="records", description="記憶recordsを読み取り専用で表示します")
+# records/record は保存実体を観測する管理表示。破壊的操作はここでは行わない。
+@memory_group.command(name="records", description="記憶recordsを管理用に一覧表示します")
 @discord.app_commands.describe(
     status="表示するrecord状態。省略時はactiveのみ",
     collection="表示するcollection。省略時はすべて",
@@ -102,7 +104,7 @@ async def memory_records(
     )
 
 
-@memory_group.command(name="record", description="記憶recordを1件だけ読み取り専用で表示します")
+@memory_group.command(name="record", description="記憶recordを1件だけ詳しく表示します")
 @discord.app_commands.describe(
     collection="recordのcollection",
     record_id="表示するrecord_id",

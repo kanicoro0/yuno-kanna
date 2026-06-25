@@ -356,37 +356,119 @@ def normalize_auto_memory_operations(operations):
     if not isinstance(operations, list):
         return [], ["memory_operations がリストではない"]
 
+    allowed_types = {
+        "add_item",
+        "delete_item",
+        "rewrite_item",
+        "set_slot",
+        "delete_slot",
+    }
     normalized = []
     errors = []
     seen = set()
     for index, operation in enumerate(operations[:10]):
         label = f"operation {index + 1}"
-        if not isinstance(operation, dict) or operation.get("type") != "add_item":
-            errors.append(f"{label}: 自動記憶では add_item だけ使用できる")
+        if not isinstance(operation, dict):
+            errors.append(f"{label}: オブジェクトではない")
             continue
+        operation_type = str(operation.get("type", "")).strip()
+        if operation_type not in allowed_types:
+            errors.append(f"{label}: 自動記憶では {operation_type!r} は使用できない")
+            continue
+
+        if operation_type == "set_slot":
+            slot = str(operation.get("slot", "")).strip().lower()
+            value = operation.get("value")
+            if slot not in MEMORY_SLOT_NAMES:
+                errors.append(f"{label}: slot が使用できない")
+                continue
+            if not isinstance(value, str) or not value.strip() or len(value.strip()) > 100:
+                errors.append(f"{label}: slot の値は1〜100文字にする")
+                continue
+            key = ("slot", slot)
+            if key in seen:
+                errors.append(f"{label}: 同じslotを複数回変更できない")
+                continue
+            seen.add(key)
+            normalized.append({
+                "type": "set_slot",
+                "slot": slot,
+                "value": value.strip(),
+            })
+            continue
+
+        if operation_type == "delete_slot":
+            slot = str(operation.get("slot", "")).strip().lower()
+            if slot not in MEMORY_SLOT_NAMES:
+                errors.append(f"{label}: slot が使用できない")
+                continue
+            key = ("slot", slot)
+            if key in seen:
+                errors.append(f"{label}: 同じslotを複数回変更できない")
+                continue
+            seen.add(key)
+            normalized.append({
+                "type": "delete_slot",
+                "slot": slot,
+            })
+            continue
+
         raw_category = operation.get("category")
         category = canonicalize_memory_category(raw_category)
-        item = operation.get("item")
         if not category:
             errors.append(f"{label}: category が使用できない")
             continue
-        if not isinstance(item, str):
-            errors.append(f"{label}: item は文字列にする")
-            continue
-        item = item.strip()
-        if not item or len(item) > 200:
-            errors.append(f"{label}: item は1〜200文字にする")
-            continue
-        _, item = canonicalize_memory_item(raw_category, item)
-        key = (category, item)
+        key = ("category", category)
         if key in seen:
+            errors.append(f"{label}: 同じcategoryを複数回まとめ操作できない")
             continue
-        seen.add(key)
-        normalized.append({
-            "type": "add_item",
-            "category": category,
-            "item": item,
-        })
+
+        if operation_type in ("add_item", "delete_item"):
+            item = operation.get("item")
+            if not isinstance(item, str):
+                errors.append(f"{label}: item は文字列にする")
+                continue
+            item = item.strip()
+            if not item or len(item) > 200:
+                errors.append(f"{label}: item は1〜200文字にする")
+                continue
+            _, item = canonicalize_memory_item(raw_category, item)
+            op_key = (operation_type, category, item)
+            if op_key in seen:
+                continue
+            seen.add(op_key)
+            normalized.append({
+                "type": operation_type,
+                "category": category,
+                "item": item,
+            })
+            continue
+
+        if operation_type == "rewrite_item":
+            old_item = operation.get("old_item")
+            new_item = operation.get("new_item")
+            if not isinstance(old_item, str) or not old_item.strip():
+                errors.append(f"{label}: old_item は文字列にする")
+                continue
+            if (
+                not isinstance(new_item, str)
+                or not new_item.strip()
+                or len(new_item.strip()) > 200
+            ):
+                errors.append(f"{label}: new_item は1〜200文字にする")
+                continue
+            _, old_item = canonicalize_memory_item(raw_category, old_item.strip())
+            _, new_item = canonicalize_memory_item(raw_category, new_item.strip())
+            op_key = (operation_type, category, old_item)
+            if op_key in seen:
+                continue
+            seen.add(op_key)
+            normalized.append({
+                "type": "rewrite_item",
+                "category": category,
+                "old_item": old_item,
+                "new_item": new_item,
+            })
 
     if len(operations) > 10:
         errors.append("一度に自動記憶できる項目は10件まで")
@@ -715,26 +797,99 @@ async def apply_auto_memory_operations(user_id, operations):
     async with memory_lock:
         entry = deepcopy(ensure_memory_entry(user_id))
         items = entry["items"]
+        slots = entry["slots"]
         changes = []
         for operation in normalized:
-            category = operation["category"]
-            item = operation["item"]
-            current_values = normalize_item_list(items.get(category, []))
-            if category not in items and len(items) >= 30:
+            operation_type = operation["type"]
+
+            if operation_type == "add_item":
+                category = operation["category"]
+                item = operation["item"]
+                old_values = normalize_item_list(items.get(category, []))
+                if category not in items and len(items) >= 30:
+                    continue
+                if item in old_values or len(old_values) >= 50:
+                    continue
+                new_values = old_values + [item]
+                items[category] = new_values
+                change = operation.copy()
+                change["old_items"] = old_values
+                change["new_items"] = new_values
+                # 旧undo互換のため、新形式でも追加後の状態を残す。
+                change["expected_items"] = new_values
+                changes.append(change)
                 continue
-            if item in current_values or len(current_values) >= 50:
+
+            if operation_type == "delete_item":
+                category = operation["category"]
+                item = operation["item"]
+                old_values = normalize_item_list(items.get(category, []))
+                if item not in old_values:
+                    continue
+                new_values = [value for value in old_values if value != item]
+                if new_values:
+                    items[category] = new_values
+                else:
+                    items.pop(category, None)
+                change = operation.copy()
+                change["old_items"] = old_values
+                change["new_items"] = new_values
+                changes.append(change)
                 continue
-            current_values.append(item)
-            items[category] = current_values
-            changes.append(operation.copy())
+
+            if operation_type == "rewrite_item":
+                category = operation["category"]
+                old_item = operation["old_item"]
+                new_item = operation["new_item"]
+                old_values = normalize_item_list(items.get(category, []))
+                if old_item not in old_values:
+                    continue
+                if new_item != old_item and new_item in old_values:
+                    continue
+                new_values = list(old_values)
+                new_values[new_values.index(old_item)] = new_item
+                new_values = normalize_item_list(new_values)
+                if new_values == old_values:
+                    continue
+                items[category] = new_values
+                change = operation.copy()
+                change["old_items"] = old_values
+                change["new_items"] = new_values
+                changes.append(change)
+                continue
+
+            if operation_type == "set_slot":
+                slot = operation["slot"]
+                value = operation["value"]
+                before_exists = slot in slots
+                before_value = slots.get(slot)
+                if before_exists and before_value == value:
+                    continue
+                slots[slot] = value
+                change = operation.copy()
+                change["expected_exists"] = before_exists
+                change["expected_value"] = before_value
+                change["before_exists"] = before_exists
+                change["before_value"] = before_value
+                changes.append(change)
+                continue
+
+            if operation_type == "delete_slot":
+                slot = operation["slot"]
+                if slot not in slots:
+                    continue
+                before_value = slots.pop(slot)
+                change = operation.copy()
+                change["expected_value"] = before_value
+                change["before_exists"] = True
+                change["before_value"] = before_value
+                changes.append(change)
 
         if not changes:
             return {"changes": [], "errors": []}
 
-        for change in changes:
-            change["expected_items"] = list(items[change["category"]])
-        summary = "、".join(
-            f"{change['category']}の「{change['item']}」"
+        summary = "／".join(
+            describe_memory_operation(change)
             for change in changes
         )
         append_memory_change(entry, "auto", summary, changes)
@@ -817,37 +972,59 @@ async def apply_memory_edit_operations(user_id, operations, summary):
             operation_type = operation["type"]
             if operation_type == "add_item":
                 category = operation["category"]
-                values = normalize_item_list(items.get(category, []))
-                if operation["item"] not in values:
-                    values.append(operation["item"])
-                    items[category] = values
-                    changes.append(operation)
+                old_values = normalize_item_list(items.get(category, []))
+                if operation["item"] not in old_values:
+                    new_values = old_values + [operation["item"]]
+                    items[category] = new_values
+                    change = operation.copy()
+                    change["old_items"] = old_values
+                    change["new_items"] = new_values
+                    changes.append(change)
             elif operation_type == "delete_item":
                 category = operation["category"]
-                values = list(items.get(category, []))
-                values.remove(operation["item"])
-                if values:
-                    items[category] = values
+                old_values = normalize_item_list(items.get(category, []))
+                new_values = [value for value in old_values if value != operation["item"]]
+                if new_values:
+                    items[category] = new_values
                 else:
                     items.pop(category, None)
-                changes.append(operation)
+                change = operation.copy()
+                change["old_items"] = old_values
+                change["new_items"] = new_values
+                changes.append(change)
             elif operation_type == "delete_matching_items":
+                old_by_category = {}
                 for target in operation["targets"]:
                     category = target["category"]
+                    if category not in old_by_category:
+                        old_by_category[category] = normalize_item_list(
+                            items.get(category, [])
+                        )
                     values = list(items.get(category, []))
                     values.remove(target["item"])
                     if values:
                         items[category] = values
                     else:
                         items.pop(category, None)
-                changes.append(operation)
+                change = operation.copy()
+                change["old_items_by_category"] = old_by_category
+                change["new_items_by_category"] = {
+                    category: normalize_item_list(items.get(category, []))
+                    for category in old_by_category
+                }
+                changes.append(change)
             elif operation_type == "rewrite_item":
                 category = operation["category"]
-                values = list(items.get(category, []))
-                index = values.index(operation["old_item"])
-                values[index] = operation["new_item"]
-                items[category] = normalize_item_list(values)
-                changes.append(operation)
+                old_values = normalize_item_list(items.get(category, []))
+                new_values = list(old_values)
+                index = new_values.index(operation["old_item"])
+                new_values[index] = operation["new_item"]
+                new_values = normalize_item_list(new_values)
+                items[category] = new_values
+                change = operation.copy()
+                change["old_items"] = old_values
+                change["new_items"] = new_values
+                changes.append(change)
             elif operation_type == "set_slot":
                 before_exists = operation["slot"] in slots
                 before_value = slots.get(operation["slot"])
@@ -859,11 +1036,17 @@ async def apply_memory_edit_operations(user_id, operations, summary):
             elif operation_type == "delete_slot":
                 before_value = slots.pop(operation["slot"])
                 change = operation.copy()
+                change["before_exists"] = True
                 change["before_value"] = before_value
                 changes.append(change)
             elif operation_type == "clear_category":
-                items.pop(operation["category"], None)
-                changes.append(operation)
+                category = operation["category"]
+                old_values = normalize_item_list(items.get(category, []))
+                items.pop(category, None)
+                change = operation.copy()
+                change["old_items"] = old_values
+                change["new_items"] = []
+                changes.append(change)
 
         if not changes:
             return {"changes": [], "conflicts": [], "errors": []}
@@ -879,7 +1062,24 @@ def format_recent_memory_changes(entry, limit=10):
     for change in reversed(change_log[-limit:]):
         if not isinstance(change, dict):
             continue
-        marker = "↩️" if change.get("undone_at") else "📌"
+        marker = "↩️"
+        if not change.get("undone_at"):
+            marker_parts = set()
+            for operation in change.get("changes", []):
+                if not isinstance(operation, dict):
+                    continue
+                operation_type = operation.get("type")
+                if operation_type == "add_item":
+                    marker_parts.add("📌")
+                elif operation_type == "delete_item":
+                    marker_parts.add("🗑️")
+                elif (
+                    operation_type in ("rewrite_item", "set_slot", "delete_slot")
+                ):
+                    marker_parts.add("📝")
+            marker = "".join(
+                emoji for emoji in ("📌", "🗑️", "📝") if emoji in marker_parts
+            ) or "📌"
         source = "自動" if change.get("source") == "auto" else "手動"
         created_at = str(change.get("created_at", ""))[:16].replace("T", " ")
         descriptions = [
@@ -894,14 +1094,15 @@ def format_recent_memory_changes(entry, limit=10):
         lines.append(f"{marker} [{source}] {created_at} {summary}")
     return lines
 
-async def undo_latest_auto_memory(user_id):
+async def undo_latest_memory_change(user_id):
     async with memory_lock:
         entry = deepcopy(ensure_memory_entry(user_id))
         change_log = entry.get("change_log", [])
         target = next(
             (
                 change for change in reversed(change_log)
-                if change.get("source") == "auto" and not change.get("undone_at")
+                if change.get("source") in ("auto", "edit")
+                and not change.get("undone_at")
             ),
             None,
         )
@@ -909,47 +1110,121 @@ async def undo_latest_auto_memory(user_id):
             return {"undone": False, "reason": "not_found"}
 
         items = entry["items"]
+        slots = entry["slots"]
         normalized_changes = []
+        expected_item_states = {}
         for raw_change in target.get("changes", []):
             change = canonicalize_memory_operation(raw_change)
-            if not isinstance(change, dict) or change.get("type") != "add_item":
+            if not isinstance(change, dict):
                 return {"undone": False, "reason": "unsupported"}
-            current_items = normalize_item_list(
-                items.get(change.get("category"), [])
-            )
-            has_expected_items = isinstance(
-                raw_change.get("expected_items"),
-                list,
-            )
-            expected_items = normalize_item_list(change.get("expected_items"))
-            raw_category = raw_change.get("category")
-            category_was_migrated = (
-                raw_category != change.get("category")
-            )
-            item_exists = change.get("item") in current_items
-            if not has_expected_items:
-                is_safe = item_exists
-            elif category_was_migrated:
-                is_safe = (
-                    item_exists
-                    and all(item in current_items for item in expected_items)
+            operation_type = change.get("type")
+            if operation_type not in {
+                "add_item",
+                "delete_item",
+                "rewrite_item",
+                "set_slot",
+                "delete_slot",
+            }:
+                return {"undone": False, "reason": "unsupported"}
+
+            if operation_type in ("add_item", "delete_item", "rewrite_item"):
+                current_items = normalize_item_list(
+                    items.get(change.get("category"), [])
                 )
-            else:
-                is_safe = item_exists and current_items == expected_items
-            if not is_safe:
-                return {"undone": False, "reason": "conflict"}
+                raw_category = raw_change.get("category")
+                category_was_migrated = raw_category != change.get("category")
+                has_new_items = isinstance(raw_change.get("new_items"), list)
+                has_old_items = isinstance(raw_change.get("old_items"), list)
+                new_items = normalize_item_list(change.get("new_items"))
+                if has_new_items:
+                    expected_item_states[change.get("category")] = new_items
+
+                if operation_type == "add_item":
+                    has_expected_items = isinstance(
+                        raw_change.get("expected_items"),
+                        list,
+                    )
+                    expected_items = normalize_item_list(
+                        change.get("expected_items")
+                    )
+                    item_exists = change.get("item") in current_items
+                    if has_new_items:
+                        is_safe = True
+                    elif not has_expected_items:
+                        # 旧auto add_itemログ互換: expected_itemsが無い時代のログは、
+                        # 現在のcanonicalカテゴリ内に対象itemがあれば戻せる。
+                        is_safe = item_exists
+                    elif category_was_migrated:
+                        # 旧英語カテゴリが日本語canonicalへ寄った場合は緩く見る。
+                        is_safe = (
+                            item_exists
+                            and all(item in current_items for item in expected_items)
+                        )
+                    else:
+                        is_safe = item_exists and current_items == expected_items
+                    if not is_safe:
+                        return {"undone": False, "reason": "conflict"}
+
+                elif operation_type in ("delete_item", "rewrite_item"):
+                    if not has_new_items or not has_old_items:
+                        return {"undone": False, "reason": "unsupported"}
+
+            elif operation_type == "set_slot":
+                slot = change.get("slot")
+                if slots.get(slot) != change.get("value"):
+                    return {"undone": False, "reason": "conflict"}
+
+            elif operation_type == "delete_slot":
+                slot = change.get("slot")
+                if slot in slots:
+                    return {"undone": False, "reason": "conflict"}
+                if (
+                    not change.get("before_exists")
+                    or not isinstance(change.get("before_value"), str)
+                ):
+                    return {"undone": False, "reason": "unsupported"}
+
             normalized_changes.append(change)
 
-        for change in normalized_changes:
-            category = change["category"]
-            values = list(items.get(category, []))
-            values.remove(change["item"])
-            if values:
-                items[category] = values
-            else:
-                items.pop(category, None)
+        for category, expected_items in expected_item_states.items():
+            current_items = normalize_item_list(items.get(category, []))
+            if current_items != expected_items:
+                return {"undone": False, "reason": "conflict"}
+
+        for change in reversed(normalized_changes):
+            operation_type = change["type"]
+            if operation_type == "add_item":
+                category = change["category"]
+                values = list(items.get(category, []))
+                if change["item"] in values:
+                    values.remove(change["item"])
+                if values:
+                    items[category] = values
+                else:
+                    items.pop(category, None)
+            elif operation_type == "delete_item":
+                category = change["category"]
+                old_items = normalize_item_list(change.get("old_items"))
+                if old_items:
+                    items[category] = old_items
+            elif operation_type == "rewrite_item":
+                category = change["category"]
+                old_items = normalize_item_list(change.get("old_items"))
+                if old_items:
+                    items[category] = old_items
+            elif operation_type == "set_slot":
+                slot = change["slot"]
+                if change.get("before_exists"):
+                    slots[slot] = change.get("before_value")
+                else:
+                    slots.pop(slot, None)
+            elif operation_type == "delete_slot":
+                slots[change["slot"]] = change.get("before_value")
 
         target["undone_at"] = datetime.now().isoformat()
         entry["updated"] = datetime.now().isoformat()
-        await persist_memory_entry(user_id, entry, "undo auto memory")
+        await persist_memory_entry(user_id, entry, "undo memory change")
         return {"undone": True, "change": target}
+
+async def undo_latest_auto_memory(user_id):
+    return await undo_latest_memory_change(user_id)

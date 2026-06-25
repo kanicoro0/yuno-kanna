@@ -410,10 +410,25 @@ async def handle_mention(message, ctx):
                         + "; ".join(memory_result["errors"])
                     )
                 elif memory_result["changes"]:
-                    try:
-                        await message.add_reaction("📌")
-                    except Exception as error:
-                        safe_report_error(f"記憶の📌を付けられなかったよ: {error}")
+                    reaction_by_type = {
+                        "add_item": "📌",
+                        "delete_item": "🗑️",
+                        "rewrite_item": "📝",
+                        "set_slot": "📝",
+                        "delete_slot": "📝",
+                    }
+                    memory_reactions = set()
+                    for change in memory_result["changes"]:
+                        emoji = reaction_by_type.get(change.get("type"))
+                        if emoji:
+                            memory_reactions.add(emoji)
+                    for emoji in ("📌", "🗑️", "📝"):
+                        if emoji not in memory_reactions:
+                            continue
+                        try:
+                            await message.add_reaction(emoji)
+                        except Exception as error:
+                            safe_report_error(f"記憶の{emoji}を付けられなかったよ: {error}")
             send_ai_debug_log(inner, memory_debug_summary)
 
             if len(reply) > 8000:
@@ -498,29 +513,39 @@ def build_system_prompt(message, ctx):
   "memory_operations": []
 }}
 
-ユーザー本人が明示し、今後の応答にも役立つ安定した情報を新しく覚える場合だけ、
-memory_operationsへ次のadd_itemを入れる：
-{{"type":"add_item","category":"作業","item":"VSCodeを使っている"}}
+ユーザー本人が明示し、今後の応答にも役立つ安定した情報を覚える・直す・消す必要がある場合だけ、
+memory_operationsへ小さく明確な操作を書く。追加AI呼び出しや確認UIはないので、曖昧なら操作を書かず、replyで自然に聞き返す。
+
+使用できるmemory_operations v2：
+{{"type":"add_item","category":"好きなもの","item":"フラクタル"}}
+{{"type":"delete_item","category":"好きなもの","item":"数学"}}
+{{"type":"rewrite_item","category":"話し方","old_item":"「ご主人」はときどき呼ぶくらいがよい","new_item":"ご主人呼びはかなり控えめがよい"}}
+{{"type":"set_slot","slot":"preferred_name","value":"かにころ"}}
+{{"type":"delete_slot","slot":"preferred_name"}}
 
 categoryは次の日本語カテゴリから選ぶ：
 {' / '.join(MEMORY_CATEGORY_ORDER)}
 {MEMORY_CATEGORY_GUIDANCE}
 
 memory_operationsの規則：
-・add_item以外の操作は絶対に出力しない
-・既存項目の削除、書き換え、全体置換、要約整理は行わない
-・preferred_nameなど単一値の変更は自動記憶せず、空配列にする
+・使えるtypeは add_item / delete_item / rewrite_item / set_slot / delete_slot だけ
+・clear_category、delete_matching_items、全体置換、要約整理、広範囲削除は絶対に出力しない
+・削除や書き換えは、現在の記憶にある対象を完全に特定できる場合だけ出力する
+・「それ忘れて」「変な記憶を消して」「好きなもの整理して」のように対象が不明瞭・広範囲なら操作を書かず、replyで短く聞き返す
+・既存記憶と新しい発言が明確に矛盾する場合は、単に追加せず、必要ならdelete_itemやrewrite_itemで訂正する
+・1発話に複数の明確な変更があれば、複数operationを同時に出してよい
+・preferred_nameの明確な指定はset_slotで扱う
 ・secret.xxxは使用しない
-・一時的な気分、その場限りの状態、会話からの推測、他人の情報、センシティブな情報は記憶しない
+・一時的な気分、その場限りの状態、会話からの推測、他人の情報、センシティブな情報、ゆの側の感情や詩的比喩は記憶しない
 ・覚え書きには本人が「覚えて」など保存意思を示した継続的な内容だけを入れる
 ・過剰に一般化せず、本人が実際に述べた範囲だけを書く
 ・現在の記憶と同じ内容は出力しない
-・新しく覚えることがない場合は空配列にする
+・明確に操作できる記憶変更がない場合は空配列にする
 """
 
     if memory_has_content(memory):
         prompt += """
-現在の記憶（参照用。memory_operationsには新しい追加だけを書く）：
+現在の記憶（参照用。memory_operationsには明確で小さい変更だけを書く）：
 """
         prompt += json.dumps(
             {

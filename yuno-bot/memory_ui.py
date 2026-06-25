@@ -20,7 +20,7 @@ from memory_model import (
     normalize_item_list,
     ordered_memory_categories,
     prepare_memory_edit_operations,
-    undo_latest_auto_memory,
+    undo_latest_memory_change,
 )
 
 
@@ -58,22 +58,24 @@ async def memory_recent(interaction: discord.Interaction):
     )
     await interaction.response.send_message(content[:DISCORD_LIMIT], ephemeral=True)
 
-@memory_group.command(name="undo", description="直近の自動記憶を取り消します")
+@memory_group.command(name="undo", description="直近の記憶変更を取り消します")
 async def memory_undo(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
-    result = await undo_latest_auto_memory(str(interaction.user.id))
+    result = await undo_latest_memory_change(str(interaction.user.id))
     if result.get("undone"):
         descriptions = [
             describe_memory_operation(operation)
             for operation in result["change"].get("changes", [])
             if isinstance(operation, dict)
         ]
-        summary = "／".join(descriptions) or "直近の自動記憶"
+        summary = "／".join(descriptions) or "直近の記憶変更"
         content = f"↩️ 「{summary}」を取り消したよ"
     elif result.get("reason") == "conflict":
         content = "その記憶は後から変わっているため、安全に取り消せなかったよ"
+    elif result.get("reason") == "unsupported":
+        content = "その記憶変更は古い形式か広範囲操作のため、安全に取り消せなかったよ"
     else:
-        content = "取り消せる自動記憶はないみたい"
+        content = "取り消せる記憶変更はないみたい"
     await interaction.followup.send(content, ephemeral=True)
 
 def format_memory_edit_preview(summary, operations):
@@ -366,14 +368,14 @@ class MemoryItemModal(discord.ui.Modal):
             )
             return
         summary = describe_memory_operation(operations[0])
-        await interaction.response.send_message(
-            format_memory_edit_preview(summary, operations),
-            view=MemoryEditConfirmView(
-                self.editor_view.owner_user_id,
-                summary,
-                operations,
-            ),
-            ephemeral=True,
+        if self.mode == "add" and self.editor_view.selected_type == "items":
+            self.editor_view.selected_item = operations[0]["item"]
+        elif self.mode == "edit" and self.editor_view.selected_type == "items":
+            self.editor_view.selected_item = operations[0]["new_item"]
+        await self.editor_view.apply_direct_operations(
+            interaction,
+            operations,
+            summary,
         )
 
 class MemoryEditView(discord.ui.View):
@@ -413,6 +415,68 @@ class MemoryEditView(discord.ui.View):
             return []
         return normalize_item_list(
             self.current_entry().get("items", {}).get(self.selected_name, [])
+        )
+
+    async def apply_direct_operations(self, interaction, operations, summary):
+        try:
+            result = await apply_memory_edit_operations(
+                self.owner_user_id,
+                operations,
+                summary,
+            )
+        except Exception as error:
+            safe_report_error(f"記憶の直接編集に失敗したよ: {error}")
+            await interaction.response.send_message(
+                "……記憶を変更できなかったみたい",
+                ephemeral=True,
+            )
+            return
+
+        if result.get("conflicts"):
+            await interaction.response.send_message(
+                "編集中に対象の記憶が変わっていたから、変更しなかったよ。"
+                "もう一度 /memory edit から開き直してね",
+                ephemeral=True,
+            )
+            return
+        if result.get("errors"):
+            await interaction.response.send_message(
+                "安全に変更できなかったよ。\n"
+                + "\n".join(f"・{error}" for error in result["errors"][:5]),
+                ephemeral=True,
+            )
+            return
+
+        changes = result.get("changes", [])
+        if not changes:
+            await interaction.response.send_message(
+                "変更する内容はなかったみたい",
+                ephemeral=True,
+            )
+            return
+
+        markers = set()
+        for change in changes:
+            operation_type = change.get("type")
+            if operation_type == "add_item":
+                markers.add("📌")
+            elif operation_type == "delete_item":
+                markers.add("🗑️")
+            elif operation_type in ("rewrite_item", "set_slot", "delete_slot"):
+                markers.add("📝")
+        marker = "".join(
+            emoji for emoji in ("📌", "🗑️", "📝") if emoji in markers
+        ) or "✅"
+        action = describe_memory_operation(changes[0])
+        self.refresh_components()
+        content = (
+            f"{marker} {discord.utils.escape_mentions(action)}\n"
+            "戻すなら /memory undo\n\n"
+            f"{self.render()}"
+        )
+        await interaction.response.edit_message(
+            content=content[:DISCORD_LIMIT],
+            view=self,
         )
 
     def refresh_components(self):
@@ -582,15 +646,8 @@ class MemoryEditView(discord.ui.View):
             )
             return
         summary = describe_memory_operation(operations[0])
-        await interaction.response.send_message(
-            format_memory_edit_preview(summary, operations),
-            view=MemoryEditConfirmView(
-                self.owner_user_id,
-                summary,
-                operations,
-            ),
-            ephemeral=True,
-        )
+        self.selected_item = None
+        await self.apply_direct_operations(interaction, operations, summary)
 
     @discord.ui.button(label="前へ", style=discord.ButtonStyle.secondary, row=3)
     async def previous_button(self, interaction, button):

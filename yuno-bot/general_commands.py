@@ -19,7 +19,7 @@ YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/memory edit：記憶一覧を開いて追加・編集・削除
 ・/memory edit instruction：自然な言葉で変更案を作り、確認後に実行
 ・/memory recent：最近の自動記憶・手動編集履歴を表示
-・/memory undo：直近の自動記憶を取り消す
+・/memory undo：直近の記憶変更を取り消す
 ・/servermemory show：このサーバーのメモを表示
 ・/servermemory set content：管理できる人がサーバーメモを更新
 ・/remind time message：指定した時間にリマインド
@@ -29,9 +29,11 @@ YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/guide：この一覧を表示
 
 @でメンションされると会話が始まるよ
-📌 は、その発言から安全な内容を自動で覚えた合図だよ
-詳しい内容は /memory recent、直近の自動記憶の取り消しは /memory undo で確認できるよ
-削除・書き換え・まとめて削除は /memory edit で変更案を確認してから実行するよ
+📌 は記憶を追加した合図
+🗑️ は記憶を削除した合図
+📝 は記憶を書き換えた、または呼び名などを変更した合図
+詳しい変更内容は /memory recent で確認できるよ
+直近の記憶変更は /memory undo で戻せるよ
 リマインド通知本体は、指定したチャンネルに届くよ
 なにかあったら k.a.256 (X・Discord共通: _k256) まで"""
 

@@ -305,8 +305,10 @@ def memory_user_store():
 
 
 def memory_writes_supported():
-    """v3移行直後の安全策。v3 rootでは、読むだけにして保存はまだ止める。"""
-    return not memory_root_is_v3()
+    """v3 rootは dry_run が外れてから書き込み可能にする。"""
+    if memory_root_is_v3():
+        return longterm_memory.get("dry_run") is not True
+    return True
 
 
 def v3_memory_entry_to_v2_entry(entry):
@@ -627,7 +629,7 @@ async def persist_memory_entry(entry, commit_message):
     if memory_lock is None or write_json_async is None:
         raise RuntimeError("memory_model is not configured")
     if not memory_writes_supported():
-        raise RuntimeError("v3 memory store is read-only in this compatibility phase")
+        raise RuntimeError("memory store is read-only while v3 dry_run is true")
     await write_json_async(longterm_memory_file, longterm_memory)
     if save_to_git_async:
         await save_to_git_async(commit_message)
@@ -653,14 +655,249 @@ def _replace_item(values, old_item, new_item):
             result.append(value)
     return normalize_item_list(result), replaced
 
+def _v3_empty_user_entry():
+    return {
+        "schema_version": MEMORY_V3_SCHEMA_VERSION,
+        "slots": {},
+        "memories": {},
+        "keywords": {},
+        "interaction_preferences": {},
+        "change_log": [],
+    }
+
+
+def _v3_raw_user_entry(user_id):
+    store = memory_user_store()
+    user_id = str(user_id)
+    entry = store.get(user_id)
+    if not isinstance(entry, dict):
+        entry = _v3_empty_user_entry()
+        store[user_id] = entry
+    entry.setdefault("schema_version", MEMORY_V3_SCHEMA_VERSION)
+    entry.setdefault("slots", {})
+    entry.setdefault("memories", {})
+    entry.setdefault("keywords", {})
+    entry.setdefault("interaction_preferences", {})
+    entry.setdefault("change_log", [])
+    return entry
+
+
+def _v3_item_collection(category, item):
+    if category == "好きなもの" and isinstance(item, str) and len(item) <= 12:
+        return "keywords", "k"
+    if category in {"傾向", "好み", "話し方", "避けたいこと"}:
+        return "interaction_preferences", "h"
+    return "memories", "m"
+
+
+def _v3_next_record_id(records, prefix):
+    max_index = 0
+    for record_id in records.keys():
+        if not isinstance(record_id, str) or not record_id.startswith(prefix + "_"):
+            continue
+        try:
+            max_index = max(max_index, int(record_id.split("_", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return f"{prefix}_{max_index + 1:03d}"
+
+
+def _v3_record_category(record, fallback):
+    return canonicalize_memory_category(record.get("source_category") or fallback) or fallback
+
+
+def _v3_active_records(entry):
+    for collection, fallback_category in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS.items():
+        records = entry.get(collection, {})
+        if not isinstance(records, dict):
+            continue
+        for record_id, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            if record.get("status", "active") != "active":
+                continue
+            yield collection, fallback_category, record_id, record
+
+
+def _v3_find_record(entry, category, item):
+    category = canonicalize_memory_category(category)
+    for collection, fallback, record_id, record in _v3_active_records(entry):
+        if _v3_record_category(record, fallback) != category:
+            continue
+        if record.get("text") == item:
+            return collection, record_id, record
+    return None, None, None
+
+
+def _v3_category_items(entry, category):
+    category = canonicalize_memory_category(category)
+    values = []
+    for _, fallback, _, record in _v3_active_records(entry):
+        if _v3_record_category(record, fallback) == category:
+            text_value = record.get("text")
+            if isinstance(text_value, str):
+                values.append(text_value)
+    return normalize_item_list(values)
+
+
+def _v3_add_record(entry, category, item):
+    collection, prefix = _v3_item_collection(category, item)
+    records = entry.setdefault(collection, {})
+    record_id = _v3_next_record_id(records, prefix)
+    records[record_id] = {
+        "id": record_id,
+        "text": item,
+        "status": "active",
+        "source_schema": MEMORY_V3_SCHEMA_VERSION,
+        "source_category": category,
+    }
+    return record_id
+
+
+def _v3_delete_record(record):
+    record["status"] = "deleted"
+    record["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+async def apply_v3_memory_operations(user_id, operations, *, summary, source):
+    if memory_lock is None:
+        raise RuntimeError("memory_model is not configured")
+    if not memory_writes_supported():
+        return {
+            "changes": [],
+            "conflicts": [],
+            "errors": ["v3形式の記憶は現在 dry_run のため読み取り専用"],
+        }
+
+    async with memory_lock:
+        entry = _v3_raw_user_entry(user_id)
+        changes = []
+        conflicts = []
+
+        for operation in operations:
+            operation_type = operation["type"]
+
+            if operation_type == "set_slot":
+                slots = entry.setdefault("slots", {})
+                before = slots.get(operation["slot"])
+                if before == operation["value"]:
+                    continue
+                slots[operation["slot"]] = operation["value"]
+                changes.append({**operation, "before_value": before})
+                continue
+
+            if operation_type == "delete_slot":
+                slots = entry.setdefault("slots", {})
+                if operation["slot"] not in slots:
+                    conflicts.append(operation)
+                    continue
+                before = slots.pop(operation["slot"])
+                changes.append({**operation, "before_value": before})
+                continue
+
+            if operation_type == "clear_category":
+                category = operation["category"]
+                current_items = _v3_category_items(entry, category)
+                if current_items != operation.get("expected_items", []):
+                    conflicts.append(operation)
+                    continue
+                if not current_items:
+                    continue
+                removed = []
+                for _, fallback, _, record in list(_v3_active_records(entry)):
+                    if _v3_record_category(record, fallback) == category:
+                        removed.append(record.get("text"))
+                        _v3_delete_record(record)
+                changes.append({
+                    "type": "clear_category",
+                    "category": category,
+                    "old_items": normalize_item_list(removed),
+                })
+                continue
+
+            if operation_type == "delete_matching_items":
+                removed_targets = []
+                for target in operation.get("targets", []):
+                    collection, record_id, record = _v3_find_record(
+                        entry,
+                        target.get("category"),
+                        target.get("item"),
+                    )
+                    if record is None:
+                        continue
+                    _v3_delete_record(record)
+                    removed_targets.append({
+                        "category": target.get("category"),
+                        "item": target.get("item"),
+                    })
+                if not removed_targets:
+                    conflicts.append(operation)
+                    continue
+                changes.append({
+                    "type": "delete_matching_items",
+                    "query": operation.get("query"),
+                    "category": operation.get("category"),
+                    "targets": removed_targets,
+                })
+                continue
+
+            category = operation["category"]
+
+            if operation_type == "add_item":
+                item = operation["item"]
+                _, _, existing = _v3_find_record(entry, category, item)
+                if existing is not None:
+                    continue
+                _v3_add_record(entry, category, item)
+                changes.append({**operation, "before_exists": False})
+                continue
+
+            if operation_type == "delete_item":
+                _, _, record = _v3_find_record(entry, category, operation["item"])
+                if record is None:
+                    conflicts.append(operation)
+                    continue
+                _v3_delete_record(record)
+                changes.append({**operation, "before_exists": True})
+                continue
+
+            if operation_type == "rewrite_item":
+                _, _, record = _v3_find_record(entry, category, operation["old_item"])
+                if record is None:
+                    conflicts.append(operation)
+                    continue
+                record["text"] = operation["new_item"]
+                record["source_category"] = category
+                record["updated_at"] = datetime.now().isoformat(timespec="seconds")
+                changes.append({**operation, "before_exists": True})
+                continue
+
+        if changes:
+            append_memory_change(
+                entry,
+                source=source,
+                summary=summary,
+                changes=changes,
+            )
+            await persist_memory_entry(entry, "update v3 memory")
+
+        return {"changes": changes, "conflicts": conflicts, "errors": []}
+
+
 async def apply_auto_memory_operations(user_id, operations, summary="自動記憶"):
     normalized_operations, errors = normalize_auto_memory_operations(operations)
     if not normalized_operations:
         return {"changes": [], "errors": errors}
-    if not memory_writes_supported():
+    if memory_root_is_v3():
+        result = await apply_v3_memory_operations(
+            user_id,
+            normalized_operations,
+            summary=summary,
+            source="auto",
+        )
         return {
-            "changes": [],
-            "errors": errors + ["v3形式の記憶は現在読み取り専用"],
+            "changes": result.get("changes", []),
+            "errors": errors + result.get("errors", []),
         }
 
     async with memory_lock:
@@ -879,11 +1116,17 @@ async def apply_memory_edit_operations(user_id, operations, summary="手動編�
     operations, errors = prepare_memory_edit_operations(operations, ensure_memory_entry(user_id))
     if not operations:
         return {"changes": [], "conflicts": [], "errors": errors}
-    if not memory_writes_supported():
+    if memory_root_is_v3():
+        result = await apply_v3_memory_operations(
+            user_id,
+            operations,
+            summary=summary,
+            source="manual",
+        )
         return {
-            "changes": [],
-            "conflicts": [],
-            "errors": errors + ["v3形式の記憶は現在読み取り専用"],
+            "changes": result.get("changes", []),
+            "conflicts": result.get("conflicts", []),
+            "errors": errors + result.get("errors", []),
         }
 
     async with memory_lock:

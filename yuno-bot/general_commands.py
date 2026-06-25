@@ -92,6 +92,42 @@ def _append_memory_items(*, target, fragments, handling, seen, category, values)
             target.append(value)
 
 
+def _split_memory_by_preview_role(entry):
+    remembered = []
+    fragments = []
+    handling = []
+    seen_items = set()
+
+    items = entry.get("items") if isinstance(entry, dict) else None
+    if not isinstance(items, dict):
+        return remembered, fragments, handling
+
+    for category in MEMORY_CATEGORY_ORDER:
+        _append_memory_items(
+            target=remembered,
+            fragments=fragments,
+            handling=handling,
+            seen=seen_items,
+            category=category,
+            values=normalize_item_list(items.get(category, [])),
+        )
+
+    # canonical外のカテゴリが残っていても、previewでは落とさず saved 側へ寄せる。
+    for category, values in items.items():
+        if category in MEMORY_CATEGORY_ORDER:
+            continue
+        _append_memory_items(
+            target=remembered,
+            fragments=fragments,
+            handling=handling,
+            seen=seen_items,
+            category=category,
+            values=normalize_item_list(values),
+        )
+
+    return remembered, fragments, handling
+
+
 def format_memory_flat_sections(entry):
     """schema v2のまま、表示上だけ薄く役割別に並べる。"""
     if not isinstance(entry, dict):
@@ -99,11 +135,6 @@ def format_memory_flat_sections(entry):
 
     lines = []
     slot_lines = []
-    remembered = []
-    fragments = []
-    handling = []
-    seen_items = set()
-
     slots = entry.get("slots")
     if isinstance(slots, dict):
         for slot in MEMORY_SLOT_NAMES:
@@ -115,30 +146,7 @@ def format_memory_flat_sections(entry):
             else:
                 slot_lines.append(f"{memory_slot_label(slot)}: {value}")
 
-    items = entry.get("items")
-    if isinstance(items, dict):
-        for category in MEMORY_CATEGORY_ORDER:
-            _append_memory_items(
-                target=remembered,
-                fragments=fragments,
-                handling=handling,
-                seen=seen_items,
-                category=category,
-                values=normalize_item_list(items.get(category, [])),
-            )
-
-        # canonical外のカテゴリが残っていても、表示実験では落とさず末尾に出す。
-        for category, values in items.items():
-            if category in MEMORY_CATEGORY_ORDER:
-                continue
-            _append_memory_items(
-                target=remembered,
-                fragments=fragments,
-                handling=handling,
-                seen=seen_items,
-                category=category,
-                values=normalize_item_list(values),
-            )
+    remembered, fragments, handling = _split_memory_by_preview_role(entry)
 
     _append_section(lines, "呼び名", slot_lines)
     _append_section(lines, "覚えていること", remembered)
@@ -147,9 +155,66 @@ def format_memory_flat_sections(entry):
     return lines
 
 
+def _format_preview_records(title, prefix, values):
+    lines = []
+    if not values:
+        return lines
+    lines.append(title)
+    for index, value in enumerate(values, start=1):
+        lines.append(f"{prefix}_{index:03d}: {value}")
+    return lines
+
+
+def format_memory_v3_preview(entry):
+    """schema v2の記憶を、書き換えずにv3風の仮構造として表示する。"""
+    if not isinstance(entry, dict):
+        return []
+
+    lines = [
+        "🧪 v3 preview / dry run",
+        "保存形式はまだ変更していないよ",
+    ]
+
+    slots = entry.get("slots")
+    slot_lines = []
+    if isinstance(slots, dict):
+        for slot in MEMORY_SLOT_NAMES:
+            value = slots.get(slot)
+            if value:
+                slot_lines.append(f"{slot}: {value}")
+
+    remembered, fragments, handling = _split_memory_by_preview_role(entry)
+
+    if slot_lines:
+        lines.append("")
+        lines.append("slots")
+        lines.extend(f"・{line}" for line in slot_lines)
+
+    saved_lines = _format_preview_records("saved_memories", "m", remembered)
+    if saved_lines:
+        lines.append("")
+        lines.extend(saved_lines)
+
+    fragment_lines = _format_preview_records("fragments", "f", fragments)
+    if fragment_lines:
+        lines.append("")
+        lines.extend(fragment_lines)
+
+    handling_lines = _format_preview_records("handling", "h", handling)
+    if handling_lines:
+        lines.append("")
+        lines.extend(handling_lines)
+
+    if len(lines) <= 2:
+        lines.append("")
+        lines.append("（まだpreviewできる記憶がないよ）")
+    return lines
+
+
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/memory show：現在の個人記憶を本人だけに表示
 ・/memory show_flat：現在の個人記憶をカテゴリ棚なしで表示
+・/memory preview_v3：現在の個人記憶をv3風に仮表示
 ・/memory edit：記憶一覧を開いて追加・編集・削除
 ・/memory edit instruction：自然な言葉で変更案を作り、確認後に実行
 ・/memory recent：最近の自動記憶・手動編集履歴を表示
@@ -183,6 +248,15 @@ async def slash_memory_show_flat(interaction):
     lines.extend(format_memory_flat_sections(entry) or ["（まだ何も覚えていないよ）"])
     await interaction.response.send_message(
         "\n".join(lines)[:DISCORD_LIMIT],
+        ephemeral=True,
+    )
+
+
+async def slash_memory_preview_v3(interaction):
+    user_id = str(interaction.user.id)
+    entry = ensure_memory_entry(user_id)
+    await interaction.response.send_message(
+        "\n".join(format_memory_v3_preview(entry))[:DISCORD_LIMIT],
         ephemeral=True,
     )
 

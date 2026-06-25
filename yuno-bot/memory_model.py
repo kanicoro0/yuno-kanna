@@ -27,6 +27,7 @@ def configure(*, memory_store, lock, file_path, write_json, save_to_git):
 
 
 MEMORY_SCHEMA_VERSION = 2
+MEMORY_V3_SCHEMA_VERSION = 3
 
 MEMORY_SLOT_NAMES = ("preferred_name",)
 
@@ -281,6 +282,76 @@ def empty_memory_entry():
         "change_log": [],
     }
 
+
+MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS = {
+    "memories": "覚え書き",
+    "keywords": "好きなもの",
+    "interaction_preferences": "好み",
+}
+
+
+def memory_root_is_v3():
+    return (
+        isinstance(longterm_memory, dict)
+        and longterm_memory.get("schema_version") == MEMORY_V3_SCHEMA_VERSION
+        and isinstance(longterm_memory.get("users"), dict)
+    )
+
+
+def memory_user_store():
+    if memory_root_is_v3():
+        return longterm_memory["users"]
+    return longterm_memory
+
+
+def memory_writes_supported():
+    """v3移行直後の安全策。v3 rootでは、読むだけにして保存はまだ止める。"""
+    return not memory_root_is_v3()
+
+
+def v3_memory_entry_to_v2_entry(entry):
+    """v3の保存形を、既存UI/プロンプトが読めるv2 viewへ変換する。"""
+    normalized = empty_memory_entry()
+    if not isinstance(entry, dict):
+        return normalized
+
+    slots = entry.get("slots")
+    if isinstance(slots, dict):
+        for slot in MEMORY_SLOT_NAMES:
+            value = slots.get(slot)
+            if isinstance(value, str) and value.strip():
+                normalized["slots"][slot] = value.strip()[:100]
+
+    for collection, fallback_category in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS.items():
+        records = entry.get(collection)
+        if not isinstance(records, dict):
+            continue
+        for record in records.values():
+            if not isinstance(record, dict):
+                continue
+            if record.get("status", "active") != "active":
+                continue
+            text_value = record.get("text")
+            if not isinstance(text_value, str) or not text_value.strip():
+                continue
+            source_category = record.get("source_category") or fallback_category
+            merge_canonical_memory_items(
+                normalized["items"],
+                source_category,
+                text_value,
+            )
+
+    change_log = entry.get("change_log")
+    if isinstance(change_log, list):
+        normalized["change_log"] = [
+            change for change in change_log[-MAX_MEMORY_CHANGE_LOG:]
+            if isinstance(change, dict)
+        ]
+    if isinstance(entry.get("updated"), str):
+        normalized["updated"] = entry["updated"]
+    return normalized
+
+
 def migrate_memory_entry(entry):
     if not isinstance(entry, dict):
         return empty_memory_entry(), True
@@ -336,12 +407,22 @@ def migrate_memory_entry(entry):
 
 def ensure_memory_entry(user_id):
     user_id = str(user_id)
-    entry, changed = migrate_memory_entry(longterm_memory.get(user_id))
-    if changed or user_id not in longterm_memory:
-        longterm_memory[user_id] = entry
+    store = memory_user_store()
+    raw_entry = store.get(user_id)
+
+    if memory_root_is_v3():
+        # v3 rootでは、この段階では保存形を壊さない。
+        # 既存の表示・プロンプト処理に渡すため、v2互換viewだけ返す。
+        return v3_memory_entry_to_v2_entry(raw_entry)
+
+    entry, changed = migrate_memory_entry(raw_entry)
+    if changed or user_id not in store:
+        store[user_id] = entry
     return entry
 
 def memory_has_content(entry):
+    if isinstance(entry, dict) and entry.get("schema_version") == MEMORY_V3_SCHEMA_VERSION:
+        entry = v3_memory_entry_to_v2_entry(entry)
     return bool(
         isinstance(entry, dict)
         and (entry.get("slots") or entry.get("items"))
@@ -545,6 +626,8 @@ def append_memory_change(entry, *, source, summary, changes):
 async def persist_memory_entry(entry, commit_message):
     if memory_lock is None or write_json_async is None:
         raise RuntimeError("memory_model is not configured")
+    if not memory_writes_supported():
+        raise RuntimeError("v3 memory store is read-only in this compatibility phase")
     await write_json_async(longterm_memory_file, longterm_memory)
     if save_to_git_async:
         await save_to_git_async(commit_message)
@@ -574,6 +657,11 @@ async def apply_auto_memory_operations(user_id, operations, summary="自動記�
     normalized_operations, errors = normalize_auto_memory_operations(operations)
     if not normalized_operations:
         return {"changes": [], "errors": errors}
+    if not memory_writes_supported():
+        return {
+            "changes": [],
+            "errors": errors + ["v3形式の記憶は現在読み取り専用"],
+        }
 
     async with memory_lock:
         entry = ensure_memory_entry(user_id)
@@ -791,6 +879,12 @@ async def apply_memory_edit_operations(user_id, operations, summary="手動編�
     operations, errors = prepare_memory_edit_operations(operations, ensure_memory_entry(user_id))
     if not operations:
         return {"changes": [], "conflicts": [], "errors": errors}
+    if not memory_writes_supported():
+        return {
+            "changes": [],
+            "conflicts": [],
+            "errors": errors + ["v3形式の記憶は現在読み取り専用"],
+        }
 
     async with memory_lock:
         entry = ensure_memory_entry(user_id)
@@ -1051,6 +1145,9 @@ def _undo_operation(entry, operation):
     return False
 
 async def undo_latest_memory_change(user_id, *, source=None):
+    if not memory_writes_supported():
+        return {"undone": False, "reason": "v3_read_only"}
+
     async with memory_lock:
         entry = ensure_memory_entry(user_id)
         change_log = entry.get("change_log", [])

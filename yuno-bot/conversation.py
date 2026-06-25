@@ -422,7 +422,6 @@ async def handle_mention(message, ctx):
                     memory_operations,
                 )
                 memory_debug_summary = format_auto_memory_debug_summary(
-                    len(memory_operations),
                     memory_result,
                 )
                 if memory_result["errors"]:

@@ -729,6 +729,96 @@ def _v3_all_records(entry):
                 yield collection, fallback_category, record_id, record
 
 
+def format_memory_records_for_display(
+    user_id,
+    *,
+    status="active",
+    collection="all",
+    page=1,
+    page_size=10,
+):
+    """v3 record実体を読み取り専用で表示する。保存データは変更しない。"""
+    status = str(status or "active").strip().lower()
+    collection = str(collection or "all").strip().lower()
+    if status not in {"active", "deleted", "all"}:
+        return ["status は active / deleted / all から選んでね"]
+    if collection not in {"all", *MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS.keys()}:
+        return [
+            "collection は all / memories / keywords / "
+            "interaction_preferences から選んでね"
+        ]
+
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        page = 1
+    page = max(1, page)
+    page_size = max(1, min(int(page_size), 20))
+
+    if not memory_root_is_v3():
+        return ["🧾 v3 records 表示は、schema_version: 3 の記憶で使えるよ"]
+
+    entry = memory_user_store().get(str(user_id))
+    if not isinstance(entry, dict):
+        return ["🧾 記憶records\nまだrecordはないみたい"]
+
+    rows = []
+    for found_collection, fallback, record_id, record in _v3_all_records(entry):
+        if collection != "all" and found_collection != collection:
+            continue
+        record_status = str(record.get("status", "active")).strip() or "active"
+        if status != "all" and record_status != status:
+            continue
+        text = record.get("text")
+        if not isinstance(text, str):
+            text = json.dumps(text, ensure_ascii=False)
+        rows.append({
+            "collection": found_collection,
+            "record_id": record.get("id") if isinstance(record.get("id"), str) else record_id,
+            "status": record_status,
+            "source_category": record.get("source_category") or fallback,
+            "text": text.strip(),
+        })
+
+    collection_order = {
+        name: index
+        for index, name in enumerate(MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS)
+    }
+    rows.sort(key=lambda row: (
+        collection_order.get(row["collection"], 999),
+        row["record_id"],
+    ))
+
+    total = len(rows)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = min(page, total_pages)
+    start = (page - 1) * page_size
+    page_rows = rows[start:start + page_size]
+
+    lines = [
+        "🧾 記憶records",
+        f"status: {status} / collection: {collection} / page: {page}/{total_pages}",
+        f"records: {total}",
+    ]
+    if not page_rows:
+        lines.append("該当するrecordはないみたい")
+        return lines
+
+    for row in page_rows:
+        text = discord.utils.escape_mentions(row["text"])
+        if len(text) > 140:
+            text = text[:137] + "..."
+        lines.extend([
+            "",
+            (
+                f"[{row['record_id']}] {row['collection']} / "
+                f"{row['status']} / {row['source_category']}"
+            ),
+            text or "（textなし）",
+        ])
+    return lines
+
+
 def _v3_find_record_by_id(entry, record_id, collection=None):
     if not isinstance(record_id, str) or not record_id.strip():
         return None, None, None, None

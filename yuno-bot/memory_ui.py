@@ -14,6 +14,7 @@ from memory_model import (
     describe_memory_operation,
     ensure_memory_entry,
     format_memory_for_display,
+    format_memory_records_for_display,
     format_recent_memory_changes,
     memory_category_label,
     memory_slot_label,
@@ -57,6 +58,47 @@ async def memory_recent(interaction: discord.Interaction):
         else "最近の記憶変更はまだないみたい"
     )
     await interaction.response.send_message(content[:DISCORD_LIMIT], ephemeral=True)
+
+
+@memory_group.command(name="records", description="v3記憶recordの実体を読み取り専用で表示します")
+@discord.app_commands.describe(
+    status="表示するrecord状態。省略時はactiveのみ",
+    collection="表示するcollection。省略時はすべて",
+    page="表示ページ",
+)
+@discord.app_commands.choices(
+    status=[
+        discord.app_commands.Choice(name="active", value="active"),
+        discord.app_commands.Choice(name="deleted", value="deleted"),
+        discord.app_commands.Choice(name="all", value="all"),
+    ],
+    collection=[
+        discord.app_commands.Choice(name="all", value="all"),
+        discord.app_commands.Choice(name="memories", value="memories"),
+        discord.app_commands.Choice(name="keywords", value="keywords"),
+        discord.app_commands.Choice(
+            name="interaction_preferences",
+            value="interaction_preferences",
+        ),
+    ],
+)
+async def memory_records(
+    interaction: discord.Interaction,
+    status: str = "active",
+    collection: str = "all",
+    page: int = 1,
+):
+    lines = format_memory_records_for_display(
+        str(interaction.user.id),
+        status=status,
+        collection=collection,
+        page=page,
+    )
+    await interaction.response.send_message(
+        "\n".join(lines)[:DISCORD_LIMIT],
+        ephemeral=True,
+    )
+
 
 @memory_group.command(name="undo", description="直近の記憶変更を取り消します")
 async def memory_undo(interaction: discord.Interaction):

@@ -314,6 +314,7 @@ async def sleep(ctx):
         await ctx.send("この操作は管理者だけが使えるよ")
         return
     await auto_reply.set_global_sleep(True)
+    await auto_reply.apply_sleep_presence(bot)
     await ctx.send("……おやすみ。コマンド以外の反応を止めたよ")
     print(f"sleep enabled by {ctx.author.display_name}")
 
@@ -323,5 +324,6 @@ async def wake(ctx):
         await ctx.send("この操作は管理者だけが使えるよ")
         return
     await auto_reply.set_global_sleep(False)
+    await auto_reply.apply_sleep_presence(bot)
     await ctx.send("……おはよう。反応を戻したよ")
     print(f"sleep disabled by {ctx.author.display_name}")

@@ -59,6 +59,13 @@ async def set_global_sleep(enabled):
     await persist_settings()
 
 
+async def apply_sleep_presence(bot):
+    if bot is None:
+        return
+    status = discord.Status.idle if is_global_sleeping() else discord.Status.online
+    await bot.change_presence(status=status)
+
+
 def guild_auto_reply_enabled(guild_id):
     return _guild_settings(guild_id).get("auto_reply_enabled") is not False
 
@@ -164,7 +171,6 @@ def _status_lines(guild, channel):
         f"・OFFにしているチャンネル数: {disabled_count}",
         "",
         "※メンション時はこの設定に関係なく返すよ",
-        "※/yuno sleep 中はメンションも含めてコマンド以外を止めるよ",
     ]
 
 

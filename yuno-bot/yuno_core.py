@@ -163,6 +163,7 @@ async def setup_hook():
 
 
 async def on_ready():
+    await auto_reply.apply_sleep_presence(bot)
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send("☀️ ゆの、目が覚めた")

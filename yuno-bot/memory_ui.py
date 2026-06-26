@@ -286,6 +286,7 @@ class MemoryCategorySelect(discord.ui.Select):
         self.editor_view.selected_type = target_type
         self.editor_view.selected_name = target_name
         self.editor_view.selected_item = None
+        self.editor_view.selected_item_record_id = None
         self.editor_view.selected_item_record_type = None
         self.editor_view.item_page = 0
         self.editor_view.refresh_components()
@@ -299,10 +300,17 @@ class MemoryItemSelect(discord.ui.Select):
         options = [
             discord.SelectOption(
                 label=entry["item"][:100],
-                value=str(page_start + index),
+                value=entry.get("record_id") or f"idx:{page_start + index}",
                 default=(
-                    editor_view.selected_item == entry["item"]
-                    and editor_view.selected_item_record_type == entry["record_type"]
+                    (
+                        editor_view.selected_item_record_id
+                        and editor_view.selected_item_record_id == entry.get("record_id")
+                    )
+                    or (
+                        not editor_view.selected_item_record_id
+                        and editor_view.selected_item == entry["item"]
+                        and editor_view.selected_item_record_type == entry["record_type"]
+                    )
                 ),
             )
             for index, entry in enumerate(entries)
@@ -326,9 +334,22 @@ class MemoryItemSelect(discord.ui.Select):
         if not await self.editor_view.check_owner(interaction):
             return
         entries = self.editor_view.current_item_entries()
-        index = int(self.values[0])
-        selected = entries[index] if 0 <= index < len(entries) else None
+        value = self.values[0]
+        if value.startswith("idx:"):
+            index = int(value.split(":", 1)[1])
+            selected = entries[index] if 0 <= index < len(entries) else None
+        else:
+            selected = next(
+                (
+                    entry for entry in entries
+                    if entry.get("record_id") == value
+                ),
+                None,
+            )
         self.editor_view.selected_item = selected["item"] if selected else None
+        self.editor_view.selected_item_record_id = (
+            selected.get("record_id") if selected else None
+        )
         self.editor_view.selected_item_record_type = (
             selected["record_type"] if selected else None
         )
@@ -392,6 +413,7 @@ class MemoryItemModal(discord.ui.Modal):
             raw_operation = {
                 "type": "rewrite_item",
                 "record_type": record_type,
+                "record_id": self.editor_view.selected_item_record_id,
                 "old_item": self.editor_view.selected_item,
                 "new_item": new_value,
             }
@@ -413,6 +435,7 @@ class MemoryItemModal(discord.ui.Modal):
         elif self.mode == "edit" and self.editor_view.selected_type == "group":
             self.editor_view.selected_item = operations[0]["new_item"]
             self.editor_view.selected_item_record_type = operations[0]["record_type"]
+            self.editor_view.selected_item_record_id = operations[0].get("record_id")
         await self.editor_view.apply_direct_operations(
             interaction,
             operations,
@@ -426,6 +449,7 @@ class MemoryEditView(discord.ui.View):
         self.selected_type = None
         self.selected_name = None
         self.selected_item = None
+        self.selected_item_record_id = None
         self.selected_item_record_type = None
         self.category_page = 0
         self.item_page = 0
@@ -573,12 +597,20 @@ class MemoryEditView(discord.ui.View):
         ]
         item_page_values = [entry["item"] for entry in item_page_entries]
         selected_item_visible = any(
-            self.selected_item == entry["item"]
-            and self.selected_item_record_type == entry["record_type"]
+            (
+                self.selected_item_record_id
+                and self.selected_item_record_id == entry.get("record_id")
+            )
+            or (
+                not self.selected_item_record_id
+                and self.selected_item == entry["item"]
+                and self.selected_item_record_type == entry["record_type"]
+            )
             for entry in item_page_entries
         )
         if self.selected_item and not selected_item_visible:
             self.selected_item = None
+            self.selected_item_record_id = None
             self.selected_item_record_type = None
         if item_page_values:
             self.add_item(
@@ -699,6 +731,7 @@ class MemoryEditView(discord.ui.View):
             raw_operation = {
                 "type": "delete_item",
                 "record_type": record_type,
+                "record_id": self.selected_item_record_id,
                 "item": self.selected_item,
             }
         operations, errors = prepare_memory_edit_operations(
@@ -714,6 +747,7 @@ class MemoryEditView(discord.ui.View):
             return
         summary = describe_memory_operation(operations[0])
         self.selected_item = None
+        self.selected_item_record_id = None
         self.selected_item_record_type = None
         await self.apply_direct_operations(interaction, operations, summary)
 
@@ -724,6 +758,7 @@ class MemoryEditView(discord.ui.View):
         if self.selected_type:
             self.item_page = max(0, self.item_page - 1)
             self.selected_item = None
+            self.selected_item_record_id = None
             self.selected_item_record_type = None
         else:
             self.category_page = max(0, self.category_page - 1)
@@ -740,6 +775,7 @@ class MemoryEditView(discord.ui.View):
         if self.selected_type:
             self.item_page += 1
             self.selected_item = None
+            self.selected_item_record_id = None
             self.selected_item_record_type = None
         else:
             self.category_page += 1
@@ -756,6 +792,7 @@ class MemoryEditView(discord.ui.View):
         self.selected_type = None
         self.selected_name = None
         self.selected_item = None
+        self.selected_item_record_id = None
         self.selected_item_record_type = None
         self.item_page = 0
         self.refresh_components()

@@ -1493,10 +1493,13 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 continue
 
             if operation_type == "delete_item":
-                collection, record_id, record = _v3_find_record(
+                collection, record_id, record = _v3_find_record_any(
                     entry,
-                    record_type,
+                    operation.get("category"),
                     operation["item"],
+                    status="active",
+                    record_id=operation.get("record_id"),
+                    record_type=record_type,
                 )
                 if record is None:
                     conflicts.append(operation)
@@ -1511,10 +1514,13 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 continue
 
             if operation_type == "rewrite_item":
-                collection, record_id, record = _v3_find_record(
+                collection, record_id, record = _v3_find_record_any(
                     entry,
-                    record_type,
+                    operation.get("category"),
                     operation["old_item"],
+                    status="active",
+                    record_id=operation.get("record_id"),
+                    record_type=record_type,
                 )
                 if record is None:
                     conflicts.append(operation)
@@ -1679,6 +1685,9 @@ def prepare_memory_edit_operations(raw_operations, entry):
                 })
             continue
 
+        record_id = str(operation.get("record_id", "")).strip()
+        record_id = record_id or None
+
         if operation_type == "clear_category":
             category = canonicalize_memory_category(operation.get("category"))
             if not category and operation.get("record_type"):
@@ -1784,6 +1793,7 @@ def prepare_memory_edit_operations(raw_operations, entry):
             normalized.append({
                 "type": "delete_item",
                 "record_type": record_type,
+                **({"record_id": record_id} if record_id else {}),
                 "item": item_parts[0],
             })
             continue
@@ -1801,6 +1811,7 @@ def prepare_memory_edit_operations(raw_operations, entry):
             normalized.append({
                 "type": "rewrite_item",
                 "record_type": record_type,
+                **({"record_id": record_id} if record_id else {}),
                 "old_item": old_parts[0],
                 "new_item": new_parts[0],
             })

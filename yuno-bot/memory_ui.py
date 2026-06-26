@@ -6,19 +6,15 @@ import discord
 from config import DISCORD_LIMIT
 from openai_client import oa_chat
 from memory_model import (
-    MEMORY_CATEGORY_GUIDANCE,
-    MEMORY_CATEGORY_ORDER,
     MEMORY_ITEM_PAGE_SIZE,
     apply_memory_edit_operations,
     describe_memory_operation,
     ensure_memory_entry,
     format_memory_flat_sections_for_user,
     format_recent_memory_changes,
-    memory_category_display_group,
-    memory_category_label,
+    memory_record_items_for_user,
+    memory_record_type_label,
     memory_slot_label,
-    normalize_item_list,
-    ordered_memory_categories,
     prepare_memory_edit_operations,
     undo_latest_memory_change,
 )
@@ -32,9 +28,9 @@ MEMORY_EDIT_GROUPS = (
     ("group", "話し方・扱い方"),
 )
 
-MEMORY_EDIT_GROUP_DEFAULT_CATEGORY = {
-    "覚えていること": "覚え書き",
-    "話し方・扱い方": "話し方",
+MEMORY_EDIT_GROUP_RECORD_TYPE = {
+    "覚えていること": "memory",
+    "話し方・扱い方": "interaction_preference",
 }
 
 MEMORY_EDIT_GROUP_DESCRIPTIONS = {
@@ -118,7 +114,7 @@ def format_memory_edit_preview(summary, operations):
         if operation["type"] == "delete_matching_items":
             for target in operation["targets"][:10]:
                 lines.append(
-                    f"  - {memory_category_label(target['category'])}: "
+                    f"  - {memory_record_type_label(target.get('record_type'))}: "
                     f"{target['item']}"
                 )
             if len(operation["targets"]) > 10:
@@ -186,18 +182,21 @@ class MemoryEditConfirmView(discord.ui.View):
             view=None,
         )
 
-async def build_memory_instruction_proposal(instruction, entry):
-    memory_snapshot = {
-        "slots": entry.get("slots", {}),
-        "items": entry.get("items", {}),
-    }
+async def build_memory_instruction_proposal(instruction, user_id):
+    memory_snapshot = "\n".join(
+        format_memory_flat_sections_for_user(user_id)
+        or ["まだ覚えていることはない"]
+    )
     system_prompt = f"""個人記憶の変更案を作る。
 現在の記憶:
-{json.dumps(memory_snapshot, ensure_ascii=False, indent=2)}
+{memory_snapshot}
 
-使用できる記憶カテゴリ（categoryには必ずこの日本語名を使う）:
-{json.dumps(MEMORY_CATEGORY_ORDER, ensure_ascii=False, indent=2)}
-{MEMORY_CATEGORY_GUIDANCE}
+使用できるrecord_type:
+["memory", "interaction_preference"]
+
+record_typeの意味:
+・memory: 覚えていること。本人が明示した安定した事実、関心、作業状況、継続的な好み
+・interaction_preference: 話し方・扱い方。ゆのの返答態度、呼び方、避けたい言い方、接し方の希望
 
 必ず次のJSONだけを返す:
 {{
@@ -209,14 +208,14 @@ async def build_memory_instruction_proposal(instruction, entry):
 }}
 
 使用できるoperation:
-{{"type":"add_item","category":"作業","item":"Codexを使っている"}}
-{{"type":"delete_item","category":"作業","item":"完全一致する既存項目"}}
+{{"type":"add_item","record_type":"memory","item":"Codexを使っている"}}
+{{"type":"delete_item","record_type":"memory","item":"完全一致する既存項目"}}
 {{"type":"delete_matching_items","query":"Codex"}}
-{{"type":"delete_matching_items","query":"Codex","category":"作業"}}
-{{"type":"rewrite_item","category":"覚え書き","old_item":"完全一致する既存項目","new_item":"新しい内容"}}
+{{"type":"delete_matching_items","query":"Codex","record_type":"memory"}}
+{{"type":"rewrite_item","record_type":"interaction_preference","old_item":"完全一致する既存項目","new_item":"新しい内容"}}
 {{"type":"set_slot","slot":"preferred_name","value":"呼び名"}}
 {{"type":"delete_slot","slot":"preferred_name"}}
-{{"type":"clear_category","category":"作業"}}
+{{"type":"clear_category","record_type":"memory"}}
 
 規則:
 ・ユーザーの指示に必要な最小操作だけを出す
@@ -225,7 +224,7 @@ async def build_memory_instruction_proposal(instruction, entry):
 ・ambiguous=true の場合は、考えられる対象をcandidatesへ短い文章で列挙する
 ・「整理して」のように残す基準が不明なら ambiguous=true にする
 ・存在しない内容を削除対象として作らない
-・categoryは上記の日本語カテゴリだけを使う
+・categoryは使わず、record_typeだけを使う
 ・item / old_item / new_item は必ず1件の記憶だけを書く
 ・item / old_item / new_item 内に改行、箇条書き、複数項目の列挙を入れない
 ・複数のことを追加する場合は、複数のadd_item operationに分ける
@@ -287,7 +286,7 @@ class MemoryCategorySelect(discord.ui.Select):
         self.editor_view.selected_type = target_type
         self.editor_view.selected_name = target_name
         self.editor_view.selected_item = None
-        self.editor_view.selected_item_category = None
+        self.editor_view.selected_item_record_type = None
         self.editor_view.item_page = 0
         self.editor_view.refresh_components()
         await interaction.response.edit_message(
@@ -303,7 +302,7 @@ class MemoryItemSelect(discord.ui.Select):
                 value=str(page_start + index),
                 default=(
                     editor_view.selected_item == entry["item"]
-                    and editor_view.selected_item_category == entry["category"]
+                    and editor_view.selected_item_record_type == entry["record_type"]
                 ),
             )
             for index, entry in enumerate(entries)
@@ -330,8 +329,8 @@ class MemoryItemSelect(discord.ui.Select):
         index = int(self.values[0])
         selected = entries[index] if 0 <= index < len(entries) else None
         self.editor_view.selected_item = selected["item"] if selected else None
-        self.editor_view.selected_item_category = (
-            selected["category"] if selected else None
+        self.editor_view.selected_item_record_type = (
+            selected["record_type"] if selected else None
         )
         self.editor_view.refresh_components()
         await interaction.response.edit_message(
@@ -373,26 +372,26 @@ class MemoryItemModal(discord.ui.Modal):
                 "value": new_value,
             }
         elif self.mode == "add":
-            category = MEMORY_EDIT_GROUP_DEFAULT_CATEGORY.get(
+            record_type = MEMORY_EDIT_GROUP_RECORD_TYPE.get(
                 self.editor_view.selected_name,
-                "覚え書き",
+                "memory",
             )
             raw_operation = {
                 "type": "add_item",
-                "category": category,
+                "record_type": record_type,
                 "item": new_value,
             }
         else:
-            category = (
-                self.editor_view.selected_item_category
-                or MEMORY_EDIT_GROUP_DEFAULT_CATEGORY.get(
+            record_type = (
+                self.editor_view.selected_item_record_type
+                or MEMORY_EDIT_GROUP_RECORD_TYPE.get(
                     self.editor_view.selected_name,
-                    "覚え書き",
+                    "memory",
                 )
             )
             raw_operation = {
                 "type": "rewrite_item",
-                "category": category,
+                "record_type": record_type,
                 "old_item": self.editor_view.selected_item,
                 "new_item": new_value,
             }
@@ -410,10 +409,10 @@ class MemoryItemModal(discord.ui.Modal):
         summary = describe_memory_operation(operations[0])
         if self.mode == "add" and self.editor_view.selected_type == "group":
             self.editor_view.selected_item = operations[0]["item"]
-            self.editor_view.selected_item_category = operations[0]["category"]
+            self.editor_view.selected_item_record_type = operations[0]["record_type"]
         elif self.mode == "edit" and self.editor_view.selected_type == "group":
             self.editor_view.selected_item = operations[0]["new_item"]
-            self.editor_view.selected_item_category = operations[0]["category"]
+            self.editor_view.selected_item_record_type = operations[0]["record_type"]
         await self.editor_view.apply_direct_operations(
             interaction,
             operations,
@@ -427,7 +426,7 @@ class MemoryEditView(discord.ui.View):
         self.selected_type = None
         self.selected_name = None
         self.selected_item = None
-        self.selected_item_category = None
+        self.selected_item_record_type = None
         self.category_page = 0
         self.item_page = 0
         self.refresh_components()
@@ -450,22 +449,11 @@ class MemoryEditView(discord.ui.View):
     def current_item_entries(self):
         if self.selected_type != "group" or not self.selected_name:
             return []
-        entry = self.current_entry()
-        items = entry.get("items", {})
-        if not isinstance(items, dict):
-            return []
-        entries = []
-        seen = set()
-        for category in ordered_memory_categories(entry):
-            if memory_category_display_group(category) != self.selected_name:
-                continue
-            for value in normalize_item_list(items.get(category, [])):
-                key = (category, value)
-                if key in seen:
-                    continue
-                seen.add(key)
-                entries.append({"category": category, "item": value})
-        return entries
+        record_type = MEMORY_EDIT_GROUP_RECORD_TYPE.get(
+            self.selected_name,
+            "memory",
+        )
+        return memory_record_items_for_user(self.owner_user_id, record_type)
 
     def current_item_values(self):
         return [entry["item"] for entry in self.current_item_entries()]
@@ -586,12 +574,12 @@ class MemoryEditView(discord.ui.View):
         item_page_values = [entry["item"] for entry in item_page_entries]
         selected_item_visible = any(
             self.selected_item == entry["item"]
-            and self.selected_item_category == entry["category"]
+            and self.selected_item_record_type == entry["record_type"]
             for entry in item_page_entries
         )
         if self.selected_item and not selected_item_visible:
             self.selected_item = None
-            self.selected_item_category = None
+            self.selected_item_record_type = None
         if item_page_values:
             self.add_item(
                 MemoryItemSelect(self, item_page_entries, item_start)
@@ -701,16 +689,16 @@ class MemoryEditView(discord.ui.View):
                 "slot": self.selected_name,
             }
         else:
-            category = (
-                self.selected_item_category
-                or MEMORY_EDIT_GROUP_DEFAULT_CATEGORY.get(
+            record_type = (
+                self.selected_item_record_type
+                or MEMORY_EDIT_GROUP_RECORD_TYPE.get(
                     self.selected_name,
-                    "覚え書き",
+                    "memory",
                 )
             )
             raw_operation = {
                 "type": "delete_item",
-                "category": category,
+                "record_type": record_type,
                 "item": self.selected_item,
             }
         operations, errors = prepare_memory_edit_operations(
@@ -726,7 +714,7 @@ class MemoryEditView(discord.ui.View):
             return
         summary = describe_memory_operation(operations[0])
         self.selected_item = None
-        self.selected_item_category = None
+        self.selected_item_record_type = None
         await self.apply_direct_operations(interaction, operations, summary)
 
     @discord.ui.button(label="前へ", style=discord.ButtonStyle.secondary, row=3)
@@ -736,7 +724,7 @@ class MemoryEditView(discord.ui.View):
         if self.selected_type:
             self.item_page = max(0, self.item_page - 1)
             self.selected_item = None
-            self.selected_item_category = None
+            self.selected_item_record_type = None
         else:
             self.category_page = max(0, self.category_page - 1)
         self.refresh_components()
@@ -752,7 +740,7 @@ class MemoryEditView(discord.ui.View):
         if self.selected_type:
             self.item_page += 1
             self.selected_item = None
-            self.selected_item_category = None
+            self.selected_item_record_type = None
         else:
             self.category_page += 1
         self.refresh_components()
@@ -768,7 +756,7 @@ class MemoryEditView(discord.ui.View):
         self.selected_type = None
         self.selected_name = None
         self.selected_item = None
-        self.selected_item_category = None
+        self.selected_item_record_type = None
         self.item_page = 0
         self.refresh_components()
         await interaction.response.edit_message(
@@ -809,7 +797,7 @@ async def memory_edit(
     try:
         proposal = await build_memory_instruction_proposal(
             instruction,
-            entry,
+            user_id,
         )
     except Exception as error:
         safe_report_error(f"記憶の変更案を作れなかったよ: {error}")

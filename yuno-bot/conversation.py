@@ -25,11 +25,10 @@ from config import (
     WINDOW_SECONDS,
 )
 from memory_model import (
-    MEMORY_CATEGORY_GUIDANCE,
-    MEMORY_CATEGORY_ORDER,
     apply_auto_memory_operations,
     ensure_memory_entry,
     format_auto_memory_debug_summary,
+    format_memory_flat_sections_for_user,
     memory_has_content,
 )
 from openai_client import oa_chat
@@ -541,15 +540,16 @@ reactionの規則:
 memory_operationsへ小さく明確な操作を書く。追加AI呼び出しや確認UIはないので、曖昧なら操作を書かず、replyで自然に聞き返す。
 
 使用できるmemory_operations v2：
-{{"type":"add_item","category":"好きなもの","item":"フラクタル"}}
-{{"type":"delete_item","category":"好きなもの","item":"数学"}}
-{{"type":"rewrite_item","category":"話し方","old_item":"「ご主人」はときどき呼ぶくらいがよい","new_item":"ご主人呼びはかなり控えめがよい"}}
+{{"type":"add_item","record_type":"memory","item":"ユーザーはフラクタルに関心がある"}}
+{{"type":"add_item","record_type":"interaction_preference","item":"ユーザーには低圧で簡潔に返す"}}
+{{"type":"delete_item","record_type":"memory","item":"完全一致する既存項目"}}
+{{"type":"rewrite_item","record_type":"interaction_preference","old_item":"完全一致する既存項目","new_item":"新しい内容"}}
 {{"type":"set_slot","slot":"preferred_name","value":"かにころ"}}
 {{"type":"delete_slot","slot":"preferred_name"}}
 
-categoryは次の日本語カテゴリから選ぶ：
-{' / '.join(MEMORY_CATEGORY_ORDER)}
-{MEMORY_CATEGORY_GUIDANCE}
+record_typeは次のどちらかだけを使う：
+・memory: 覚えていること。本人が明示した安定した事実、関心、作業状況、継続的な好み
+・interaction_preference: 話し方・扱い方。ゆのの返答態度、呼び方、避けたい言い方、接し方の希望
 
 memory_operationsの規則：
 ・使えるtypeは add_item / delete_item / rewrite_item / set_slot / delete_slot だけ
@@ -560,8 +560,10 @@ memory_operationsの規則：
 ・1発話に複数の明確な変更があれば、複数operationを同時に出してよい
 ・preferred_nameの明確な指定はset_slotで扱う
 ・secret.xxxは使用しない
-・一時的な気分、その場限りの状態、会話からの推測、他人の情報、センシティブな情報、ゆの側の感情や詩的比喩は記憶しない
-・覚え書きには本人が「覚えて」など保存意思を示した継続的な内容だけを入れる
+・旧カテゴリ（好きなもの、覚え書き、作業、傾向、話し方など）は使わず、record_typeだけを使う
+・一時的な気分、その場限りの状態、会話からの推測、他人の個人情報、センシティブな情報、ゆの側の感情や詩的比喩は記憶しない
+・覚えていることには、本人が明示した安定した事実・関心・作業状況・継続的な好みだけを入れる
+・話し方・扱い方には、ゆのの返答態度、呼び方、避けたい言い方、接し方の希望だけを入れる
 ・過剰に一般化せず、本人が実際に述べた範囲だけを書く
 ・現在の記憶と同じ内容は出力しない
 ・item / old_item / new_item は必ず1件の記憶だけを書く
@@ -571,17 +573,11 @@ memory_operationsの規則：
 """
 
     if memory_has_content(memory):
+        memory_lines = format_memory_flat_sections_for_user(user_id)
         prompt += """
 現在の記憶（参照用。memory_operationsには明確で小さい変更だけを書く）：
 """
-        prompt += json.dumps(
-            {
-                "slots": memory.get("slots", {}),
-                "items": memory.get("items", {}),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        prompt += "\n".join(memory_lines) if memory_lines else "まだ覚えていることはない"
         prompt += "\n"
 
     trimmed_inner = inner_log.get(user_id, [])

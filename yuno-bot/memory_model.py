@@ -1376,103 +1376,21 @@ async def apply_auto_memory_operations(user_id, operations, summary="自動記�
     normalized_operations, errors = normalize_auto_memory_operations(operations)
     if not normalized_operations:
         return {"changes": [], "errors": errors}
-    if memory_root_has_users():
-        result = await apply_records_memory_operations(
-            user_id,
-            normalized_operations,
-            summary=summary,
-            source="auto",
-        )
+    if not memory_root_has_users():
         return {
-            "changes": result.get("changes", []),
-            "errors": errors + result.get("errors", []),
+            "changes": [],
+            "errors": errors + ["records形式の記憶ではないため自動記憶を保存しません"],
         }
-
-    async with memory_lock:
-        entry = ensure_prompt_memory_view(user_id)
-        changes = []
-        for operation in normalized_operations:
-            operation_type = operation["type"]
-            if operation_type == "set_slot":
-                slots = entry.setdefault("slots", {})
-                before = slots.get(operation["slot"])
-                if before == operation["value"]:
-                    continue
-                slots[operation["slot"]] = operation["value"]
-                changes.append({
-                    **operation,
-                    "before_value": before,
-                })
-                continue
-
-            if operation_type == "delete_slot":
-                slots = entry.setdefault("slots", {})
-                if operation["slot"] not in slots:
-                    continue
-                before = slots.pop(operation["slot"])
-                changes.append({
-                    **operation,
-                    "before_value": before,
-                })
-                continue
-
-            category = operation.get("category") or memory_record_type_default_category(
-                operation.get("record_type")
-            )
-            items = entry.setdefault("items", {})
-            values = normalize_item_list(items.get(category, []))
-
-            if operation_type == "add_item":
-                item = operation["item"]
-                if item in values:
-                    continue
-                values.append(item)
-                items[category] = normalize_item_list(values)
-                changes.append({
-                    **operation,
-                    "category": category,
-                    "before_exists": False,
-                })
-                continue
-
-            if operation_type == "delete_item":
-                item = operation["item"]
-                new_values, removed = _remove_item(values, item)
-                if not removed:
-                    continue
-                items[category] = normalize_item_list(new_values)
-                changes.append({
-                    **operation,
-                    "category": category,
-                    "before_exists": True,
-                })
-                continue
-
-            if operation_type == "rewrite_item":
-                old_item = operation["old_item"]
-                new_item = operation["new_item"]
-                new_values, replaced = _replace_item(values, old_item, new_item)
-                if not replaced:
-                    continue
-                items[category] = new_values
-                changes.append({
-                    **operation,
-                    "category": category,
-                    "before_exists": True,
-                })
-                continue
-
-        if not changes:
-            return {"changes": [], "errors": errors}
-
-        append_memory_change(
-            entry,
-            source="auto",
-            summary=summary,
-            changes=changes,
-        )
-        await persist_memory_entry(entry, "update memory")
-        return {"changes": changes, "errors": errors}
+    result = await apply_records_memory_operations(
+        user_id,
+        normalized_operations,
+        summary=summary,
+        source="auto",
+    )
+    return {
+        "changes": result.get("changes", []),
+        "errors": errors + result.get("errors", []),
+    }
 
 def prepare_memory_edit_operations(raw_operations, entry):
     if not isinstance(raw_operations, list):
@@ -1645,142 +1563,29 @@ def prepare_memory_edit_operations(raw_operations, entry):
     return normalized, errors
 
 async def apply_memory_edit_operations(user_id, operations, summary="手動編集"):
-    operations, errors = prepare_memory_edit_operations(operations, ensure_prompt_memory_view(user_id))
+    operations, errors = prepare_memory_edit_operations(
+        operations,
+        ensure_prompt_memory_view(user_id),
+    )
     if not operations:
         return {"changes": [], "conflicts": [], "errors": errors}
-    if memory_root_has_users():
-        result = await apply_records_memory_operations(
-            user_id,
-            operations,
-            summary=summary,
-            source="manual",
-        )
+    if not memory_root_has_users():
         return {
-            "changes": result.get("changes", []),
-            "conflicts": result.get("conflicts", []),
-            "errors": errors + result.get("errors", []),
+            "changes": [],
+            "conflicts": [],
+            "errors": errors + ["records形式の記憶ではないため編集を保存できません"],
         }
-
-    async with memory_lock:
-        entry = ensure_prompt_memory_view(user_id)
-        changes = []
-        conflicts = []
-        for operation in operations:
-            operation_type = operation["type"]
-            if operation_type == "set_slot":
-                slots = entry.setdefault("slots", {})
-                before = slots.get(operation["slot"])
-                if before == operation["value"]:
-                    continue
-                slots[operation["slot"]] = operation["value"]
-                changes.append({**operation, "before_value": before})
-                continue
-
-            if operation_type == "delete_slot":
-                slots = entry.setdefault("slots", {})
-                if operation["slot"] not in slots:
-                    conflicts.append(operation)
-                    continue
-                before = slots.pop(operation["slot"])
-                changes.append({**operation, "before_value": before})
-                continue
-
-            if operation_type == "clear_category":
-                items = entry.setdefault("items", {})
-                current_items = normalize_item_list(items.get(operation["category"], []))
-                if current_items != operation["expected_items"]:
-                    conflicts.append(operation)
-                    continue
-                if not current_items:
-                    continue
-                items[operation["category"]] = []
-                changes.append({
-                    "type": "clear_category",
-                    "category": operation["category"],
-                    "old_items": current_items,
-                })
-                continue
-
-            if operation_type == "delete_matching_items":
-                items = entry.setdefault("items", {})
-                removed_targets = []
-                for target in operation["targets"]:
-                    category = target["category"]
-                    item = target["item"]
-                    current_items = normalize_item_list(items.get(category, []))
-                    new_items, removed = _remove_item(current_items, item)
-                    if removed:
-                        items[category] = new_items
-                        removed_targets.append({"category": category, "item": item})
-                if not removed_targets:
-                    conflicts.append(operation)
-                    continue
-                changes.append({
-                    "type": "delete_matching_items",
-                    "query": operation["query"],
-                    "category": operation.get("category"),
-                    "targets": removed_targets,
-                })
-                continue
-
-            category = operation.get("category") or memory_record_type_default_category(
-                operation.get("record_type")
-            )
-            items = entry.setdefault("items", {})
-            values = normalize_item_list(items.get(category, []))
-
-            if operation_type == "add_item":
-                item = operation["item"]
-                if item in values:
-                    continue
-                values.append(item)
-                items[category] = normalize_item_list(values)
-                changes.append({
-                    **operation,
-                    "category": category,
-                    "before_exists": False,
-                })
-                continue
-
-            if operation_type == "delete_item":
-                new_values, removed = _remove_item(values, operation["item"])
-                if not removed:
-                    conflicts.append(operation)
-                    continue
-                items[category] = normalize_item_list(new_values)
-                changes.append({
-                    **operation,
-                    "category": category,
-                    "before_exists": True,
-                })
-                continue
-
-            if operation_type == "rewrite_item":
-                new_values, replaced = _replace_item(
-                    values,
-                    operation["old_item"],
-                    operation["new_item"],
-                )
-                if not replaced:
-                    conflicts.append(operation)
-                    continue
-                items[category] = new_values
-                changes.append({
-                    **operation,
-                    "category": category,
-                    "before_exists": True,
-                })
-                continue
-
-        if changes:
-            append_memory_change(
-                entry,
-                source="manual",
-                summary=summary,
-                changes=changes,
-            )
-            await persist_memory_entry(entry, "manual memory edit")
-        return {"changes": changes, "conflicts": conflicts, "errors": errors}
+    result = await apply_records_memory_operations(
+        user_id,
+        operations,
+        summary=summary,
+        source="manual",
+    )
+    return {
+        "changes": result.get("changes", []),
+        "conflicts": result.get("conflicts", []),
+        "errors": errors + result.get("errors", []),
+    }
 
 def describe_memory_operation(operation):
     operation_type = operation.get("type")
@@ -1835,106 +1640,6 @@ def format_recent_memory_changes(entry, limit=10):
             + undone
         )
     return lines
-
-def _can_undo_change(entry, change):
-    for operation in reversed(change.get("changes", [])):
-        operation_type = operation.get("type")
-        if operation_type == "add_item":
-            category = operation["category"]
-            item = operation["item"]
-            if item not in normalize_item_list(entry.get("items", {}).get(category, [])):
-                return False
-        elif operation_type == "delete_item":
-            category = operation["category"]
-            item = operation["item"]
-            if item in normalize_item_list(entry.get("items", {}).get(category, [])):
-                return False
-        elif operation_type == "rewrite_item":
-            category = operation["category"]
-            new_item = operation["new_item"]
-            if new_item not in normalize_item_list(entry.get("items", {}).get(category, [])):
-                return False
-        elif operation_type == "set_slot":
-            current = entry.get("slots", {}).get(operation["slot"])
-            if current != operation.get("value"):
-                return False
-        elif operation_type == "delete_slot":
-            if operation["slot"] in entry.get("slots", {}):
-                return False
-        elif operation_type == "clear_category":
-            category = operation["category"]
-            if normalize_item_list(entry.get("items", {}).get(category, [])):
-                return False
-        elif operation_type == "delete_matching_items":
-            for target in operation.get("targets", []):
-                category = target["category"]
-                item = target["item"]
-                if item in normalize_item_list(entry.get("items", {}).get(category, [])):
-                    return False
-        else:
-            return False
-    return True
-
-def _undo_operation(entry, operation):
-    operation_type = operation.get("type")
-    if operation_type == "add_item":
-        category = operation["category"]
-        values = normalize_item_list(entry.setdefault("items", {}).get(category, []))
-        entry["items"][category], _ = _remove_item(values, operation["item"])
-        return True
-
-    if operation_type == "delete_item":
-        category = operation["category"]
-        values = normalize_item_list(entry.setdefault("items", {}).get(category, []))
-        item = operation["item"]
-        if item not in values:
-            values.append(item)
-        entry["items"][category] = normalize_item_list(values)
-        return True
-
-    if operation_type == "rewrite_item":
-        category = operation["category"]
-        values = normalize_item_list(entry.setdefault("items", {}).get(category, []))
-        entry["items"][category], replaced = _replace_item(
-            values,
-            operation["new_item"],
-            operation["old_item"],
-        )
-        return replaced
-
-    if operation_type == "set_slot":
-        slots = entry.setdefault("slots", {})
-        before = operation.get("before_value")
-        if before is None:
-            slots.pop(operation["slot"], None)
-        else:
-            slots[operation["slot"]] = before
-        return True
-
-    if operation_type == "delete_slot":
-        before = operation.get("before_value")
-        if before is not None:
-            entry.setdefault("slots", {})[operation["slot"]] = before
-        return True
-
-    if operation_type == "clear_category":
-        entry.setdefault("items", {})[operation["category"]] = normalize_item_list(
-            operation.get("old_items", [])
-        )
-        return True
-
-    if operation_type == "delete_matching_items":
-        items = entry.setdefault("items", {})
-        for target in operation.get("targets", []):
-            category = target["category"]
-            item = target["item"]
-            values = normalize_item_list(items.get(category, []))
-            if item not in values:
-                values.append(item)
-            items[category] = normalize_item_list(values)
-        return True
-
-    return False
 
 def _records_operation_lookup_kwargs(operation):
     return {
@@ -2202,10 +1907,9 @@ async def undo_latest_memory_change(user_id, *, source=None):
         return {"undone": False, "reason": "records_read_only"}
 
     async with memory_lock:
-        if memory_root_has_users():
-            entry = _records_raw_user_entry(user_id)
-        else:
-            entry = ensure_prompt_memory_view(user_id)
+        if not memory_root_has_users():
+            return {"undone": False, "reason": "not_records_root"}
+        entry = _records_raw_user_entry(user_id)
 
         change_log = entry.get("change_log", [])
         target = None
@@ -2219,18 +1923,11 @@ async def undo_latest_memory_change(user_id, *, source=None):
         if not target:
             return {"undone": False, "reason": "empty"}
 
-        if memory_root_has_users():
-            if not _records_can_undo_change(entry, target):
-                return {"undone": False, "reason": "conflict", "change": target}
-            for operation in reversed(target.get("changes", [])):
-                if not _records_undo_operation(entry, operation):
-                    return {"undone": False, "reason": "unsupported", "change": target}
-        else:
-            if not _can_undo_change(entry, target):
-                return {"undone": False, "reason": "conflict", "change": target}
-            for operation in reversed(target.get("changes", [])):
-                if not _undo_operation(entry, operation):
-                    return {"undone": False, "reason": "unsupported", "change": target}
+        if not _records_can_undo_change(entry, target):
+            return {"undone": False, "reason": "conflict", "change": target}
+        for operation in reversed(target.get("changes", [])):
+            if not _records_undo_operation(entry, operation):
+                return {"undone": False, "reason": "unsupported", "change": target}
 
         target["undone"] = True
         target["undone_at"] = datetime.now().isoformat(timespec="seconds")

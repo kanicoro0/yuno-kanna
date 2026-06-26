@@ -27,6 +27,7 @@ from storage import (
 
 
 bot = None
+modules_configured = False
 chat_history = {}
 guild_notes = {}
 longterm_memory = {}
@@ -88,7 +89,9 @@ def _log_memory_store_shape():
 
 
 def configure_modules(discord_bot):
-    global bot
+    global bot, modules_configured
+    if modules_configured and bot is discord_bot:
+        return
     bot = discord_bot
     memory_model.configure(
         memory_store=longterm_memory,
@@ -127,6 +130,7 @@ def configure_modules(discord_bot):
         persisted=persisted_reminders,
     )
     owner_tools.configure(discord_bot=discord_bot)
+    modules_configured = True
 
 
 async def sync_slash_commands():

@@ -203,13 +203,13 @@ def empty_memory_entry():
     }
 
 
-MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS = {
+LEGACY_COLLECTION_CATEGORY_DEFAULTS = {
     "memories": "覚え書き",
     "keywords": "好きなもの",
     "interaction_preferences": "好み",
 }
 
-def memory_root_is_v3():
+def memory_root_has_users():
     return (
         isinstance(longterm_memory, dict)
         and longterm_memory.get("schema_version") in (
@@ -221,20 +221,20 @@ def memory_root_is_v3():
 
 
 def memory_user_store():
-    if memory_root_is_v3():
+    if memory_root_has_users():
         return longterm_memory["users"]
     return longterm_memory
 
 
 def memory_writes_supported():
-    """v3 rootは dry_run が外れてから書き込み可能にする。"""
-    if memory_root_is_v3():
+    """records rootは dry_run が外れてから書き込み可能にする。"""
+    if memory_root_has_users():
         return longterm_memory.get("dry_run") is not True
     return True
 
 
-def v3_memory_entry_to_v2_entry(entry):
-    """v3の保存形を、既存UI/プロンプトが読めるv2 viewへ変換する。"""
+def records_entry_to_legacy_view(entry):
+    """records保存形を、既存UI/プロンプトが読める互換viewへ変換する。"""
     normalized = empty_memory_entry()
     if not isinstance(entry, dict):
         return normalized
@@ -246,11 +246,11 @@ def v3_memory_entry_to_v2_entry(entry):
             if isinstance(value, str) and value.strip():
                 normalized["slots"][slot] = value.strip()[:100]
 
-    for collection, fallback_category, _, record in _v3_active_records(entry):
+    for collection, fallback_category, _, record in _records_active_records(entry):
         text_value = record.get("text")
         if not isinstance(text_value, str) or not text_value.strip():
             continue
-        record_type = _v3_record_type(record, collection, fallback_category)
+        record_type = _records_record_type(record, collection, fallback_category)
         merge_canonical_memory_items(
             normalized["items"],
             "話し方" if record_type == "interaction_preference" else "覚え書き",
@@ -321,24 +321,36 @@ def migrate_memory_entry(entry):
         migrated["updated"] = entry["updated"]
     return migrated, True
 
-def ensure_memory_entry(user_id):
+def ensure_prompt_memory_view(user_id):
+    """Return the legacy slots/items view used by prompts and older UI helpers.
+
+    records v4 is the storage source of truth.  When the root has a users
+    store, this function does not mutate the saved records entry; it only
+    builds a compatibility view for code paths that still expect slots/items.
+    """
     user_id = str(user_id)
     store = memory_user_store()
     raw_entry = store.get(user_id)
 
-    if memory_root_is_v3():
-        # v3 rootでは、この段階では保存形を壊さない。
-        # 既存の表示・プロンプト処理に渡すため、v2互換viewだけ返す。
-        return v3_memory_entry_to_v2_entry(raw_entry)
+    if memory_root_has_users():
+        return records_entry_to_legacy_view(raw_entry)
 
     entry, changed = migrate_memory_entry(raw_entry)
     if changed or user_id not in store:
         store[user_id] = entry
     return entry
 
+
+def ensure_memory_entry(user_id):
+    """Compatibility wrapper for callers that still expect a memory view."""
+    return ensure_prompt_memory_view(user_id)
+
 def memory_has_content(entry):
-    if isinstance(entry, dict) and entry.get("schema_version") == MEMORY_V3_SCHEMA_VERSION:
-        entry = v3_memory_entry_to_v2_entry(entry)
+    if (
+        isinstance(entry, dict)
+        and entry.get("schema_version") in (MEMORY_V3_SCHEMA_VERSION, MEMORY_RECORD_SCHEMA_VERSION)
+    ):
+        entry = records_entry_to_legacy_view(entry)
     return bool(
         isinstance(entry, dict)
         and (entry.get("slots") or entry.get("items"))
@@ -438,17 +450,17 @@ def _format_flat_memory_display(*, slots=None, remembered=None, handling=None):
     return lines
 
 
-def _format_v3_flat_memory_sections(entry):
-    """v3 record実体から、activeな記憶だけを自然表示へ変換する。"""
+def _format_records_flat_memory_sections(entry):
+    """records実体から、activeな記憶だけを自然表示へ変換する。"""
     if not isinstance(entry, dict):
         return []
 
     records = []
-    for collection, fallback, _, record in _v3_active_records(entry):
-        text = _v3_record_text(record)
+    for collection, fallback, _, record in _records_active_records(entry):
+        text = _records_record_text(record)
         if not text:
             continue
-        record_type = _v3_record_type(record, collection, fallback)
+        record_type = _records_record_type(record, collection, fallback)
         bucket = (
             "handling"
             if record_type == "interaction_preference"
@@ -479,27 +491,27 @@ def _format_v3_flat_memory_sections(entry):
 
 
 def format_memory_flat_sections_for_user(user_id):
-    """自然表示用。v3では互換viewではなくrecord実体のactive状態を尊重する。"""
+    """自然表示用。records rootでは互換viewではなくrecord実体のactive状態を尊重する。"""
     user_id = str(user_id)
-    if memory_root_is_v3():
+    if memory_root_has_users():
         entry = memory_user_store().get(user_id)
-        return _format_v3_flat_memory_sections(entry)
+        return _format_records_flat_memory_sections(entry)
     return []
 
 
 def memory_record_items_for_user(user_id, record_type):
-    """編集UI用。v3ではrecords実体、v2では代表カテゴリから項目を返す。"""
+    """編集UI用。records rootではrecords実体、旧形式では代表カテゴリから項目を返す。"""
     record_type = normalize_memory_record_type(record_type)
-    if memory_root_is_v3():
+    if memory_root_has_users():
         entry = memory_user_store().get(str(user_id))
         if not isinstance(entry, dict):
             return []
         values = []
         seen = set()
-        for collection, fallback, record_id, record in _v3_active_records(entry):
-            if _v3_record_type(record, collection, fallback) != record_type:
+        for collection, fallback, record_id, record in _records_active_records(entry):
+            if _records_record_type(record, collection, fallback) != record_type:
                 continue
-            text = _v3_record_text(record)
+            text = _records_record_text(record)
             if not text or text in seen:
                 continue
             seen.add(text)
@@ -659,7 +671,7 @@ async def persist_memory_entry(entry, commit_message):
     if memory_lock is None or write_json_async is None:
         raise RuntimeError("memory_model is not configured")
     if not memory_writes_supported():
-        raise RuntimeError("memory store is read-only while v3 dry_run is true")
+        raise RuntimeError("memory store is read-only while records dry_run is true")
     await write_json_async(longterm_memory_file, longterm_memory)
     if save_to_git_async:
         await save_to_git_async(commit_message)
@@ -685,7 +697,7 @@ def _replace_item(values, old_item, new_item):
             result.append(value)
     return normalize_item_list(result), replaced
 
-def _v3_empty_user_entry():
+def _records_empty_user_entry():
     return {
         "schema_version": MEMORY_RECORD_SCHEMA_VERSION,
         "slots": {},
@@ -694,12 +706,12 @@ def _v3_empty_user_entry():
     }
 
 
-def _v3_raw_user_entry(user_id):
+def _records_raw_user_entry(user_id):
     store = memory_user_store()
     user_id = str(user_id)
     entry = store.get(user_id)
     if not isinstance(entry, dict):
-        entry = _v3_empty_user_entry()
+        entry = _records_empty_user_entry()
         store[user_id] = entry
     entry.setdefault("schema_version", MEMORY_RECORD_SCHEMA_VERSION)
     entry.setdefault("slots", {})
@@ -708,7 +720,7 @@ def _v3_raw_user_entry(user_id):
     return entry
 
 
-def _v3_next_record_id(records, prefix):
+def _records_next_record_id(records, prefix):
     max_index = 0
     for record_id in records.keys():
         if not isinstance(record_id, str) or not record_id.startswith(prefix + "_"):
@@ -720,11 +732,11 @@ def _v3_next_record_id(records, prefix):
     return f"{prefix}_{max_index + 1:03d}"
 
 
-def _v3_record_category(record, fallback):
+def _legacy_record_category(record, fallback):
     return canonicalize_memory_category(record.get("source_category") or fallback) or fallback
 
 
-def _v3_record_type(record, collection="", fallback_category=""):
+def _records_record_type(record, collection="", fallback_category=""):
     """recordの主分類。既存recordはcollection/source_categoryから読み取り時に推定する。"""
     if isinstance(record, dict):
         record_type = str(record.get("type", "")).strip()
@@ -733,28 +745,32 @@ def _v3_record_type(record, collection="", fallback_category=""):
     if collection == "interaction_preferences":
         return "interaction_preference"
     category = (
-        _v3_record_category(record, fallback_category)
+        _legacy_record_category(record, fallback_category)
         if isinstance(record, dict)
         else fallback_category
     )
     return normalize_memory_record_type(None, fallback_category=category)
 
 
-def _v3_active_records(entry):
-    for collection, fallback_category, record_id, record in _v3_all_records(entry):
+def _records_active_records(entry):
+    for collection, fallback_category, record_id, record in _records_all_records(entry):
         if record.get("status", "active") != "active":
             continue
         yield collection, fallback_category, record_id, record
 
 
-def _v3_all_records(entry):
+def iter_memory_records(entry, *, include_legacy=True):
+    """Yield records from the standard records store, plus legacy collections if requested."""
     records = entry.get("records", {})
     if isinstance(records, dict):
         for record_id, record in records.items():
             if isinstance(record, dict):
                 yield "records", "", record_id, record
 
-    for collection, fallback_category in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS.items():
+    if not include_legacy:
+        return
+
+    for collection, fallback_category in LEGACY_COLLECTION_CATEGORY_DEFAULTS.items():
         records = entry.get(collection, {})
         if not isinstance(records, dict):
             continue
@@ -763,7 +779,11 @@ def _v3_all_records(entry):
                 yield collection, fallback_category, record_id, record
 
 
-def _v3_record_text(record):
+def _records_all_records(entry):
+    yield from iter_memory_records(entry)
+
+
+def _records_record_text(record):
     text = record.get("text") if isinstance(record, dict) else ""
     if not isinstance(text, str):
         text = json.dumps(text, ensure_ascii=False)
@@ -795,9 +815,9 @@ def _fit_lines_to_limit(lines, limit):
     return result
 
 
-def _v3_record_status_counts(entry, collection):
+def _records_status_counts(entry, collection):
     counts = {"active": 0, "deleted": 0, "other": 0}
-    for found_collection, _, _, record in _v3_all_records(entry):
+    for found_collection, _, _, record in _records_all_records(entry):
         if collection != "all" and found_collection != collection:
             continue
         status = str(record.get("status", "active")).strip() or "active"
@@ -837,7 +857,7 @@ def format_memory_records_for_display(
     page = max(1, page)
     page_size = max(1, min(int(page_size), 20))
 
-    if not memory_root_is_v3():
+    if not memory_root_has_users():
         return ["🧾 記憶records\nこの表示はrecord形式の記憶で使えるよ"]
 
     entry = memory_user_store().get(str(user_id))
@@ -845,9 +865,9 @@ def format_memory_records_for_display(
         return ["🧾 記憶records\nまだrecordはないみたい"]
 
     slots = entry.get("slots") if isinstance(entry.get("slots"), dict) else {}
-    counts = _v3_record_status_counts(entry, legacy_collection or collection)
+    counts = _records_status_counts(entry, legacy_collection or collection)
     rows = []
-    for found_collection, fallback, record_id, record in _v3_all_records(entry):
+    for found_collection, fallback, record_id, record in _records_all_records(entry):
         if legacy_collection and found_collection != legacy_collection:
             continue
         if collection == "records" and found_collection != "records":
@@ -861,16 +881,16 @@ def format_memory_records_for_display(
             "record_id": record_id,
             "stored_id": stored_id if isinstance(stored_id, str) else "",
             "status": record_status,
-            "type": _v3_record_type(record, found_collection, fallback),
+            "type": _records_record_type(record, found_collection, fallback),
             "created_at": record.get("created_at") if isinstance(record.get("created_at"), str) else "",
             "updated_at": record.get("updated_at") if isinstance(record.get("updated_at"), str) else "",
-            "text": _v3_record_text(record),
+            "text": _records_record_text(record),
         })
 
     collection_order = {"records": 0}
     collection_order.update({
         name: index
-        for index, name in enumerate(MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS, start=1)
+        for index, name in enumerate(LEGACY_COLLECTION_CATEGORY_DEFAULTS, start=1)
     })
     rows.sort(key=lambda row: (
         collection_order.get(row["collection"], 999),
@@ -945,18 +965,18 @@ def format_memory_record_detail_for_display(
     record_id = str(record_id or "").strip()
     if collection in {"all", ""}:
         collection = "records"
-    if collection != "records" and collection not in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS:
+    if collection != "records" and collection not in LEGACY_COLLECTION_CATEGORY_DEFAULTS:
         return ["record_id を指定してね"]
     if not record_id:
         return ["record_id を指定してね"]
-    if not memory_root_is_v3():
+    if not memory_root_has_users():
         return ["🧾 記憶record\nこの表示はrecord形式の記憶で使えるよ"]
 
     entry = memory_user_store().get(str(user_id))
     if not isinstance(entry, dict):
         return ["🧾 記憶record\nまだrecordはないみたい"]
 
-    found_collection, fallback, found_id, record = _v3_find_record_by_id(
+    found_collection, fallback, found_id, record = _records_find_by_id(
         entry,
         record_id,
         collection,
@@ -973,7 +993,7 @@ def format_memory_record_detail_for_display(
         lines.append(f'id field: {stored_id}')
     fields = [
         ("status", record.get("status", "active")),
-        ("type", _v3_record_type(record, found_collection, fallback)),
+        ("type", _records_record_type(record, found_collection, fallback)),
         ("created_at", record.get("created_at")),
         ("updated_at", record.get("updated_at")),
         ("deleted_at", record.get("deleted_at")),
@@ -985,7 +1005,7 @@ def format_memory_record_detail_for_display(
 
     header = "\n".join(lines + ["", "text:"])
     available = max(0, int(limit) - len(header) - 1)
-    text = discord.utils.escape_mentions(_v3_record_text(record))
+    text = discord.utils.escape_mentions(_records_record_text(record))
     return [header, _truncate_text(text or "（textなし）", available)]
 
 
@@ -994,16 +1014,16 @@ def memory_record_is_deleted(user_id, *, collection="records", record_id):
     record_id = str(record_id or "").strip()
     if collection in {"all", ""}:
         collection = "records"
-    if not memory_root_is_v3():
+    if not memory_root_has_users():
         return False
     entry = memory_user_store().get(str(user_id))
     if not isinstance(entry, dict):
         return False
-    _, _, _, record = _v3_find_record_by_id(entry, record_id, collection)
+    _, _, _, record = _records_find_by_id(entry, record_id, collection)
     return isinstance(record, dict) and record.get("status", "active") == "deleted"
 
 
-def _v3_find_record_by_id(entry, record_id, collection=None):
+def _records_find_by_id(entry, record_id, collection=None):
     if not isinstance(record_id, str) or not record_id.strip():
         return None, None, None, None
 
@@ -1014,25 +1034,25 @@ def _v3_find_record_by_id(entry, record_id, collection=None):
             if isinstance(record, dict):
                 return "records", "", record_id, record
 
-    if collection in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS:
+    if collection in LEGACY_COLLECTION_CATEGORY_DEFAULTS:
         records = entry.get(collection, {})
         if isinstance(records, dict):
             record = records.get(record_id)
             if isinstance(record, dict):
                 return (
                     collection,
-                    MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS[collection],
+                    LEGACY_COLLECTION_CATEGORY_DEFAULTS[collection],
                     record_id,
                     record,
                 )
 
-    for found_collection, fallback, found_id, record in _v3_all_records(entry):
+    for found_collection, fallback, found_id, record in _records_all_records(entry):
         if found_id == record_id:
             return found_collection, fallback, found_id, record
     return None, None, None, None
 
 
-def _v3_find_record_any(
+def _records_find_any(
     entry,
     category,
     item,
@@ -1047,23 +1067,23 @@ def _v3_find_record_any(
         return None, None, None
 
     if record_id:
-        found_collection, fallback, found_id, record = _v3_find_record_by_id(
+        found_collection, fallback, found_id, record = _records_find_by_id(
             entry,
             record_id,
             collection,
         )
         if record is not None:
             if (
-                _v3_record_type(record, found_collection, fallback) == expected_type
+                _records_record_type(record, found_collection, fallback) == expected_type
                 and record.get("text") == item
                 and (status is None or record.get("status", "active") == status)
             ):
                 return found_collection, found_id, record
 
-    for found_collection, fallback, found_id, record in _v3_all_records(entry):
+    for found_collection, fallback, found_id, record in _records_all_records(entry):
         if status is not None and record.get("status", "active") != status:
             continue
-        if _v3_record_type(record, found_collection, fallback) != expected_type:
+        if _records_record_type(record, found_collection, fallback) != expected_type:
             continue
         if record.get("text") == item:
             return found_collection, found_id, record
@@ -1071,16 +1091,16 @@ def _v3_find_record_any(
     return None, None, None
 
 
-def _v3_restore_record(record):
+def _records_mark_active(record):
     now = datetime.now().isoformat(timespec="seconds")
     record["status"] = "active"
     record["restored_at"] = now
     record["updated_at"] = now
 
 
-def _v3_find_record(entry, category, item):
-    for collection, fallback, record_id, record in _v3_active_records(entry):
-        if _v3_record_type(record, collection, fallback) != normalize_memory_record_type(
+def _records_find_active_by_text(entry, category, item):
+    for collection, fallback, record_id, record in _records_active_records(entry):
+        if _records_record_type(record, collection, fallback) != normalize_memory_record_type(
             None,
             fallback_category=category,
         ):
@@ -1090,21 +1110,21 @@ def _v3_find_record(entry, category, item):
     return None, None, None
 
 
-def _v3_category_items(entry, category):
+def _records_items_by_type(entry, category):
     record_type = normalize_memory_record_type(None, fallback_category=category)
     values = []
-    for collection, fallback, _, record in _v3_active_records(entry):
-        if _v3_record_type(record, collection, fallback) == record_type:
+    for collection, fallback, _, record in _records_active_records(entry):
+        if _records_record_type(record, collection, fallback) == record_type:
             text_value = record.get("text")
             if isinstance(text_value, str):
                 values.append(text_value)
     return normalize_item_list(values)
 
 
-def _v3_add_record(entry, record_type, item):
+def _records_add(entry, record_type, item):
     record_type = normalize_memory_record_type(record_type)
     records = entry.setdefault("records", {})
-    record_id = _v3_next_record_id(records, "r")
+    record_id = _records_next_record_id(records, "r")
     now = datetime.now().isoformat(timespec="seconds")
     records[record_id] = {
         "id": record_id,
@@ -1117,7 +1137,7 @@ def _v3_add_record(entry, record_type, item):
     return record_id
 
 
-def _v3_delete_record(record):
+def _records_mark_deleted(record):
     now = datetime.now().isoformat(timespec="seconds")
     record["status"] = "deleted"
     record["deleted_at"] = now
@@ -1126,21 +1146,21 @@ def _v3_delete_record(record):
 
 async def restore_memory_record(user_id, *, record_id, collection="records"):
     if not memory_writes_supported():
-        return {"restored": False, "reason": "v3_read_only"}
+        return {"restored": False, "reason": "records_read_only"}
     collection = str(collection or "records").strip().lower()
     record_id = str(record_id or "").strip()
     if collection in {"all", ""}:
         collection = "records"
-    if collection != "records" and collection not in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS:
+    if collection != "records" and collection not in LEGACY_COLLECTION_CATEGORY_DEFAULTS:
         return {"restored": False, "reason": "invalid"}
     if not record_id:
         return {"restored": False, "reason": "invalid"}
 
     async with memory_lock:
-        if not memory_root_is_v3():
-            return {"restored": False, "reason": "not_v3"}
-        entry = _v3_raw_user_entry(user_id)
-        found_collection, fallback, found_id, record = _v3_find_record_by_id(
+        if not memory_root_has_users():
+            return {"restored": False, "reason": "not_records_root"}
+        entry = _records_raw_user_entry(user_id)
+        found_collection, fallback, found_id, record = _records_find_by_id(
             entry,
             record_id,
             collection,
@@ -1150,9 +1170,9 @@ async def restore_memory_record(user_id, *, record_id, collection="records"):
         if record.get("status", "active") != "deleted":
             return {"restored": False, "reason": "not_deleted"}
 
-        record_type = _v3_record_type(record, found_collection, fallback)
-        item = _v3_record_text(record)
-        _, _, active_record = _v3_find_record_any(
+        record_type = _records_record_type(record, found_collection, fallback)
+        item = _records_record_text(record)
+        _, _, active_record = _records_find_any(
             entry,
             None,
             item,
@@ -1162,7 +1182,7 @@ async def restore_memory_record(user_id, *, record_id, collection="records"):
         if active_record is not None:
             return {"restored": False, "reason": "conflict"}
 
-        _v3_restore_record(record)
+        _records_mark_active(record)
         change = {
             "type": "restore_record",
             "record_type": record_type,
@@ -1179,18 +1199,18 @@ async def restore_memory_record(user_id, *, record_id, collection="records"):
         return {"restored": True, "change": change}
 
 
-async def apply_v3_memory_operations(user_id, operations, *, summary, source):
+async def apply_records_memory_operations(user_id, operations, *, summary, source):
     if memory_lock is None:
         raise RuntimeError("memory_model is not configured")
     if not memory_writes_supported():
         return {
             "changes": [],
             "conflicts": [],
-            "errors": ["v3形式の記憶は現在 dry_run のため読み取り専用"],
+            "errors": ["records形式の記憶は現在 dry_run のため読み取り専用"],
         }
 
     async with memory_lock:
-        entry = _v3_raw_user_entry(user_id)
+        entry = _records_raw_user_entry(user_id)
         changes = []
         conflicts = []
 
@@ -1219,7 +1239,7 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 category = operation.get("category") or memory_record_type_default_category(
                     operation.get("record_type")
                 )
-                current_items = _v3_category_items(entry, category)
+                current_items = _records_items_by_type(entry, category)
                 if current_items != operation.get("expected_items", []):
                     conflicts.append(operation)
                     continue
@@ -1227,19 +1247,19 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                     continue
                 removed = []
                 removed_targets = []
-                for collection, fallback, record_id, record in list(_v3_active_records(entry)):
-                    if _v3_record_type(record, collection, fallback) == normalize_memory_record_type(
+                for collection, fallback, record_id, record in list(_records_active_records(entry)):
+                    if _records_record_type(record, collection, fallback) == normalize_memory_record_type(
                         None,
                         fallback_category=category,
                     ):
                         text_value = record.get("text")
                         removed.append(text_value)
                         removed_targets.append({
-                            "record_type": _v3_record_type(record, collection, fallback),
+                            "record_type": _records_record_type(record, collection, fallback),
                             "item": text_value,
                             "record_id": record_id,
                         })
-                        _v3_delete_record(record)
+                        _records_mark_deleted(record)
                 changes.append({
                     "type": "clear_category",
                     "record_type": operation.get("record_type"),
@@ -1251,7 +1271,7 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
             if operation_type == "delete_matching_items":
                 removed_targets = []
                 for target in operation.get("targets", []):
-                    collection, record_id, record = _v3_find_record(
+                    collection, record_id, record = _records_find_active_by_text(
                         entry,
                         target.get("category") or memory_record_type_default_category(
                             target.get("record_type") or operation.get("record_type")
@@ -1260,9 +1280,9 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                     )
                     if record is None:
                         continue
-                    _v3_delete_record(record)
+                    _records_mark_deleted(record)
                     removed_targets.append({
-                        "record_type": _v3_record_type(record, collection),
+                        "record_type": _records_record_type(record, collection),
                         "item": target.get("item"),
                         "record_id": record_id,
                     })
@@ -1281,10 +1301,10 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
 
             if operation_type == "add_item":
                 item = operation["item"]
-                _, _, existing = _v3_find_record(entry, record_type, item)
+                _, _, existing = _records_find_active_by_text(entry, record_type, item)
                 if existing is not None:
                     continue
-                record_id = _v3_add_record(entry, record_type, item)
+                record_id = _records_add(entry, record_type, item)
                 changes.append({
                     **operation,
                     "record_type": record_type,
@@ -1294,7 +1314,7 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 continue
 
             if operation_type == "delete_item":
-                collection, record_id, record = _v3_find_record_any(
+                collection, record_id, record = _records_find_any(
                     entry,
                     operation.get("category"),
                     operation["item"],
@@ -1305,7 +1325,7 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 if record is None:
                     conflicts.append(operation)
                     continue
-                _v3_delete_record(record)
+                _records_mark_deleted(record)
                 changes.append({
                     **operation,
                     "record_type": record_type,
@@ -1315,7 +1335,7 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 continue
 
             if operation_type == "rewrite_item":
-                collection, record_id, record = _v3_find_record_any(
+                collection, record_id, record = _records_find_any(
                     entry,
                     operation.get("category"),
                     operation["old_item"],
@@ -1344,7 +1364,7 @@ async def apply_v3_memory_operations(user_id, operations, *, summary, source):
                 summary=summary,
                 changes=changes,
             )
-            await persist_memory_entry(entry, "update v3 memory")
+            await persist_memory_entry(entry, "update records memory")
 
         return {"changes": changes, "conflicts": conflicts, "errors": []}
 
@@ -1353,8 +1373,8 @@ async def apply_auto_memory_operations(user_id, operations, summary="自動記�
     normalized_operations, errors = normalize_auto_memory_operations(operations)
     if not normalized_operations:
         return {"changes": [], "errors": errors}
-    if memory_root_is_v3():
-        result = await apply_v3_memory_operations(
+    if memory_root_has_users():
+        result = await apply_records_memory_operations(
             user_id,
             normalized_operations,
             summary=summary,
@@ -1625,8 +1645,8 @@ async def apply_memory_edit_operations(user_id, operations, summary="手動編�
     operations, errors = prepare_memory_edit_operations(operations, ensure_memory_entry(user_id))
     if not operations:
         return {"changes": [], "conflicts": [], "errors": errors}
-    if memory_root_is_v3():
-        result = await apply_v3_memory_operations(
+    if memory_root_has_users():
+        result = await apply_records_memory_operations(
             user_id,
             operations,
             summary=summary,
@@ -1913,7 +1933,7 @@ def _undo_operation(entry, operation):
 
     return False
 
-def _v3_operation_record_kwargs(operation):
+def _records_operation_lookup_kwargs(operation):
     return {
         "record_id": operation.get("record_id"),
         "collection": operation.get("collection"),
@@ -1921,37 +1941,37 @@ def _v3_operation_record_kwargs(operation):
     }
 
 
-def _v3_restore_deleted_item(entry, operation, category, item):
-    collection, record_id, record = _v3_find_record_any(
+def _records_restore_deleted_item(entry, operation, category, item):
+    collection, record_id, record = _records_find_any(
         entry,
         category,
         item,
         status="deleted",
-        **_v3_operation_record_kwargs(operation),
+        **_records_operation_lookup_kwargs(operation),
     )
     if record is None:
         return False
-    _v3_restore_record(record)
+    _records_mark_active(record)
     return True
 
 
-def _v3_can_undo_change(entry, change):
+def _records_can_undo_change(entry, change):
     for operation in reversed(change.get("changes", [])):
         operation_type = operation.get("type")
 
         if operation_type == "add_item":
-            _, _, record = _v3_find_record_any(
+            _, _, record = _records_find_any(
                 entry,
                 operation.get("category"),
                 operation.get("item"),
                 status="active",
-                **_v3_operation_record_kwargs(operation),
+                **_records_operation_lookup_kwargs(operation),
             )
             if record is None:
                 return False
 
         elif operation_type == "delete_item":
-            _, _, active_record = _v3_find_record_any(
+            _, _, active_record = _records_find_any(
                 entry,
                 operation.get("category"),
                 operation.get("item"),
@@ -1960,27 +1980,27 @@ def _v3_can_undo_change(entry, change):
             )
             if active_record is not None:
                 return False
-            _, _, deleted_record = _v3_find_record_any(
+            _, _, deleted_record = _records_find_any(
                 entry,
                 operation.get("category"),
                 operation.get("item"),
                 status="deleted",
-                **_v3_operation_record_kwargs(operation),
+                **_records_operation_lookup_kwargs(operation),
             )
             if deleted_record is None:
                 return False
 
         elif operation_type == "rewrite_item":
-            _, _, new_record = _v3_find_record_any(
+            _, _, new_record = _records_find_any(
                 entry,
                 operation.get("category"),
                 operation.get("new_item"),
                 status="active",
-                **_v3_operation_record_kwargs(operation),
+                **_records_operation_lookup_kwargs(operation),
             )
             if new_record is None:
                 return False
-            _, _, old_record = _v3_find_record_any(
+            _, _, old_record = _records_find_any(
                 entry,
                 operation.get("category"),
                 operation.get("old_item"),
@@ -2001,12 +2021,12 @@ def _v3_can_undo_change(entry, change):
 
         elif operation_type == "clear_category":
             category = operation.get("category")
-            if _v3_category_items(entry, category):
+            if _records_items_by_type(entry, category):
                 return False
             targets = operation.get("targets")
             if isinstance(targets, list) and targets:
                 for target in targets:
-                    _, _, record = _v3_find_record_any(
+                    _, _, record = _records_find_any(
                         entry,
                         target.get("category", category),
                         target.get("item"),
@@ -2019,7 +2039,7 @@ def _v3_can_undo_change(entry, change):
                         return False
             else:
                 for item in operation.get("old_items", []):
-                    _, _, record = _v3_find_record_any(
+                    _, _, record = _records_find_any(
                         entry,
                         category,
                         item,
@@ -2031,7 +2051,7 @@ def _v3_can_undo_change(entry, change):
 
         elif operation_type == "delete_matching_items":
             for target in operation.get("targets", []):
-                _, _, active_record = _v3_find_record_any(
+                _, _, active_record = _records_find_any(
                     entry,
                     target.get("category"),
                     target.get("item"),
@@ -2040,7 +2060,7 @@ def _v3_can_undo_change(entry, change):
                 )
                 if active_record is not None:
                     return False
-                _, _, deleted_record = _v3_find_record_any(
+                _, _, deleted_record = _records_find_any(
                     entry,
                     target.get("category"),
                     target.get("item"),
@@ -2053,12 +2073,12 @@ def _v3_can_undo_change(entry, change):
                     return False
 
         elif operation_type == "restore_record":
-            _, _, record = _v3_find_record_any(
+            _, _, record = _records_find_any(
                 entry,
                 operation.get("category"),
                 operation.get("item"),
                 status="active",
-                **_v3_operation_record_kwargs(operation),
+                **_records_operation_lookup_kwargs(operation),
             )
             if record is None:
                 return False
@@ -2069,24 +2089,24 @@ def _v3_can_undo_change(entry, change):
     return True
 
 
-def _v3_undo_operation(entry, operation):
+def _records_undo_operation(entry, operation):
     operation_type = operation.get("type")
 
     if operation_type == "add_item":
-        _, _, record = _v3_find_record_any(
+        _, _, record = _records_find_any(
             entry,
             operation.get("category"),
             operation.get("item"),
             status="active",
-            **_v3_operation_record_kwargs(operation),
+            **_records_operation_lookup_kwargs(operation),
         )
         if record is None:
             return False
-        _v3_delete_record(record)
+        _records_mark_deleted(record)
         return True
 
     if operation_type == "delete_item":
-        return _v3_restore_deleted_item(
+        return _records_restore_deleted_item(
             entry,
             operation,
             operation.get("category"),
@@ -2094,12 +2114,12 @@ def _v3_undo_operation(entry, operation):
         )
 
     if operation_type == "rewrite_item":
-        _, _, record = _v3_find_record_any(
+        _, _, record = _records_find_any(
             entry,
             operation.get("category"),
             operation.get("new_item"),
             status="active",
-            **_v3_operation_record_kwargs(operation),
+            **_records_operation_lookup_kwargs(operation),
         )
         if record is None:
             return False
@@ -2127,7 +2147,7 @@ def _v3_undo_operation(entry, operation):
         targets = operation.get("targets")
         if isinstance(targets, list) and targets:
             for target in targets:
-                if not _v3_restore_deleted_item(
+                if not _records_restore_deleted_item(
                     entry,
                     target,
                     target.get("category", operation.get("category")),
@@ -2138,7 +2158,7 @@ def _v3_undo_operation(entry, operation):
 
         for item in operation.get("old_items", []):
             fallback_operation = {"type": "delete_item"}
-            if not _v3_restore_deleted_item(
+            if not _records_restore_deleted_item(
                 entry,
                 fallback_operation,
                 operation.get("category"),
@@ -2149,7 +2169,7 @@ def _v3_undo_operation(entry, operation):
 
     if operation_type == "delete_matching_items":
         for target in operation.get("targets", []):
-            if not _v3_restore_deleted_item(
+            if not _records_restore_deleted_item(
                 entry,
                 target,
                 target.get("category"),
@@ -2159,16 +2179,16 @@ def _v3_undo_operation(entry, operation):
         return True
 
     if operation_type == "restore_record":
-        _, _, record = _v3_find_record_any(
+        _, _, record = _records_find_any(
             entry,
             operation.get("category"),
             operation.get("item"),
             status="active",
-            **_v3_operation_record_kwargs(operation),
+            **_records_operation_lookup_kwargs(operation),
         )
         if record is None:
             return False
-        _v3_delete_record(record)
+        _records_mark_deleted(record)
         return True
 
     return False
@@ -2176,11 +2196,11 @@ def _v3_undo_operation(entry, operation):
 
 async def undo_latest_memory_change(user_id, *, source=None):
     if not memory_writes_supported():
-        return {"undone": False, "reason": "v3_read_only"}
+        return {"undone": False, "reason": "records_read_only"}
 
     async with memory_lock:
-        if memory_root_is_v3():
-            entry = _v3_raw_user_entry(user_id)
+        if memory_root_has_users():
+            entry = _records_raw_user_entry(user_id)
         else:
             entry = ensure_memory_entry(user_id)
 
@@ -2196,11 +2216,11 @@ async def undo_latest_memory_change(user_id, *, source=None):
         if not target:
             return {"undone": False, "reason": "empty"}
 
-        if memory_root_is_v3():
-            if not _v3_can_undo_change(entry, target):
+        if memory_root_has_users():
+            if not _records_can_undo_change(entry, target):
                 return {"undone": False, "reason": "conflict", "change": target}
             for operation in reversed(target.get("changes", [])):
-                if not _v3_undo_operation(entry, operation):
+                if not _records_undo_operation(entry, operation):
                     return {"undone": False, "reason": "unsupported", "change": target}
         else:
             if not _can_undo_change(entry, target):

@@ -7,6 +7,7 @@ from memory_model import (
     format_memory_flat_sections_for_user,
     format_memory_record_detail_for_display,
     format_memory_records_for_display,
+    iter_memory_records,
     memory_record_is_deleted,
     restore_memory_record,
 )
@@ -50,7 +51,7 @@ def _record_count_summary(entry):
                     counts["other"] += 1
         return counts
 
-    for _, _, _, record in memory_model._v3_all_records(entry):
+    for _, _, _, record in iter_memory_records(entry):
         status = str(record.get("status", "active")).strip() or "active"
         if status in ("active", "deleted"):
             counts[status] += 1
@@ -60,7 +61,7 @@ def _record_count_summary(entry):
 
 
 def _format_memory_records_users_summary(limit=DISCORD_LIMIT):
-    if not memory_model.memory_root_is_v3():
+    if not memory_model.memory_root_has_users():
         return "🧾 memory_records users\nrecord形式の記憶ではないみたい"
     rows = []
     for user_id, entry in memory_model.memory_user_store().items():
@@ -197,7 +198,8 @@ class MemoryRecordRestoreView(discord.ui.View):
                 "missing": "recordが見つからなかったよ",
                 "not_deleted": "このrecordは削除状態ではないみたい",
                 "conflict": "同じ内容のactive recordがあるから復元しなかったよ",
-                "v3_read_only": "今は記憶が読み取り専用みたい",
+                "records_read_only": "今は記憶が読み取り専用みたい",
+                "not_records_root": "record????????????",
             }
             await interaction.response.send_message(
                 messages.get(reason, "復元できなかったよ"),

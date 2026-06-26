@@ -4,7 +4,7 @@ from config import DISCORD_LIMIT, OWNER_ID
 import memory_model
 from memory_model import (
     ensure_memory_entry,
-    format_memory_for_display,
+    format_memory_flat_sections_for_user,
     format_memory_record_detail_for_display,
     format_memory_records_for_display,
     memory_record_is_deleted,
@@ -267,7 +267,7 @@ async def revealmemory(ctx, user_id: str = None):
     display_name = member.display_name if member is not None else f"ID:{target_id}"
 
     lines = [f"🔍 {display_name} の全記憶："]
-    lines.extend(format_memory_for_display(entry) or ["（なし）"])
+    lines.extend(format_memory_flat_sections_for_user(target_id) or ["（なし）"])
     lines.append(f"・change_log: {len(entry.get('change_log', []))}件")
 
     await send_long(ctx.channel, "\n".join(lines[:200]))

@@ -72,6 +72,18 @@ def _load_json_mapping(path, target):
         target.update(loaded)
 
 
+def _log_memory_store_shape():
+    schema_version = longterm_memory.get("schema_version")
+    users = longterm_memory.get("users")
+    user_count = len(users) if isinstance(users, dict) else 0
+    print(
+        "Longterm memory loaded: "
+        f"path={LONGTERM_MEMORY_FILE} "
+        f"schema_version={schema_version} "
+        f"users={user_count}"
+    )
+
+
 def configure_modules(discord_bot):
     global bot
     bot = discord_bot
@@ -130,6 +142,7 @@ async def setup_hook():
     _load_json_mapping(CHAT_HISTORY_FILE, chat_history)
     _load_json_mapping(GUILD_NOTES_FILE, guild_notes)
     _load_json_mapping(LONGTERM_MEMORY_FILE, longterm_memory)
+    _log_memory_store_shape()
     _load_json_mapping(REMINDERS_FILE, persisted_reminders)
     await reminders.restore_reminders()
     await save_to_git_async("起動時保存")

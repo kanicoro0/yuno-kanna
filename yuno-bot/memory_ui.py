@@ -66,7 +66,7 @@ async def memory_show(interaction: discord.Interaction):
 @memory_group.command(name="recent", description="最近の記憶変更履歴を表示します")
 async def memory_recent(interaction: discord.Interaction):
     entry = ensure_prompt_memory_view(str(interaction.user.id))
-    lines = format_recent_memory_changes(entry)
+    lines = format_recent_memory_changes(entry, limit=5)
     content = (
         "🕰️ 最近の記憶変更：\n" + "\n".join(lines)
         if lines

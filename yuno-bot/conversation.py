@@ -62,6 +62,20 @@ def sanitize_ai_reaction_text(reaction):
     return " ".join(tokens[:5]) or "なし"
 
 
+def normalize_reply_text(reply):
+    text = str(reply or "").strip()
+    if not text or text == "なし":
+        return ""
+    return text
+
+
+def normalize_ai_reactions(reaction):
+    allowed_reactions = sanitize_ai_reaction_text(reaction)
+    if allowed_reactions == "なし":
+        return []
+    return allowed_reactions.split()[:5]
+
+
 def configure(*, discord_bot, history, notes, inner, usage, error_reporter):
     global bot, chat_history, guild_notes, inner_log, usage_log, safe_report_error
     bot = discord_bot
@@ -158,6 +172,9 @@ async def load_channel_history(channel, n=MAX_CHANNEL_LOG, before=None):
     return [
         {
             "time": msg.created_at.strftime("%H:%M"),
+            "created_at": msg.created_at.isoformat(),
+            "author_id": str(msg.author.id),
+            "is_bot_self": msg.author.id == bot.user.id,
             "role": "assistant" if msg.author.id == bot.user.id else "user",
             "name": "ゆの" if msg.author.id == bot.user.id else msg.author.display_name,
             "content": msg.clean_content.strip(),
@@ -187,9 +204,9 @@ def should_check_context(message, recent_logs):
         return False
     if len(recent_logs) < 2:
         return False
-    if recent_logs[-2]["name"] != "ゆの":
+    if not recent_logs[-2].get("is_bot_self"):
         return False
-    if recent_logs[-1]["name"] != message.author.display_name:
+    if recent_logs[-1].get("author_id") != str(message.author.id):
         return False
     return True
 
@@ -307,7 +324,7 @@ async def on_message(message):
 
     try:
         log = await load_channel_history(message.channel, 2)
-        if len(log) == 2 and log[-2].get("name") == "ゆの":
+        if len(log) == 2 and log[-2].get("is_bot_self"):
             await handle_contextual_reply(message, ctx)
     except Exception as e:
         safe_report_error(f"文脈判定に失敗: {e}")
@@ -427,6 +444,7 @@ async def handle_mention(message, ctx, *, is_direct_request=True):
                 extract_from_json_or_brackets(raw_content)
             )
             reaction = sanitize_ai_reaction_text(reaction)
+            reply = normalize_reply_text(reply)
 
             # inner / 安全な自動記憶の処理
             if inner.strip():
@@ -449,6 +467,10 @@ async def handle_mention(message, ctx, *, is_direct_request=True):
                         "自動記憶を拒否したよ: "
                         + "; ".join(memory_result["errors"])
                     )
+                    if not memory_result["changes"]:
+                        safe_report_error(
+                            "自動記憶の操作候補はあったけれど、保存できた変更はなかったよ"
+                        )
                 elif memory_result["changes"]:
                     reaction_by_type = {
                         "add_item": "📌",
@@ -645,13 +667,11 @@ def build_messages(system_content, channel_context, history, prompt, user_displa
     return messages
 
 async def send_reply(message, reply, reaction):
-    if reply and reply != "なし":
+    reply = normalize_reply_text(reply)
+    if reply:
         await send_long(message.channel, reply)
 
-    allowed_reactions = sanitize_ai_reaction_text(reaction)
-    reactions = [] if allowed_reactions == "なし" else allowed_reactions.split()
-
-    for r in reactions[:5]:
+    for r in normalize_ai_reactions(reaction):
         try:
             await message.add_reaction(r)
         except discord.HTTPException:

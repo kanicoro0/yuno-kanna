@@ -4,7 +4,7 @@ import auto_reply
 from config import DISCORD_LIMIT, OWNER_ID
 import memory_model
 from memory_model import (
-    ensure_memory_entry,
+    ensure_prompt_memory_view,
     format_memory_flat_sections_for_user,
     format_memory_record_detail_for_display,
     format_memory_records_for_display,
@@ -231,7 +231,7 @@ async def revealmemory(ctx, user_id: str = None):
         return
 
     target_id = user_id or str(ctx.author.id)
-    entry = ensure_memory_entry(target_id)
+    entry = ensure_prompt_memory_view(target_id)
     member = None
     if ctx.guild is not None:
         try:

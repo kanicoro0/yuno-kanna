@@ -4,8 +4,6 @@ import json
 import re
 import uuid
 
-import discord
-
 from config import MAX_MEMORY_CHANGE_LOG
 
 
@@ -339,11 +337,6 @@ def ensure_prompt_memory_view(user_id):
     if changed or user_id not in store:
         store[user_id] = entry
     return entry
-
-
-def ensure_memory_entry(user_id):
-    """Compatibility wrapper for callers that still expect a memory view."""
-    return ensure_prompt_memory_view(user_id)
 
 def memory_has_content(entry):
     if (
@@ -753,7 +746,7 @@ def _records_record_type(record, collection="", fallback_category=""):
 
 
 def _records_active_records(entry):
-    for collection, fallback_category, record_id, record in _records_all_records(entry):
+    for collection, fallback_category, record_id, record in iter_memory_records(entry):
         if record.get("status", "active") != "active":
             continue
         yield collection, fallback_category, record_id, record
@@ -779,8 +772,6 @@ def iter_memory_records(entry, *, include_legacy=True):
                 yield collection, fallback_category, record_id, record
 
 
-def _records_all_records(entry):
-    yield from iter_memory_records(entry)
 
 
 def _records_record_text(record):
@@ -797,6 +788,18 @@ def _truncate_text(text, limit):
     if limit <= 3:
         return text[:limit]
     return text[:limit - 3] + "..."
+
+
+def _escape_mentions(text):
+    text = str(text or "")
+    text = text.replace("@everyone", "@\u200beveryone")
+    text = text.replace("@here", "@\u200bhere")
+    text = re.sub(
+        r"<@([!&]?\d+)>",
+        lambda match: f"<@\u200b{match.group(1)}>",
+        text,
+    )
+    return text
 
 
 def _fit_lines_to_limit(lines, limit):
@@ -817,7 +820,7 @@ def _fit_lines_to_limit(lines, limit):
 
 def _records_status_counts(entry, collection):
     counts = {"active": 0, "deleted": 0, "other": 0}
-    for found_collection, _, _, record in _records_all_records(entry):
+    for found_collection, _, _, record in iter_memory_records(entry):
         if collection != "all" and found_collection != collection:
             continue
         status = str(record.get("status", "active")).strip() or "active"
@@ -867,7 +870,7 @@ def format_memory_records_for_display(
     slots = entry.get("slots") if isinstance(entry.get("slots"), dict) else {}
     counts = _records_status_counts(entry, legacy_collection or collection)
     rows = []
-    for found_collection, fallback, record_id, record in _records_all_records(entry):
+    for found_collection, fallback, record_id, record in iter_memory_records(entry):
         if legacy_collection and found_collection != legacy_collection:
             continue
         if collection == "records" and found_collection != "records":
@@ -926,7 +929,7 @@ def format_memory_records_for_display(
         return lines
 
     for row in page_rows:
-        text = discord.utils.escape_mentions(row["text"])
+        text = _escape_mentions(row["text"])
         if len(text) > 140:
             text = text[:137] + "..."
         id_note = (
@@ -1005,7 +1008,7 @@ def format_memory_record_detail_for_display(
 
     header = "\n".join(lines + ["", "text:"])
     available = max(0, int(limit) - len(header) - 1)
-    text = discord.utils.escape_mentions(_records_record_text(record))
+    text = _escape_mentions(_records_record_text(record))
     return [header, _truncate_text(text or "（textなし）", available)]
 
 
@@ -1046,7 +1049,7 @@ def _records_find_by_id(entry, record_id, collection=None):
                     record,
                 )
 
-    for found_collection, fallback, found_id, record in _records_all_records(entry):
+    for found_collection, fallback, found_id, record in iter_memory_records(entry):
         if found_id == record_id:
             return found_collection, fallback, found_id, record
     return None, None, None, None
@@ -1080,7 +1083,7 @@ def _records_find_any(
             ):
                 return found_collection, found_id, record
 
-    for found_collection, fallback, found_id, record in _records_all_records(entry):
+    for found_collection, fallback, found_id, record in iter_memory_records(entry):
         if status is not None and record.get("status", "active") != status:
             continue
         if _records_record_type(record, found_collection, fallback) != expected_type:
@@ -1386,7 +1389,7 @@ async def apply_auto_memory_operations(user_id, operations, summary="自動記�
         }
 
     async with memory_lock:
-        entry = ensure_memory_entry(user_id)
+        entry = ensure_prompt_memory_view(user_id)
         changes = []
         for operation in normalized_operations:
             operation_type = operation["type"]
@@ -1642,7 +1645,7 @@ def prepare_memory_edit_operations(raw_operations, entry):
     return normalized, errors
 
 async def apply_memory_edit_operations(user_id, operations, summary="手動編集"):
-    operations, errors = prepare_memory_edit_operations(operations, ensure_memory_entry(user_id))
+    operations, errors = prepare_memory_edit_operations(operations, ensure_prompt_memory_view(user_id))
     if not operations:
         return {"changes": [], "conflicts": [], "errors": errors}
     if memory_root_has_users():
@@ -1659,7 +1662,7 @@ async def apply_memory_edit_operations(user_id, operations, summary="手動編�
         }
 
     async with memory_lock:
-        entry = ensure_memory_entry(user_id)
+        entry = ensure_prompt_memory_view(user_id)
         changes = []
         conflicts = []
         for operation in operations:
@@ -2202,7 +2205,7 @@ async def undo_latest_memory_change(user_id, *, source=None):
         if memory_root_has_users():
             entry = _records_raw_user_entry(user_id)
         else:
-            entry = ensure_memory_entry(user_id)
+            entry = ensure_prompt_memory_view(user_id)
 
         change_log = entry.get("change_log", [])
         target = None

@@ -27,7 +27,7 @@ from config import (
 )
 from memory_model import (
     apply_auto_memory_operations,
-    ensure_memory_entry,
+    ensure_prompt_memory_view,
     format_auto_memory_debug_summary,
     format_memory_flat_sections_for_user,
     memory_has_content,
@@ -498,7 +498,7 @@ def build_system_prompt(message, ctx, *, is_direct_request=True):
     bot_name = guild.me.display_name if guild else bot.user.display_name
 
     # ここではグローバルの longterm_memory を使用（ファイル再読込はしない）
-    memory = ensure_memory_entry(user_id)
+    memory = ensure_prompt_memory_view(user_id)
 
     prompt = f"""存在「唯乃（ゆの）」は、固定されたキャラクターではなく、会話のそばに薄く残る思考の気配としてある
 透明感のある白いショートヘアと淡い碧の眼を持つ、10歳ほどの少女のかたちを借りている

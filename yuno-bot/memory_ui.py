@@ -9,7 +9,7 @@ from memory_model import (
     MEMORY_ITEM_PAGE_SIZE,
     apply_memory_edit_operations,
     describe_memory_operation,
-    ensure_memory_entry,
+    ensure_prompt_memory_view,
     format_memory_flat_sections_for_user,
     format_recent_memory_changes,
     memory_record_items_for_user,
@@ -65,7 +65,7 @@ async def memory_show(interaction: discord.Interaction):
 
 @memory_group.command(name="recent", description="最近の記憶変更履歴を表示します")
 async def memory_recent(interaction: discord.Interaction):
-    entry = ensure_memory_entry(str(interaction.user.id))
+    entry = ensure_prompt_memory_view(str(interaction.user.id))
     lines = format_recent_memory_changes(entry)
     content = (
         "🕰️ 最近の記憶変更：\n" + "\n".join(lines)
@@ -384,7 +384,7 @@ class MemoryItemModal(discord.ui.Modal):
     async def on_submit(self, interaction):
         if not await self.editor_view.check_owner(interaction):
             return
-        entry = ensure_memory_entry(self.editor_view.owner_user_id)
+        entry = ensure_prompt_memory_view(self.editor_view.owner_user_id)
         new_value = str(self.value_input.value).strip()
         if self.editor_view.selected_type == "slot":
             raw_operation = {
@@ -465,7 +465,7 @@ class MemoryEditView(discord.ui.View):
         return False
 
     def current_entry(self):
-        return ensure_memory_entry(self.owner_user_id)
+        return ensure_prompt_memory_view(self.owner_user_id)
 
     def category_targets(self):
         return list(MEMORY_EDIT_GROUPS)
@@ -830,7 +830,7 @@ async def memory_edit(
         return
 
     await interaction.response.defer(ephemeral=True)
-    entry = ensure_memory_entry(user_id)
+    entry = ensure_prompt_memory_view(user_id)
     try:
         proposal = await build_memory_instruction_proposal(
             instruction,

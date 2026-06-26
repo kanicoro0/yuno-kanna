@@ -1,6 +1,6 @@
 from config import DISCORD_GUILD_ID, ENABLE_GIT_SAVE, OWNER_ID
 from memory_model import (
-    ensure_memory_entry,
+    ensure_prompt_memory_view,
     memory_has_content,
 )
 
@@ -52,7 +52,7 @@ async def slash_status(interaction):
     user_id = str(interaction.user.id)
     history = chat_history.get(user_id)
     history_count = len(history) if isinstance(history, list) else 0
-    memory = ensure_memory_entry(user_id)
+    memory = ensure_prompt_memory_view(user_id)
     has_server_memory = bool(
         interaction.guild is not None
         and guild_notes.get(str(interaction.guild.id))

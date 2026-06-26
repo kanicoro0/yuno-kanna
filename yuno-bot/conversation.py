@@ -171,10 +171,10 @@ async def load_channel_history(channel, n=MAX_CHANNEL_LOG, before=None):
         if msg.clean_content.strip()
     ][::-1]
 
-def parse_should_reply_and_record(response_text):
+def parse_should_reply_and_history(response_text):
     reply = "はい" in response_text.split("[reply]")[-1].split("\n")[0]
-    record = "はい" in response_text.split("[record]")[-1].split("\n")[0]
-    return reply, record
+    history = "はい" in response_text.split("[history]")[-1].split("\n")[0]
+    return reply, history
 
 def should_check_context(message, recent_logs):
     if message.mentions:
@@ -203,18 +203,18 @@ async def handle_contextual_reply(message, ctx):
     )
 
     prompt = (
-        """次の発言にゆのは返信するべきか、また記録すべき内容か以下の形式で答えてください。
+        """次の発言にゆのは返信するべきか、また会話履歴に残すべき内容か以下の形式で答えてください。
 これは返信本文を作るフェーズではありません。
 出力は必ず次の2行だけにしてください。説明は書かないでください。
 
 これは名前呼びかけではない通常会話の文脈反応です。
 明確にゆのが返すのが自然な場合だけ [reply] はい。
 独り言・感想・ユーザー同士の会話・迷う場合は [reply] いいえ。
-長期的に覚える価値がある明確な内容だけ [record] はい。
+あとで会話の流れとして参照する価値がある明確な内容だけ [history] はい。
 
 出力形式:
 [reply] はい
-[record] いいえ
+[history] いいえ
 ----
 """
         + context_lines
@@ -225,7 +225,7 @@ async def handle_contextual_reply(message, ctx):
             [{"role": "system", "content": prompt}],
             temperature=0,
         )
-        reply_flag, record_flag = parse_should_reply_and_record(judge_response.choices[0].message.content)
+        reply_flag, keep_history_flag = parse_should_reply_and_history(judge_response.choices[0].message.content)
     except Exception as e:
         safe_report_error(f"文脈判定に失敗: {e}")
         return
@@ -236,7 +236,7 @@ async def handle_contextual_reply(message, ctx):
         await handle_mention(message, ctx, is_direct_request=False)
         return
 
-    if record_flag:
+    if keep_history_flag:
         print(f"✅ 記録必要と判断:", picked_up)
         await append_chat_history(str(message.author.id), "user", message.clean_content.strip(), message.author.display_name)
     else:
@@ -259,10 +259,6 @@ async def on_message(message):
         return
 
     if message.content.startswith("/"):
-        return
-
-    # DMでコマンドだった場合は返事をしない
-    if isinstance(message.channel, discord.DMChannel) and ctx.command is not None:
         return
 
     # ゆの宛のメンション or DM なら応答
@@ -555,41 +551,33 @@ def build_system_prompt(message, ctx, *, is_direct_request=True):
 {{
   "inner": "ゆのの内面。なければ『なし』",
   "reply": "ゆのの返事。なければ『なし』",
-  "reaction": ["必要な絵文字を1〜5個。なければ空配列"],
+  "reaction": ["必要な絵文字を0〜5個。普段は少なめ。なければ空配列"],
   "memory_operations": []
 }}
 
 reactionの規則:
-・📌 / 🗑️ / 📝 は記憶変更に成功したときだけプログラム側が付ける予約絵文字なので、reactionでは絶対に使わない
-・記憶変更を示したい場合はreactionではなくmemory_operationsを使う
+・複数絵文字が自然なときや、ユーザーが明示したときだけ多めに使う
+・📌 / 🗑️ / 📝 は記憶変更成功時の予約絵文字なので、reactionでは使わない
 
-ユーザー本人が明示し、今後の応答にも役立つ安定した情報を覚える・直す・消す必要がある場合だけ、
-memory_operationsへ小さく明確な操作を書く。追加AI呼び出しや確認UIはないので、曖昧なら操作を書かず、replyで自然に聞き返す。
+記憶変更:
+必要なときだけ memory_operations に書く。
+使える操作は add_item / delete_item / rewrite_item / set_slot / delete_slot。
+本人について長く残してよいこと、またはゆのへの接し方の希望だけを扱う。
+曖昧なら操作せず、返答の中で短く確認する。
+同じ内容は追加しない。
+item / old_item / new_item は1件だけにする。
 
-使用できるmemory_operations v2：
-{{"type":"add_item","record_type":"memory","item":"ユーザーはフラクタルに関心がある"}}
-{{"type":"add_item","record_type":"interaction_preference","item":"ユーザーには低圧で簡潔に返す"}}
-{{"type":"delete_item","record_type":"memory","item":"完全一致する既存項目"}}
-{{"type":"rewrite_item","record_type":"interaction_preference","old_item":"完全一致する既存項目","new_item":"新しい内容"}}
+使用例:
+{{"type":"add_item","record_type":"memory","item":"フラクタルに関心がある"}}
+{{"type":"add_item","record_type":"interaction_preference","item":"低圧で簡潔な返答を好む"}}
+{{"type":"delete_item","record_type":"memory","item":"削除する既存項目"}}
+{{"type":"rewrite_item","record_type":"interaction_preference","old_item":"古い内容","new_item":"新しい内容"}}
 {{"type":"set_slot","slot":"preferred_name","value":"かにころ"}}
 {{"type":"delete_slot","slot":"preferred_name"}}
 
-record_typeは次のどちらかだけを使う：
-・memory: 覚えていること。本人が明示した安定した事実、関心、続いている活動、継続的な好み
-・interaction_preference: 話し方・扱い方。ゆのの返答態度、呼び方、避けたい言い方、接し方の希望
-
-memory_operationsの規則：
-・使えるtypeは add_item / delete_item / rewrite_item / set_slot / delete_slot だけ
-・明確に操作できる記憶変更がない場合は空配列にする
-・記憶するのは、本人が明示した安定した事実・関心・継続的な好み・接し方の希望だけ
-・一時的な気分、その場限りの状態、推測、他人の個人情報、センシティブな情報は記憶しない
-・memory は本人について覚えておく内容、interaction_preference はゆのの話し方・扱い方への希望に使う
-・削除や書き換えは、現在の記憶にある対象を完全に特定できる場合だけ行う
-・対象が曖昧な削除や整理依頼では操作を書かず、replyで短く確認する
-・既存記憶と新しい発言が明確に矛盾する場合は、必要に応じて delete_item や rewrite_item で訂正する
-・preferred_name の明確な指定は set_slot で扱う
-・item / old_item / new_item は1件の記憶だけを書く。複数ある場合は operation を分ける
-・現在の記憶と同じ内容は出力しない
+record_type:
+・memory: 本人について覚えておく内容
+・interaction_preference: ゆのの話し方・扱い方への希望
 """
 
     if memory_has_content(memory):
@@ -603,11 +591,9 @@ memory_operationsの規則：
     if not is_direct_request:
         prompt += """
 ---
-Non-mention reply policy:
-- If the message does not clearly need a reply, use the no-reply value from the JSON schema.
-- If replying, be a little shorter and quieter than when directly mentioned.
-- Still reply to clear questions, clear calls toward Yuno, or natural follow-ups.
-- Do not repeatedly say only "call me if needed".
+非メンション時:
+明確に返す流れがあるときだけ返す。
+返す場合も、メンション時より短く静かにする。
 """
 
     trimmed_inner = inner_log.get(user_id, [])

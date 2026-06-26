@@ -7,6 +7,7 @@ import time
 import discord
 import tiktoken
 
+import auto_reply
 from config import (
     CHAT_HISTORY_FILE as chat_history_file,
     DISCORD_LIMIT,
@@ -224,7 +225,7 @@ async def handle_contextual_reply(message, ctx):
     picked_up = message.clean_content.strip()
     if reply_flag:
         print(f"✅ 反応必要と判断:", picked_up)
-        await handle_mention(message, ctx)
+        await handle_mention(message, ctx, is_direct_request=False)
         return
 
     if record_flag:
@@ -242,8 +243,11 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
+    if auto_reply.is_global_sleeping():
+        return
+
     if any(message.content.startswith(prefix) for prefix in PREFIXES):
-        await handle_mention(message, ctx)
+        await handle_mention(message, ctx, is_direct_request=True)
         return
 
     if message.content.startswith("/"):
@@ -255,7 +259,10 @@ async def on_message(message):
 
     # ゆの宛のメンション or DM なら応答
     if bot.user in message.mentions or isinstance(message.channel, discord.DMChannel):
-        await handle_mention(message, ctx)
+        await handle_mention(message, ctx, is_direct_request=True)
+        return
+
+    if not auto_reply.should_auto_reply_in_channel(message):
         return
 
     # --- 名前呼びかけへの反応 ---
@@ -281,7 +288,7 @@ async def on_message(message):
             answer = judge_response.choices[0].message.content.strip().lower()
             if "はい" in answer:
                 print(f"✅ 反応必要と判断:", picked_up)
-                await handle_mention(message, ctx)
+                await handle_mention(message, ctx, is_direct_request=False)
             else:
                 print(f"✅ 反応不要と判断:", picked_up)
         except Exception as e:
@@ -367,7 +374,7 @@ def extract_user_prompt(message):
             return prompt[len(prefix):].strip()
     return prompt
 
-async def handle_mention(message, ctx):
+async def handle_mention(message, ctx, *, is_direct_request=True):
     user_id = str(message.author.id)
     user_display_name = message.author.display_name
     prompt = extract_user_prompt(message)
@@ -386,7 +393,11 @@ async def handle_mention(message, ctx):
             print(f"🚫 使用制限: {user_id} による過剰メッセージをブロック")
             return
 
-    system_content = build_system_prompt(message, ctx)
+    system_content = build_system_prompt(
+        message,
+        ctx,
+        is_direct_request=is_direct_request,
+    )
     channel_context = await load_channel_history(message.channel, before=message)
     history = list(chat_history.get(user_id, []))
     messages = build_messages(system_content, channel_context, history, prompt, user_display_name)
@@ -452,6 +463,8 @@ async def handle_mention(message, ctx):
 
             if len(reply) > 8000:
                 reply = reply[:8000] + "（……省略）"
+            if not is_direct_request and len(reply) > 1200:
+                reply = reply[:1200] + "..."
 
             if not history_saved:
                 await append_chat_history(user_id, "user", prompt, user_display_name)
@@ -472,7 +485,7 @@ async def handle_mention(message, ctx):
     if not history_saved:
         await append_chat_history(user_id, "user", prompt, user_display_name)
 
-def build_system_prompt(message, ctx):
+def build_system_prompt(message, ctx, *, is_direct_request=True):
     user = message.author
     guild = message.guild
     now = datetime.now().isoformat(timespec="seconds")
@@ -579,6 +592,16 @@ memory_operationsの規則：
 """
         prompt += "\n".join(memory_lines) if memory_lines else "まだ覚えていることはない"
         prompt += "\n"
+
+    if not is_direct_request:
+        prompt += """
+---
+Non-mention reply policy:
+- If the message does not clearly need a reply, use the no-reply value from the JSON schema.
+- If replying, be a little shorter and quieter than when directly mentioned.
+- Still reply to clear questions, clear calls toward Yuno, or natural follow-ups.
+- Do not repeatedly say only "call me if needed".
+"""
 
     trimmed_inner = inner_log.get(user_id, [])
     if trimmed_inner:

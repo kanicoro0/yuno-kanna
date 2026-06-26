@@ -2,6 +2,7 @@ import asyncio
 
 import discord
 
+import auto_reply
 import conversation
 import general_commands
 import memory_model
@@ -11,6 +12,7 @@ import reminders
 import server_memory
 from config import (
     CHAT_HISTORY_FILE,
+    AUTO_REPLY_SETTINGS_FILE,
     DISCORD_GUILD_ID,
     GUILD_NOTES_FILE,
     LOG_CHANNEL_ID,
@@ -31,6 +33,7 @@ longterm_memory = {}
 inner_log = {}
 reminder_tasks = {}
 persisted_reminders = {}
+auto_reply_settings = {}
 usage_log = {}
 memory_lock = asyncio.Lock()
 
@@ -103,6 +106,12 @@ def configure_modules(discord_bot):
         write_json=write_json_async,
         error_reporter=safe_report_error,
     )
+    auto_reply.configure(
+        settings_store=auto_reply_settings,
+        file_path=AUTO_REPLY_SETTINGS_FILE,
+        write_json=write_json_async,
+        error_reporter=safe_report_error,
+    )
     server_memory.configure(notes=guild_notes, save_notes=save_guild_notes)
     conversation.configure(
         discord_bot=discord_bot,
@@ -144,6 +153,7 @@ async def setup_hook():
     _load_json_mapping(LONGTERM_MEMORY_FILE, longterm_memory)
     _log_memory_store_shape()
     _load_json_mapping(REMINDERS_FILE, persisted_reminders)
+    _load_json_mapping(AUTO_REPLY_SETTINGS_FILE, auto_reply_settings)
     await reminders.restore_reminders()
     await save_to_git_async("起動時保存")
     try:
@@ -165,6 +175,8 @@ def setup_commands(discord_bot):
     discord_bot.command(name="memory_records", hidden=True)(owner_tools.memory_records)
     discord_bot.command(name="memory_record", hidden=True)(owner_tools.memory_record)
     discord_bot.command(name="sleep", hidden=True)(owner_tools.sleep)
+    discord_bot.command(name="wake", hidden=True)(owner_tools.wake)
+    discord_bot.tree.add_command(auto_reply.autorespond_group)
     discord_bot.tree.add_command(memory_ui.memory_group)
     discord_bot.tree.add_command(server_memory.servermemory_group)
     discord_bot.tree.command(

@@ -28,6 +28,9 @@ YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/remind time message：指定した時間にリマインド
 ・/reminders：設定中のリマインドを本人だけに表示
 ・/cancelremind：リマインドをキャンセル
+・/autorespond status：通常自動返信の設定を確認
+・/autorespond server on/off：サーバー全体の通常自動返信を切り替え
+・/autorespond channel on/off：チャンネル単位の通常自動返信を切り替え
 ・/status：自分に関係する保存状態を本人だけに表示
 ・/guide：この一覧を表示
 

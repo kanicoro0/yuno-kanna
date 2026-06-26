@@ -1,5 +1,6 @@
 import discord
 
+import auto_reply
 from config import DISCORD_LIMIT, OWNER_ID
 import memory_model
 from memory_model import (
@@ -310,8 +311,17 @@ async def memory_record(ctx, *args):
 
 async def sleep(ctx):
     if not _owner_only(ctx):
-        await ctx.send("⚠️ このコマンドは管理者しか使えないみたい")
+        await ctx.send("この操作は管理者だけが使えるよ")
         return
-    await ctx.send("……おやすみ")
-    print(f"🌙 {ctx.author.display_name} によって終了されました")
-    await bot.close()
+    await auto_reply.set_global_sleep(True)
+    await ctx.send("……おやすみ。コマンド以外の反応を止めたよ")
+    print(f"sleep enabled by {ctx.author.display_name}")
+
+
+async def wake(ctx):
+    if not _owner_only(ctx):
+        await ctx.send("この操作は管理者だけが使えるよ")
+        return
+    await auto_reply.set_global_sleep(False)
+    await ctx.send("……おはよう。反応を戻したよ")
+    print(f"sleep disabled by {ctx.author.display_name}")

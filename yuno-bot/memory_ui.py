@@ -34,7 +34,7 @@ MEMORY_EDIT_GROUP_RECORD_TYPE = {
 }
 
 MEMORY_EDIT_GROUP_DESCRIPTIONS = {
-    "覚えていること": "事実、関心、作業、好きなもの",
+    "覚えていること": "事実、関心、継続的な好み",
     "話し方・扱い方": "返答態度、避けること、接し方",
 }
 
@@ -195,7 +195,7 @@ async def build_memory_instruction_proposal(instruction, user_id):
 ["memory", "interaction_preference"]
 
 record_typeの意味:
-・memory: 覚えていること。本人が明示した安定した事実、関心、作業状況、継続的な好み
+・memory: 覚えていること。本人が明示した安定した事実、関心、続いている活動、継続的な好み
 ・interaction_preference: 話し方・扱い方。ゆのの返答態度、呼び方、避けたい言い方、接し方の希望
 
 必ず次のJSONだけを返す:
@@ -645,7 +645,7 @@ class MemoryEditView(discord.ui.View):
                 "",
                 "種類:",
                 "・呼び名：1件だけの名前",
-                "・覚えていること：事実、関心、作業、好きなもの",
+                "・覚えていること：事実、関心、継続的な好み",
                 "・話し方・扱い方：返答態度、避けること、接し方",
             ]
             current_lines = []

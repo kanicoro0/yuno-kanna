@@ -35,21 +35,6 @@ def _owner_reject_message():
     return "この操作は管理者だけが使えるよ"
 
 
-def _count_v2_items(entry):
-    if not isinstance(entry, dict):
-        return 0
-    items = entry.get("items")
-    if not isinstance(items, dict):
-        return 0
-    total = 0
-    for values in items.values():
-        if isinstance(values, list):
-            total += len(values)
-        elif values:
-            total += 1
-    return total
-
-
 def _record_count_summary(entry):
     counts = {"active": 0, "deleted": 0, "other": 0}
     if not isinstance(entry, dict):
@@ -104,14 +89,9 @@ def _format_memory_records_users_summary(limit=DISCORD_LIMIT):
 
 def _parse_memory_records_args(owner_user_id, args):
     status_values = {"active", "deleted", "all"}
-    legacy_collection_values = {
-        "records",
-        "all",
-        *memory_model.MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS.keys(),
-    }
     target_user_id = str(owner_user_id)
     status = "active"
-    collection = "all"
+    collection = "records"
     page = 1
     args = list(args)
 
@@ -130,11 +110,7 @@ def _parse_memory_records_args(owner_user_id, args):
             return None
         status = args.pop(0)
     if args:
-        if args[0] in legacy_collection_values:
-            collection = args.pop(0)
-        elif args[0].isdigit():
-            collection = "all"
-        else:
+        if not args[0].isdigit():
             return None
     if args:
         try:
@@ -159,11 +135,6 @@ def _parse_memory_record_args(owner_user_id, args):
         target_user_id = args.pop(0).split(":", 1)[1].strip()
         if not target_user_id:
             return None
-    collection = "records"
-    if len(args) == 2 and args[0] in memory_model.MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS:
-        collection = args.pop(0)
-    elif len(args) == 2 and args[0] == "records":
-        collection = args.pop(0)
     if len(args) != 1:
         return None
     record_id = args[0]
@@ -171,7 +142,7 @@ def _parse_memory_record_args(owner_user_id, args):
         return None
     return {
         "target_user_id": target_user_id,
-        "collection": collection,
+        "collection": "records",
         "record_id": record_id,
     }
 

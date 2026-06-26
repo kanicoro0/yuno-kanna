@@ -36,71 +36,25 @@ MEMORY_SLOT_LABELS = {
     "preferred_name": "呼び名",
 }
 
-MEMORY_CATEGORY_ORDER = (
-    "覚え書き",
-    "好きなもの",
+LEGACY_INTERACTION_CATEGORIES = {
     "傾向",
-    "作業",
-    "創作",
     "好み",
     "話し方",
-    "つながり",
     "避けたいこと",
-    "その他",
-)
-
-MEMORY_CATEGORY_ALIASES = {
-    "notes": "覚え書き",
-    "note": "覚え書き",
-    "memo": "覚え書き",
-    "other_memo": "覚え書き",
-    "gag_reflection": "覚え書き",
-    "joke": "覚え書き",
-    "humor": "覚え書き",
-    "likes": "好きなもの",
-    "interest": "好きなもの",
-    "interests": "好きなもの",
-    "traits": "傾向",
-    "tendency": "傾向",
-    "personality": "傾向",
-    "projects": "作業",
-    "work": "作業",
-    "task": "作業",
-    "tasks": "作業",
-    "tools": "作業",
-    "tool": "作業",
-    "codex": "作業",
-    "vscode": "作業",
-    "github": "作業",
-    "creative": "創作",
-    "creation": "創作",
-    "creation_journey": "創作",
-    "art": "創作",
-    "illustration": "創作",
-    "book": "創作",
-    "character": "創作",
-    "preferences": "好み",
-    "preference": "好み",
-    "speech": "話し方",
-    "conversation": "話し方",
-    "tone": "話し方",
-    "style": "話し方",
-    "voice": "話し方",
-    "special_call": "話し方",
-    "connection": "つながり",
-    "relationship": "つながり",
-    "relations": "つながり",
-    "avoid_topics": "避けたいこと",
-    "avoid": "避けたいこと",
-    "ng": "避けたいこと",
-    "other": "その他",
-    "misc": "その他",
-    # 以前UIに出していた日本語名も、新しい10カテゴリへ畳み込む。
-    "道具": "作業",
-    "声": "話し方",
-    "冗談の振り返り": "覚え書き",
-    "創作の歩み": "創作",
-    "興味": "好きなもの",
+    "traits",
+    "tendency",
+    "personality",
+    "preferences",
+    "preference",
+    "speech",
+    "conversation",
+    "tone",
+    "style",
+    "voice",
+    "special_call",
+    "avoid_topics",
+    "avoid",
+    "ng",
 }
 
 MEMORY_ITEM_PAGE_SIZE = 20
@@ -188,52 +142,23 @@ def _memory_category_source(category):
     return requested
 
 def canonicalize_memory_category(category):
-    """新規保存と旧カテゴリ読込を、日本語canonicalへ集約する。"""
+    """互換用。records v4ではカテゴリを正本にしない。"""
     requested = _memory_category_source(category)
-    if not requested:
-        return None
-    if requested in MEMORY_CATEGORY_ORDER:
-        return requested
-    return MEMORY_CATEGORY_ALIASES.get(requested.casefold(), "その他")
+    return requested or None
 
 def canonicalize_memory_item(category, item):
-    """未知カテゴリは「その他」へ寄せ、元キーだけ本文に残す。"""
     canonical = canonicalize_memory_category(category)
     if not canonical or not isinstance(item, str):
         return canonical, item
     item_parts = split_memory_item_text(item)
-    item = item_parts[0] if item_parts else ""
-    if not item:
-        return canonical, item
-    source = _memory_category_source(category)
-    is_unknown = (
-        canonical == "その他"
-        and source != "その他"
-        and source.casefold() not in MEMORY_CATEGORY_ALIASES
-    )
-    if is_unknown:
-        is_legacy_secret = (
-            source.casefold() == "secret"
-            or source.casefold().startswith("secret_")
-        )
-        source_label = "旧形式" if is_legacy_secret else source
-        if is_legacy_secret:
-            internal_prefix = f"{source}について: "
-            if item.startswith(internal_prefix):
-                item = item[len(internal_prefix):]
-        provenance = f"{source_label}について: "
-        if not item.startswith(provenance):
-            item = provenance + item
-    return canonical, item[:200]
-
-def memory_category_label(category):
-    return canonicalize_memory_category(category) or "その他"
+    return canonical, (item_parts[0] if item_parts else "")[:200]
 
 def memory_slot_label(slot):
     return MEMORY_SLOT_LABELS.get(str(slot), str(slot))
 
 def ordered_memory_categories(entry):
-    return list(MEMORY_CATEGORY_ORDER)
+    items = entry.get("items") if isinstance(entry, dict) else None
+    return list(items.keys()) if isinstance(items, dict) else []
 
 def normalize_item_list(values):
     if values is None:
@@ -283,9 +208,6 @@ MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS = {
     "keywords": "好きなもの",
     "interaction_preferences": "好み",
 }
-
-MEMORY_V3_LEGACY_COLLECTIONS = tuple(MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS)
-
 
 def memory_root_is_v3():
     return (
@@ -422,69 +344,6 @@ def memory_has_content(entry):
         and (entry.get("slots") or entry.get("items"))
     )
 
-def format_memory_for_display(entry):
-    if not isinstance(entry, dict):
-        return []
-    lines = []
-    slots = entry.get("slots")
-    if isinstance(slots, dict):
-        for slot in MEMORY_SLOT_NAMES:
-            value = slots.get(slot)
-            if value:
-                lines.append(f"・{memory_slot_label(slot)}: {value}")
-    items = entry.get("items")
-    if isinstance(items, dict):
-        for category in ordered_memory_categories(entry):
-            values = items.get(category, [])
-            normalized_values = normalize_item_list(values)
-            if normalized_values:
-                lines.append(f"・{memory_category_label(category)}")
-                lines.extend(f"  - {value}" for value in normalized_values)
-    return lines
-
-
-def format_memory_flat_for_display(entry):
-    """schema v2のまま、カテゴリ見出しを出さずに記憶を表示する実験用formatter。"""
-    if not isinstance(entry, dict):
-        return []
-
-    lines = []
-    seen_items = set()
-    slots = entry.get("slots")
-    if isinstance(slots, dict):
-        for slot in MEMORY_SLOT_NAMES:
-            value = slots.get(slot)
-            if value:
-                lines.append(f"・{memory_slot_label(slot)}: {value}")
-
-    items = entry.get("items")
-    if isinstance(items, dict):
-        for category in ordered_memory_categories(entry):
-            for value in normalize_item_list(items.get(category, [])):
-                if value in seen_items:
-                    continue
-                seen_items.add(value)
-                lines.append(f"・{value}")
-
-        # canonical外のカテゴリが残っていても、表示実験では落とさず末尾に出す。
-        for category, values in items.items():
-            if category in MEMORY_CATEGORY_ORDER:
-                continue
-            for value in normalize_item_list(values):
-                if value in seen_items:
-                    continue
-                seen_items.add(value)
-                lines.append(f"・{value}")
-    return lines
-
-
-FLAT_DISPLAY_HANDLING_CATEGORIES = {
-    "傾向",
-    "好み",
-    "話し方",
-    "避けたいこと",
-}
-
 MEMORY_RECORD_TYPES = {
     "memory",
     "interaction_preference",
@@ -519,9 +378,10 @@ def normalize_memory_record_type(value, *, fallback_category=None):
             if label == requested
         )
 
-    category_source = requested or fallback_category
-    category = canonicalize_memory_category(category_source)
-    if category in FLAT_DISPLAY_HANDLING_CATEGORIES:
+    category_source = str(requested or fallback_category or "").strip()
+    if category_source in LEGACY_INTERACTION_CATEGORIES:
+        return "interaction_preference"
+    if category_source.casefold() in LEGACY_INTERACTION_CATEGORIES:
         return "interaction_preference"
     return "memory"
 
@@ -539,13 +399,6 @@ def memory_category_display_group(category):
     return memory_record_type_label(
         normalize_memory_record_type(None, fallback_category=category)
     )
-
-
-def _flat_memory_display_bucket(*, collection="", source_category=""):
-    category = canonicalize_memory_category(source_category)
-    if collection == "interaction_preferences" or category in FLAT_DISPLAY_HANDLING_CATEGORIES:
-        return "handling"
-    return "remembered"
 
 
 def _append_flat_memory_value(target, seen, value):
@@ -583,44 +436,6 @@ def _format_flat_memory_display(*, slots=None, remembered=None, handling=None):
     _append_flat_memory_section(lines, "覚えていること", remembered or [])
     _append_flat_memory_section(lines, "話し方・扱い方", handling or [])
     return lines
-
-
-def _format_v2_flat_memory_sections(entry):
-    """v2互換entryを、保存カテゴリではなく自然表示の棚へ並べる。"""
-    if not isinstance(entry, dict):
-        return []
-
-    remembered = []
-    handling = []
-    seen_handling = set()
-    seen_remembered = set()
-
-    items = entry.get("items")
-    if isinstance(items, dict):
-        for category in MEMORY_CATEGORY_ORDER:
-            bucket = _flat_memory_display_bucket(source_category=category)
-            target = handling if bucket == "handling" else remembered
-            seen = seen_handling if bucket == "handling" else seen_remembered
-            for value in normalize_item_list(items.get(category, [])):
-                _append_flat_memory_value(target, seen, value)
-
-        # canonical外の旧カテゴリが残っていても、表示では落とさず自然な棚へ寄せる。
-        for category, values in items.items():
-            if category in MEMORY_CATEGORY_ORDER:
-                continue
-            bucket = _flat_memory_display_bucket(source_category=category)
-            target = handling if bucket == "handling" else remembered
-            seen = seen_handling if bucket == "handling" else seen_remembered
-            for value in normalize_item_list(values):
-                _append_flat_memory_value(target, seen, value)
-
-    # 同じ本文が両方に出る場合は、扱い方側を優先する。
-    remembered = [value for value in remembered if value not in seen_handling]
-    return _format_flat_memory_display(
-        slots=entry.get("slots"),
-        remembered=remembered,
-        handling=handling,
-    )
 
 
 def _format_v3_flat_memory_sections(entry):
@@ -669,7 +484,7 @@ def format_memory_flat_sections_for_user(user_id):
     if memory_root_is_v3():
         entry = memory_user_store().get(user_id)
         return _format_v3_flat_memory_sections(entry)
-    return _format_v2_flat_memory_sections(ensure_memory_entry(user_id))
+    return []
 
 
 def memory_record_items_for_user(user_id, record_type):
@@ -695,21 +510,7 @@ def memory_record_items_for_user(user_id, record_type):
             })
         return values
 
-    entry = ensure_memory_entry(user_id)
-    group_name = memory_record_type_label(record_type)
-    items = entry.get("items", {}) if isinstance(entry, dict) else {}
-    values = []
-    seen = set()
-    for category in ordered_memory_categories(entry):
-        if memory_category_display_group(category) != group_name:
-            continue
-        for value in normalize_item_list(items.get(category, [])):
-            key = (record_type, value)
-            if key in seen:
-                continue
-            seen.add(key)
-            values.append({"record_type": record_type, "item": value})
-    return values
+    return []
 
 
 def normalize_auto_memory_operations(operations):

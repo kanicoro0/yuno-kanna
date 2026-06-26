@@ -150,6 +150,8 @@ def setup_commands(discord_bot):
     configure_modules(discord_bot)
     discord_bot.command(name="revealmemory", hidden=True)(owner_tools.revealmemory)
     discord_bot.command(name="memory_migration_plan_v3", hidden=True)(owner_tools.memory_migration_plan_v3)
+    discord_bot.command(name="memory_records", hidden=True)(owner_tools.memory_records)
+    discord_bot.command(name="memory_record", hidden=True)(owner_tools.memory_record)
     discord_bot.command(name="sleep", hidden=True)(owner_tools.sleep)
     discord_bot.tree.add_command(memory_ui.memory_group)
     discord_bot.tree.add_command(server_memory.servermemory_group)

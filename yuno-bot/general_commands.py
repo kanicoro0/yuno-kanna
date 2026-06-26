@@ -1,20 +1,7 @@
-import io
-
-import discord
-
-from config import DISCORD_GUILD_ID, DISCORD_LIMIT, ENABLE_GIT_SAVE, OWNER_ID
+from config import DISCORD_GUILD_ID, ENABLE_GIT_SAVE, OWNER_ID
 from memory_model import (
     ensure_memory_entry,
-    format_memory_flat_sections_for_user,
     memory_has_content,
-)
-from memory_v3_preview import (
-    build_memory_v3_preview,
-    export_memory_v3_preview,
-    format_memory_v3_export,
-    format_memory_v3_preview,
-    format_memory_v3_validation,
-    validate_memory_v3_preview,
 )
 
 
@@ -32,8 +19,6 @@ def configure(*, history, notes, persisted):
 
 YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 ・/memory show：現在の個人記憶を自然な表示で確認（呼び名 / 覚えていること / 話し方・扱い方）
-・/memory records：記憶recordsを管理用に一覧表示
-・/memory record：記憶recordを1件だけ詳しく表示
 ・/memory edit：記憶の種類を選んで追加・編集・削除
 ・/memory edit instruction：自然な言葉で変更案を作り、確認後に実行
 ・/memory recent：最近の記憶変更履歴を表示
@@ -58,76 +43,6 @@ YUNO_GUIDE = """ゆのが使えるコマンドの一覧
 
 async def slash_guide(interaction):
     await interaction.response.send_message(YUNO_GUIDE, ephemeral=True)
-
-
-async def slash_memory_show_flat(interaction):
-    user_id = str(interaction.user.id)
-    lines = [f"📘 {interaction.user.display_name} の記憶（自然表示）："]
-    lines.extend(
-        format_memory_flat_sections_for_user(user_id)
-        or ["まだ覚えていることはないみたい"]
-    )
-    await interaction.response.send_message(
-        "\n".join(lines)[:DISCORD_LIMIT],
-        ephemeral=True,
-    )
-
-
-async def slash_memory_preview_v3(interaction):
-    user_id = str(interaction.user.id)
-    entry = ensure_memory_entry(user_id)
-    preview = build_memory_v3_preview(entry)
-    await interaction.response.send_message(
-        "\n".join(format_memory_v3_preview(preview))[:DISCORD_LIMIT],
-        ephemeral=True,
-    )
-
-
-async def slash_memory_validate_v3(interaction):
-    user_id = str(interaction.user.id)
-    entry = ensure_memory_entry(user_id)
-    preview = build_memory_v3_preview(entry)
-    validation = validate_memory_v3_preview(preview)
-    await interaction.response.send_message(
-        "\n".join(format_memory_v3_validation(validation))[:DISCORD_LIMIT],
-        ephemeral=True,
-    )
-
-
-async def slash_memory_export_v3(interaction):
-    user_id = str(interaction.user.id)
-    entry = ensure_memory_entry(user_id)
-    preview = build_memory_v3_preview(entry)
-    validation = validate_memory_v3_preview(preview)
-    await interaction.response.send_message(
-        "\n".join(format_memory_v3_export(preview, validation, limit=DISCORD_LIMIT))[:DISCORD_LIMIT],
-        ephemeral=True,
-    )
-
-
-async def slash_memory_export_v3_file(interaction):
-    user_id = str(interaction.user.id)
-    entry = ensure_memory_entry(user_id)
-    preview = build_memory_v3_preview(entry)
-    validation = validate_memory_v3_preview(preview)
-    if not validation.get("ok"):
-        await interaction.response.send_message(
-            "\n".join(format_memory_v3_validation(validation))[:DISCORD_LIMIT],
-            ephemeral=True,
-        )
-        return
-
-    json_text = export_memory_v3_preview(preview)
-    file_buffer = io.BytesIO(json_text.encode("utf-8"))
-    file = discord.File(
-        file_buffer,
-        filename=f"memory_v3_preview_{interaction.user.id}.json",
-    )
-    await interaction.response.send_message(
-        "🧪 v3 export file / dry run\n保存形式はまだ変更していないよ\n✅ validation OK",
-        file=file,
-        ephemeral=True,
-    )
 
 
 async def slash_status(interaction):

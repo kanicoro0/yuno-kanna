@@ -3,7 +3,7 @@ import json
 
 import discord
 
-from config import DISCORD_LIMIT
+from config import DISCORD_LIMIT, OWNER_ID
 from openai_client import oa_chat
 from memory_model import (
     MEMORY_CATEGORY_GUIDANCE,
@@ -18,10 +18,12 @@ from memory_model import (
     format_recent_memory_changes,
     memory_category_display_group,
     memory_category_label,
+    memory_record_is_deleted,
     memory_slot_label,
     normalize_item_list,
     ordered_memory_categories,
     prepare_memory_edit_operations,
+    restore_memory_record,
     undo_latest_memory_change,
 )
 
@@ -48,6 +50,16 @@ MEMORY_EDIT_GROUP_DESCRIPTIONS = {
 def configure(*, error_reporter):
     global safe_report_error
     safe_report_error = error_reporter
+
+
+async def require_owner(interaction):
+    if str(interaction.user.id) == str(OWNER_ID):
+        return True
+    await interaction.response.send_message(
+        "この操作は管理者だけが使えるよ",
+        ephemeral=True,
+    )
+    return False
 
 
 memory_group = discord.app_commands.Group(
@@ -110,6 +122,8 @@ async def memory_records(
     collection: str = "all",
     page: int = 1,
 ):
+    if not await require_owner(interaction):
+        return
     lines = format_memory_records_for_display(
         str(interaction.user.id),
         status=status,
@@ -121,6 +135,57 @@ async def memory_records(
         "\n".join(lines)[:DISCORD_LIMIT],
         ephemeral=True,
     )
+
+
+class MemoryRecordDetailView(discord.ui.View):
+    def __init__(self, owner_user_id, collection, record_id):
+        super().__init__(timeout=300)
+        self.owner_user_id = str(owner_user_id)
+        self.collection = str(collection)
+        self.record_id = str(record_id)
+
+    async def _check_owner(self, interaction):
+        if str(interaction.user.id) == self.owner_user_id:
+            return True
+        await interaction.response.send_message(
+            "この操作は管理者だけが使えるよ",
+            ephemeral=True,
+        )
+        return False
+
+    @discord.ui.button(label="復元", style=discord.ButtonStyle.success)
+    async def restore_button(self, interaction, button):
+        if not await self._check_owner(interaction):
+            return
+        result = await restore_memory_record(
+            self.owner_user_id,
+            collection=self.collection,
+            record_id=self.record_id,
+        )
+        if not result.get("restored"):
+            reason = result.get("reason")
+            messages = {
+                "missing": "recordが見つからなかったよ",
+                "not_deleted": "このrecordは削除状態ではないみたい",
+                "conflict": "同じ内容のactive recordがあるから復元しなかったよ",
+                "v3_read_only": "今は記憶が読み取り専用みたい",
+            }
+            await interaction.response.send_message(
+                messages.get(reason, "復元できなかったよ"),
+                ephemeral=True,
+            )
+            return
+
+        lines = format_memory_record_detail_for_display(
+            self.owner_user_id,
+            collection=self.collection,
+            record_id=self.record_id,
+            limit=DISCORD_LIMIT,
+        )
+        await interaction.response.edit_message(
+            content=("\n".join(lines) + "\n\n📝 復元したよ")[:DISCORD_LIMIT],
+            view=None,
+        )
 
 
 @memory_group.command(name="record", description="記憶recordを1件だけ詳しく表示します")
@@ -143,14 +208,25 @@ async def memory_record(
     collection: str,
     record_id: str,
 ):
+    if not await require_owner(interaction):
+        return
+    user_id = str(interaction.user.id)
     lines = format_memory_record_detail_for_display(
-        str(interaction.user.id),
+        user_id,
         collection=collection,
         record_id=record_id,
         limit=DISCORD_LIMIT,
     )
+    view = None
+    if memory_record_is_deleted(
+        user_id,
+        collection=collection,
+        record_id=record_id,
+    ):
+        view = MemoryRecordDetailView(user_id, collection, record_id)
     await interaction.response.send_message(
         "\n".join(lines)[:DISCORD_LIMIT],
+        view=view,
         ephemeral=True,
     )
 

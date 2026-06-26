@@ -629,7 +629,7 @@ def _format_v3_flat_memory_sections(entry):
 
 
 def format_memory_flat_sections_for_user(user_id):
-    """show_flat用。v3では互換viewではなくrecord実体のactive状態を尊重する。"""
+    """自然表示用。v3では互換viewではなくrecord実体のactive状態を尊重する。"""
     user_id = str(user_id)
     if memory_root_is_v3():
         entry = memory_user_store().get(user_id)
@@ -1123,6 +1123,19 @@ def format_memory_record_detail_for_display(
     return [header, _truncate_text(text or "（textなし）", available)]
 
 
+def memory_record_is_deleted(user_id, *, collection, record_id):
+    collection = str(collection or "").strip().lower()
+    record_id = str(record_id or "").strip()
+    if not memory_root_is_v3() or collection not in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS:
+        return False
+    entry = memory_user_store().get(str(user_id))
+    if not isinstance(entry, dict):
+        return False
+    records = entry.get(collection)
+    record = records.get(record_id) if isinstance(records, dict) else None
+    return isinstance(record, dict) and record.get("status", "active") == "deleted"
+
+
 def _v3_find_record_by_id(entry, record_id, collection=None):
     if not isinstance(record_id, str) or not record_id.strip():
         return None, None, None, None
@@ -1234,6 +1247,57 @@ def _v3_delete_record(record):
     record["status"] = "deleted"
     record["deleted_at"] = now
     record["updated_at"] = now
+
+
+async def restore_memory_record(user_id, *, collection, record_id):
+    if not memory_writes_supported():
+        return {"restored": False, "reason": "v3_read_only"}
+    collection = str(collection or "").strip().lower()
+    record_id = str(record_id or "").strip()
+    if collection not in MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS or not record_id:
+        return {"restored": False, "reason": "invalid"}
+
+    async with memory_lock:
+        if not memory_root_is_v3():
+            return {"restored": False, "reason": "not_v3"}
+        entry = _v3_raw_user_entry(user_id)
+        found_collection, fallback, found_id, record = _v3_find_record_by_id(
+            entry,
+            record_id,
+            collection,
+        )
+        if not isinstance(record, dict):
+            return {"restored": False, "reason": "missing"}
+        if record.get("status", "active") != "deleted":
+            return {"restored": False, "reason": "not_deleted"}
+
+        category = _v3_record_category(record, fallback)
+        item = _v3_record_text(record)
+        _, _, active_record = _v3_find_record_any(
+            entry,
+            category,
+            item,
+            status="active",
+        )
+        if active_record is not None:
+            return {"restored": False, "reason": "conflict"}
+
+        _v3_restore_record(record)
+        change = {
+            "type": "restore_record",
+            "category": category,
+            "item": item,
+            "collection": found_collection,
+            "record_id": found_id,
+        }
+        append_memory_change(
+            entry,
+            source="manual",
+            summary=f"{memory_category_display_group(category)}を復元",
+            changes=[change],
+        )
+        await persist_memory_entry(entry, "restore memory record")
+        return {"restored": True, "change": change}
 
 
 async def apply_v3_memory_operations(user_id, operations, *, summary, source):
@@ -1751,12 +1815,12 @@ async def apply_memory_edit_operations(user_id, operations, summary="手動編�
 def describe_memory_operation(operation):
     operation_type = operation.get("type")
     if operation_type == "add_item":
-        return f"{memory_category_display_group(operation.get('category'))} に追加: {operation.get('item')}"
+        return f"{memory_category_display_group(operation.get('category'))}に追加: {operation.get('item')}"
     if operation_type == "delete_item":
-        return f"{memory_category_display_group(operation.get('category'))} から削除: {operation.get('item')}"
+        return f"{memory_category_display_group(operation.get('category'))}から削除: {operation.get('item')}"
     if operation_type == "rewrite_item":
         return (
-            f"{memory_category_display_group(operation.get('category'))} を書き換え: "
+            f"{memory_category_display_group(operation.get('category'))}を書き換え: "
             f"{operation.get('old_item')} → {operation.get('new_item')}"
         )
     if operation_type == "set_slot":
@@ -1764,9 +1828,11 @@ def describe_memory_operation(operation):
     if operation_type == "delete_slot":
         return f"{memory_slot_label(operation.get('slot'))} を削除"
     if operation_type == "clear_category":
-        return f"{memory_category_display_group(operation.get('category'))} を全削除"
+        return f"{memory_category_display_group(operation.get('category'))}を全削除"
     if operation_type == "delete_matching_items":
         return f"{operation.get('query')} に一致する記憶を削除"
+    if operation_type == "restore_record":
+        return f"{memory_category_display_group(operation.get('category'))}を復元: {operation.get('item')}"
     return "記憶を変更"
 
 def format_recent_memory_changes(entry, limit=10):
@@ -2031,6 +2097,17 @@ def _v3_can_undo_change(entry, change):
                 if deleted_record is None:
                     return False
 
+        elif operation_type == "restore_record":
+            _, _, record = _v3_find_record_any(
+                entry,
+                operation.get("category"),
+                operation.get("item"),
+                status="active",
+                **_v3_operation_record_kwargs(operation),
+            )
+            if record is None:
+                return False
+
         else:
             return False
 
@@ -2124,6 +2201,19 @@ def _v3_undo_operation(entry, operation):
                 target.get("item"),
             ):
                 return False
+        return True
+
+    if operation_type == "restore_record":
+        _, _, record = _v3_find_record_any(
+            entry,
+            operation.get("category"),
+            operation.get("item"),
+            status="active",
+            **_v3_operation_record_kwargs(operation),
+        )
+        if record is None:
+            return False
+        _v3_delete_record(record)
         return True
 
     return False

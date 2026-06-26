@@ -43,6 +43,8 @@ inner_log = {}
 usage_log = {}
 safe_report_error = print
 SYSTEM_MEMORY_REACTIONS = {"📌", "🗑️", "📝"}
+CONTEXTUAL_REPLY_COOLDOWN_SECONDS = 15
+contextual_reply_cooldowns = {}
 
 
 def is_system_memory_reaction(emoji):
@@ -110,9 +112,12 @@ def trim_chat_history_by_tokens(messages, max_tokens=2000, model=OPENAI_MODEL):
 
 async def send_long(channel, text: str):
     if not text:
-        return
+        return False
+    sent = False
     for i in range(0, len(text), DISCORD_LIMIT):
         await channel.send(text[i:i+DISCORD_LIMIT])
+        sent = True
+    return sent
 
 async def append_chat_history(user_id, role, content, user_name=None):
     ensure_chat_history(user_id)
@@ -193,6 +198,25 @@ def parse_should_reply_and_history(response_text):
     history = "はい" in response_text.split("[history]")[-1].split("\n")[0]
     return reply, history
 
+
+def contextual_reply_key(message):
+    return (str(message.channel.id), str(message.author.id))
+
+
+def mark_contextual_reply_sent(message):
+    contextual_reply_cooldowns[contextual_reply_key(message)] = (
+        time.time() + CONTEXTUAL_REPLY_COOLDOWN_SECONDS
+    )
+
+
+def is_contextual_reply_cooling_down(message):
+    until = contextual_reply_cooldowns.get(contextual_reply_key(message), 0)
+    if until <= time.time():
+        contextual_reply_cooldowns.pop(contextual_reply_key(message), None)
+        return False
+    return True
+
+
 def should_check_context(message, recent_logs):
     if message.mentions:
         return False
@@ -214,9 +238,15 @@ async def handle_contextual_reply(message, ctx):
     recent_logs = await load_channel_history(message.channel, 5)
     if not should_check_context(message, recent_logs):
         return
+    is_cooling_down = is_contextual_reply_cooling_down(message)
 
     context_lines = "\n".join(
         f"{m['name']}：{m['content']}" for m in recent_logs
+    )
+    cooldown_note = (
+        "直前にゆのが非メンション文脈反応をしたばかりです。かなり明確な続きだけ [reply] はい。\n"
+        if is_cooling_down
+        else ""
     )
 
     prompt = (
@@ -225,8 +255,13 @@ async def handle_contextual_reply(message, ctx):
 出力は必ず次の2行だけにしてください。説明は書かないでください。
 
 これは名前呼びかけではない通常会話の文脈反応です。
-明確にゆのが返すのが自然な場合だけ [reply] はい。
+直前にゆのが返していても、それだけで返す理由にしないでください。
+短い単語、相槌、発声練習、意味の薄い文字列には基本返さないでください。
+明確な質問、追加要求、ゆのへの呼びかけ、返答がないと不自然な続きだけ [reply] はい。
 独り言・感想・ユーザー同士の会話・迷う場合は [reply] いいえ。
+"""
+        + cooldown_note
+        + """
 あとで会話の流れとして参照する価値がある明確な内容だけ [history] はい。
 
 出力形式:
@@ -250,7 +285,8 @@ async def handle_contextual_reply(message, ctx):
     picked_up = message.clean_content.strip()
     if reply_flag:
         print(f"✅ 反応必要と判断:", picked_up)
-        await handle_mention(message, ctx, is_direct_request=False)
+        if await handle_mention(message, ctx, is_direct_request=False):
+            mark_contextual_reply_sent(message)
         return
 
     if keep_history_flag:
@@ -418,7 +454,7 @@ async def handle_mention(message, ctx, *, is_direct_request=True):
         if len(timestamps) > MAX_MESSAGES:
             await message.channel.send("……ちょっとだけ、休ませて。もう少ししたらまた話せる")
             print(f"🚫 使用制限: {user_id} による過剰メッセージをブロック")
-            return
+            return True
 
     system_content = build_system_prompt(
         message,
@@ -502,13 +538,14 @@ async def handle_mention(message, ctx, *, is_direct_request=True):
                 await append_chat_history(user_id, "user", prompt, user_display_name)
                 await append_chat_history(user_id, "assistant", f"{reply}\nつけたリアクション：{reaction}")
                 history_saved = True
-            await send_reply(message, reply, reaction)
-            break
+            reply_sent = await send_reply(message, reply, reaction)
+            return reply_sent
 
         except Exception as e:
             if attempt == 2:
                 safe_report_error(f"OpenAI API 応答失敗: {e}")
                 await message.reply("……うまく声が出なかったみたい")
+                return True
             else:
                 print(f"⚠️ OpenAI API 応答失敗（再試行する）: {e}")
                 print("……再試行する")
@@ -516,6 +553,7 @@ async def handle_mention(message, ctx, *, is_direct_request=True):
 
     if not history_saved:
         await append_chat_history(user_id, "user", prompt, user_display_name)
+    return False
 
 def build_system_prompt(message, ctx, *, is_direct_request=True):
     user = message.author
@@ -668,11 +706,13 @@ def build_messages(system_content, channel_context, history, prompt, user_displa
 
 async def send_reply(message, reply, reaction):
     reply = normalize_reply_text(reply)
+    reply_sent = False
     if reply:
-        await send_long(message.channel, reply)
+        reply_sent = await send_long(message.channel, reply)
 
     for r in normalize_ai_reactions(reaction):
         try:
             await message.add_reaction(r)
         except discord.HTTPException:
             pass
+    return reply_sent

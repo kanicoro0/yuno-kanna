@@ -120,6 +120,7 @@ def configure_modules(discord_bot):
         discord_bot=discord_bot,
         history=chat_history,
         notes=guild_notes,
+        save_notes=save_guild_notes,
         inner=inner_log,
         usage=usage_log,
         error_reporter=safe_report_error,

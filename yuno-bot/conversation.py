@@ -39,6 +39,7 @@ from storage import write_json_async
 bot = None
 chat_history = {}
 guild_notes = {}
+save_guild_notes = None
 inner_log = {}
 usage_log = {}
 safe_report_error = print
@@ -78,11 +79,124 @@ def normalize_ai_reactions(reaction):
     return allowed_reactions.split()[:5]
 
 
-def configure(*, discord_bot, history, notes, inner, usage, error_reporter):
-    global bot, chat_history, guild_notes, inner_log, usage_log, safe_report_error
+def normalize_guild_note_text(value):
+    text = str(value or "").strip()
+    text = " ".join(text.split())
+    if not text or text == "なし":
+        return ""
+    return text[:200]
+
+
+def guild_note_lines(guild_id):
+    note = guild_notes.get(str(guild_id), "")
+    return [line.strip() for line in str(note).splitlines() if line.strip()]
+
+
+def find_guild_note_index(lines, target):
+    normalized_target = normalize_guild_note_text(target)
+    if not normalized_target:
+        return None
+    for index, line in enumerate(lines):
+        if normalize_guild_note_text(line) == normalized_target:
+            return index
+    return None
+
+
+def summarize_guild_memory_change(change):
+    change_type = change.get("type")
+    if change_type == "add_note":
+        return f"サーバーメモに追加: {change.get('note', '')}"
+    if change_type == "delete_note":
+        return f"サーバーメモから削除: {change.get('note', '')}"
+    if change_type == "rewrite_note":
+        return f"サーバーメモを書き換え: {change.get('old_note', '')} → {change.get('new_note', '')}"
+    return "サーバーメモを更新"
+
+
+def format_guild_memory_debug_summary(result):
+    parts = []
+    changes = result.get("changes") or []
+    errors = result.get("errors") or []
+    if changes:
+        parts.append("accepted: " + " / ".join(
+            summarize_guild_memory_change(change) for change in changes
+        ))
+    if errors:
+        parts.append("rejected: " + " / ".join(errors))
+    return "\n".join(parts)
+
+
+async def apply_guild_memory_operations(guild_id, operations):
+    result = {"changes": [], "errors": []}
+    if guild_id is None:
+        result["errors"].append("サーバー外ではサーバーメモを更新できない")
+        return result
+    if not isinstance(operations, list):
+        result["errors"].append("guild_memory_operations がリストではない")
+        return result
+
+    guild_key = str(guild_id)
+    lines = guild_note_lines(guild_key)
+    for operation in operations[:5]:
+        if not isinstance(operation, dict):
+            result["errors"].append("操作がオブジェクトではない")
+            continue
+        operation_type = str(operation.get("type") or "").strip()
+        if operation_type == "add_note":
+            note = normalize_guild_note_text(operation.get("note"))
+            if not note:
+                result["errors"].append("追加するサーバーメモが空")
+                continue
+            if find_guild_note_index(lines, note) is not None:
+                result["errors"].append("同じサーバーメモが既にある")
+                continue
+            lines.append(note)
+            result["changes"].append({"type": "add_note", "note": note})
+        elif operation_type == "delete_note":
+            note = normalize_guild_note_text(operation.get("note"))
+            index = find_guild_note_index(lines, note)
+            if index is None:
+                result["errors"].append("削除対象のサーバーメモが見つからない")
+                continue
+            removed = lines.pop(index)
+            result["changes"].append({"type": "delete_note", "note": removed})
+        elif operation_type == "rewrite_note":
+            old_note = normalize_guild_note_text(operation.get("old_note"))
+            new_note = normalize_guild_note_text(operation.get("new_note"))
+            index = find_guild_note_index(lines, old_note)
+            if index is None:
+                result["errors"].append("書き換え対象のサーバーメモが見つからない")
+                continue
+            if not new_note:
+                result["errors"].append("新しいサーバーメモが空")
+                continue
+            duplicate_index = find_guild_note_index(lines, new_note)
+            if duplicate_index is not None and duplicate_index != index:
+                result["errors"].append("同じサーバーメモが既にある")
+                continue
+            old_value = lines[index]
+            lines[index] = new_note
+            result["changes"].append({
+                "type": "rewrite_note",
+                "old_note": old_value,
+                "new_note": new_note,
+            })
+        else:
+            result["errors"].append("未対応のサーバーメモ操作")
+
+    if result["changes"]:
+        guild_notes[guild_key] = "\n".join(lines)
+        if save_guild_notes is not None:
+            await save_guild_notes()
+    return result
+
+
+def configure(*, discord_bot, history, notes, save_notes, inner, usage, error_reporter):
+    global bot, chat_history, guild_notes, save_guild_notes, inner_log, usage_log, safe_report_error
     bot = discord_bot
     chat_history = history
     guild_notes = notes
+    save_guild_notes = save_notes
     inner_log = inner
     usage_log = usage
     safe_report_error = error_reporter
@@ -399,7 +513,10 @@ def extract_from_json_or_brackets(raw_content: str):
         memory_operations = obj.get("memory_operations")
         if not isinstance(memory_operations, list):
             memory_operations = []
-        return reply, reaction, inner, memory_operations
+        guild_memory_operations = obj.get("guild_memory_operations")
+        if not isinstance(guild_memory_operations, list):
+            guild_memory_operations = []
+        return reply, reaction, inner, memory_operations, guild_memory_operations
     except Exception:
         pass
 
@@ -428,7 +545,7 @@ def extract_from_json_or_brackets(raw_content: str):
                 reaction = (reaction + " " + line).strip()
             elif current_section == "inner":
                 inner += ("\n" if inner else "") + line
-    return reply.strip(), reaction, inner, []
+    return reply.strip(), reaction, inner, [], []
 
 def extract_user_prompt(message):
     prompt = message.clean_content.replace(f'@{bot.user.display_name}', '').strip()
@@ -476,7 +593,7 @@ async def handle_mention(message, ctx, *, is_direct_request=True):
                 )
             raw_content = response.choices[0].message.content.strip()
             print("✅ AI応答を受信")
-            reply, reaction, inner, memory_operations = (
+            reply, reaction, inner, memory_operations, guild_memory_operations = (
                 extract_from_json_or_brackets(raw_content)
             )
             reaction = sanitize_ai_reaction_text(reaction)
@@ -527,6 +644,33 @@ async def handle_mention(message, ctx, *, is_direct_request=True):
                             await message.add_reaction(emoji)
                         except Exception as error:
                             safe_report_error(f"記憶の{emoji}を付けられなかったよ: {error}")
+            guild_memory_debug_summary = ""
+            if guild_memory_operations:
+                guild_memory_result = await apply_guild_memory_operations(
+                    getattr(message.guild, "id", None),
+                    guild_memory_operations,
+                )
+                guild_memory_debug_summary = format_guild_memory_debug_summary(
+                    guild_memory_result
+                )
+                if guild_memory_result["errors"]:
+                    safe_report_error(
+                        "サーバーメモリー操作を拒否したよ: "
+                        + "; ".join(guild_memory_result["errors"])
+                    )
+                if guild_memory_result["changes"]:
+                    try:
+                        await message.add_reaction("🏷️")
+                    except Exception as error:
+                        safe_report_error(f"サーバーメモリーの🏷️を付けられなかったよ: {error}")
+            if guild_memory_debug_summary:
+                memory_debug_summary = "\n".join(
+                    part for part in (
+                        memory_debug_summary,
+                        f"[guild memory]\n{guild_memory_debug_summary}",
+                    )
+                    if part
+                )
             send_ai_debug_log(inner, memory_debug_summary)
 
             if len(reply) > 8000:
@@ -602,8 +746,9 @@ def build_system_prompt(message, ctx, *, is_direct_request=True):
 ・k.a.256（_k256）が創ったことを知っている
 """
 
-    if guild and guild.id and str(guild.id) in guild_notes:
-        prompt += f"・このサーバー({guild_name})のメモ：{guild_notes[str(guild.id)]}\n"
+    if guild and guild.id:
+        server_note = guild_notes.get(str(guild.id)) or "まだない"
+        prompt += f"・このサーバー({guild_name})のメモ：{server_note}\n"
 
     prompt += f"""
 ---
@@ -612,7 +757,8 @@ def build_system_prompt(message, ctx, *, is_direct_request=True):
   "inner": "ゆのの内面。なければ『なし』",
   "reply": "ゆのの返事。なければ『なし』",
   "reaction": ["必要な絵文字を0〜5個。普段は少なめ。なければ空配列"],
-  "memory_operations": []
+  "memory_operations": [],
+  "guild_memory_operations": []
 }}
 
 reactionの規則:
@@ -638,6 +784,17 @@ item / old_item / new_item は1件だけにする。
 record_type:
 ・memory: 本人について覚えておく内容
 ・interaction_preference: ゆのの話し方・扱い方への希望
+
+サーバーメモリー:
+このサーバー全体について明確に残す内容だけ guild_memory_operations に書く。
+個人の好みや本人情報は memory_operations、サーバー全体の振る舞い・場の約束・みんなに関わる決まりは guild_memory_operations。
+キーワードだけで判断しない。曖昧なら保存せず、返答で軽く確認する。
+いまだけの雑談や冗談、既存メモと重複する内容は保存しない。
+
+使用例:
+{{"type":"add_note","note":"このサーバーでは、ゆのは少し静かめに話す"}}
+{{"type":"rewrite_note","old_note":"古いサーバーメモ","new_note":"新しいサーバーメモ"}}
+{{"type":"delete_note","note":"削除する既存サーバーメモ"}}
 """
 
     if memory_has_content(memory):

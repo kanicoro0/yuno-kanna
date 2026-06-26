@@ -290,7 +290,10 @@ MEMORY_V3_LEGACY_COLLECTIONS = tuple(MEMORY_V3_COLLECTION_CATEGORY_DEFAULTS)
 def memory_root_is_v3():
     return (
         isinstance(longterm_memory, dict)
-        and longterm_memory.get("schema_version") == MEMORY_V3_SCHEMA_VERSION
+        and longterm_memory.get("schema_version") in (
+            MEMORY_V3_SCHEMA_VERSION,
+            MEMORY_RECORD_SCHEMA_VERSION,
+        )
         and isinstance(longterm_memory.get("users"), dict)
     )
 

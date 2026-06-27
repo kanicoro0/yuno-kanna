@@ -1,18 +1,25 @@
-from dataclasses import replace
 from typing import List, Optional
 
 import discord
 from discord import app_commands
 
-from yuno.memory.records import MemoryRecord, new_memory_id, utc_now
-from yuno.memory.storage import MemoryStorage
-from yuno.text import (
-    NO_MEMORIES, memory_added, memory_deleted, memory_edited, memory_not_found,
+from yuno.commands.memory_view import (
+    MemoryPagerView, accessible_scopes, format_page, format_record, paginate, scope_for,
 )
+from yuno.memory.records import MemoryRecord, utc_now
+from yuno.memory.service import MemoryService
+from yuno.memory.storage import MemoryStorage
+from yuno.runtime.settings import RuntimeSettings
+from yuno.text import memory_not_found
 
 
 DEFAULT_ROUTES = ["semantic", "keyword", "tag"]
 DEFAULT_CONTEXTS = ["dm", "mention", "prefix", "nonmention"]
+SCOPE_TITLES = {
+    "user": "きみについて覚えていること",
+    "server": "このサーバーで覚えていること",
+    "channel": "このチャンネルで覚えていること",
+}
 
 
 def _split_values(value: Optional[str], default: List[str]) -> List[str]:
@@ -21,60 +28,86 @@ def _split_values(value: Optional[str], default: List[str]) -> List[str]:
     return [item.strip().lower() for item in value.split(",") if item.strip()]
 
 
-def _scope(interaction: discord.Interaction, kind: str) -> Optional[str]:
-    if kind == "user":
-        return f"user:{interaction.user.id}"
-    if kind == "server" and interaction.guild_id:
-        return f"guild:{interaction.guild_id}"
-    if kind == "channel" and interaction.guild_id and interaction.channel_id:
-        return f"channel:{interaction.channel_id}"
-    return None
-
-
 def _can_mutate(interaction: discord.Interaction, kind: str) -> bool:
     if kind == "user":
         return True
-    permissions = interaction.permissions
     if kind == "server":
-        return permissions.manage_guild
-    return permissions.manage_channels
+        return interaction.permissions.manage_guild
+    return interaction.permissions.manage_channels
 
 
-def _format_records(records: List[MemoryRecord], scope: str) -> str:
-    if not records:
-        return f"scope: `{scope}`\n\n{NO_MEMORIES}"
-    blocks = [f"scope: `{scope}`  /  {len(records)}件"]
-    for record in records:
-        tags = ", ".join(record.tags) or "タグなし"
-        blocks.append(
-            f"`{record.id}`  weight:{record.weight}\n"
-            f"{record.content}\n"
-            f"routes: {', '.join(record.routes)} / tags: {tags}"
-        )
-    text = "\n\n".join(blocks)
-    return text if len(text) <= 1950 else text[:1900] + "\n\n…少し多いから、ここで表示を止めたよ"
+async def _debug_enabled(
+    interaction: discord.Interaction, runtime_settings: RuntimeSettings, owner_id: Optional[int]
+) -> bool:
+    return (
+        owner_id is not None
+        and interaction.user.id == owner_id
+        and await runtime_settings.memory_view(interaction.user.id) == "debug"
+    )
 
 
-def _create_scope_group(kind: str, storage: MemoryStorage) -> app_commands.Group:
+async def _resolve_active_in_scope(
+    storage: MemoryStorage, reference: str, scopes: List[str]
+) -> Optional[MemoryRecord]:
+    memory_id = await storage.resolve_id(reference)
+    if memory_id is None:
+        return None
+    record = await storage.get_by_id(memory_id)
+    if record is None or record.state != "active" or record.scope not in scopes:
+        return None
+    return record
+
+
+def _create_scope_group(
+    kind: str,
+    storage: MemoryStorage,
+    service: MemoryService,
+    runtime_settings: RuntimeSettings,
+    owner_id: Optional[int],
+) -> app_commands.Group:
     labels = {"user": "自分", "server": "サーバー", "channel": "チャンネル"}
-    group = app_commands.Group(name=kind, description=f"{labels[kind]}scopeの記憶を扱います")
+    group = app_commands.Group(name=kind, description=f"{labels[kind]}scopeの記憶")
 
     @group.command(name="show", description=f"{labels[kind]}scopeの記憶を表示します")
-    async def show(interaction: discord.Interaction) -> None:
-        scope = _scope(interaction, kind)
+    @app_commands.describe(page="ページ", limit="1ページの件数", detail="詳細表示")
+    async def show(
+        interaction: discord.Interaction,
+        page: app_commands.Range[int, 1, 999] = 1,
+        limit: app_commands.Range[int, 1, 8] = 5,
+        detail: bool = False,
+    ) -> None:
+        scope = scope_for(interaction, kind)
         if scope is None:
-            await interaction.response.send_message("この操作はサーバーの中で使ってね", ephemeral=True)
+            await interaction.response.send_message("サーバーの中で使ってね", ephemeral=True)
             return
-        records = await storage.search_recent([scope], limit=20)
-        await interaction.response.send_message(_format_records(records, scope), ephemeral=True)
+        effective_limit = min(int(limit), 3) if detail else int(limit)
+        records = sorted(
+            await storage.list_active([scope]), key=lambda item: item.updated_at, reverse=True
+        )
+        debug = await _debug_enabled(interaction, runtime_settings, owner_id)
+        view = MemoryPagerView(
+            storage=storage,
+            requester_id=interaction.user.id,
+            owner_id=owner_id,
+            kind=kind,
+            scope=scope,
+            title=SCOPE_TITLES[kind],
+            records=records,
+            page=int(page),
+            limit=effective_limit,
+            detail=detail,
+            debug=debug,
+        )
+        await interaction.response.send_message(view.content(), view=view, ephemeral=True)
+        try:
+            view.message = await interaction.original_response()
+        except (discord.HTTPException, AttributeError):
+            pass
 
     @group.command(name="add", description=f"{labels[kind]}scopeへ記憶を追加します")
     @app_commands.describe(
-        content="覚える内容",
-        tags="カンマ区切りのタグ（省略時 note）",
-        routes="カンマ区切りのroute",
-        contexts="カンマ区切りのcontext",
-        weight="記憶の強さ（1〜5）",
+        content="覚える内容", tags="カンマ区切りのタグ", routes="カンマ区切りのroute",
+        contexts="カンマ区切りのcontext", weight="記憶の強さ（1〜5）",
     )
     async def add(
         interaction: discord.Interaction,
@@ -84,75 +117,166 @@ def _create_scope_group(kind: str, storage: MemoryStorage) -> app_commands.Group
         contexts: Optional[str] = None,
         weight: app_commands.Range[int, 1, 5] = 3,
     ) -> None:
-        scope = _scope(interaction, kind)
+        scope = scope_for(interaction, kind)
         if scope is None:
-            await interaction.response.send_message("この操作はサーバーの中で使ってね", ephemeral=True)
+            await interaction.response.send_message("サーバーの中で使ってね", ephemeral=True)
             return
         if not _can_mutate(interaction, kind):
-            await interaction.response.send_message("ここを書き換える権限がないみたい", ephemeral=True)
+            await interaction.response.send_message("ここを変える権限がないみたい", ephemeral=True)
             return
         now = utc_now()
         record = MemoryRecord(
-            id=new_memory_id(),
-            scope=scope,
-            content=content.strip(),
+            id="", scope=scope, content=content.strip(),
             routes=_split_values(routes, DEFAULT_ROUTES),
             contexts=_split_values(contexts, DEFAULT_CONTEXTS),
-            weight=int(weight),
-            tags=_split_values(tags, ["note"]),
-            created_at=now,
-            updated_at=now,
+            weight=int(weight), tags=_split_values(tags, ["note"]),
+            created_at=now, updated_at=now,
         )
         try:
-            saved = await storage.upsert(record)
-        except ValueError as error:
-            await interaction.response.send_message(f"その形では覚えられなかったよ: {error}", ephemeral=True)
+            saved = await service.add(record, str(interaction.user.id), "slash")
+        except ValueError:
+            await interaction.response.send_message("その形では覚えられなかったよ", ephemeral=True)
             return
-        await interaction.response.send_message(memory_added(saved.id, scope), ephemeral=True)
+        await interaction.response.send_message(f"覚えたよ\n{saved.id}", ephemeral=True)
 
     @group.command(name="edit", description=f"{labels[kind]}scopeの記憶本文を書き換えます")
-    @app_commands.describe(memory_id="mem_から始まるID", content="新しい記憶本文")
+    @app_commands.rename(memory_id="id")
+    @app_commands.describe(memory_id="memory IDまたは数字", content="新しい記憶本文")
     async def edit(interaction: discord.Interaction, memory_id: str, content: str) -> None:
-        scope = _scope(interaction, kind)
+        scope = scope_for(interaction, kind)
         if scope is None:
-            await interaction.response.send_message("この操作はサーバーの中で使ってね", ephemeral=True)
+            await interaction.response.send_message("サーバーの中で使ってね", ephemeral=True)
             return
         if not _can_mutate(interaction, kind):
-            await interaction.response.send_message("ここを書き換える権限がないみたい", ephemeral=True)
+            await interaction.response.send_message("ここを変える権限がないみたい", ephemeral=True)
             return
-        record = await storage.get_by_id(memory_id.strip())
-        if record is None or record.state != "active" or record.scope != scope:
+        record = await _resolve_active_in_scope(storage, memory_id, [scope])
+        if record is None:
             await interaction.response.send_message(memory_not_found(memory_id), ephemeral=True)
             return
         try:
-            await storage.upsert(replace(record, content=content.strip()))
-        except ValueError as error:
-            await interaction.response.send_message(f"その形には書き換えられなかったよ: {error}", ephemeral=True)
+            saved = await service.rewrite(
+                record.id, {"content": content.strip()}, str(interaction.user.id), "slash"
+            )
+        except ValueError:
+            saved = None
+        if saved is None:
+            await interaction.response.send_message("その形には書き換えられなかったよ", ephemeral=True)
             return
-        await interaction.response.send_message(memory_edited(record.id, scope), ephemeral=True)
+        await interaction.response.send_message(f"書き換えたよ\n{saved.id}", ephemeral=True)
 
     @group.command(name="delete", description=f"{labels[kind]}scopeの記憶を外します")
-    @app_commands.describe(memory_id="mem_から始まるID")
+    @app_commands.rename(memory_id="id")
+    @app_commands.describe(memory_id="memory IDまたは数字")
     async def delete(interaction: discord.Interaction, memory_id: str) -> None:
-        scope = _scope(interaction, kind)
+        scope = scope_for(interaction, kind)
         if scope is None:
-            await interaction.response.send_message("この操作はサーバーの中で使ってね", ephemeral=True)
+            await interaction.response.send_message("サーバーの中で使ってね", ephemeral=True)
             return
         if not _can_mutate(interaction, kind):
-            await interaction.response.send_message("ここを書き換える権限がないみたい", ephemeral=True)
+            await interaction.response.send_message("ここを変える権限がないみたい", ephemeral=True)
             return
-        record = await storage.get_by_id(memory_id.strip())
-        if record is None or record.state != "active" or record.scope != scope:
+        record = await _resolve_active_in_scope(storage, memory_id, [scope])
+        if record is None:
             await interaction.response.send_message(memory_not_found(memory_id), ephemeral=True)
             return
-        await storage.mark_deleted(record.id)
-        await interaction.response.send_message(memory_deleted(record.id, scope), ephemeral=True)
+        deleted = await service.delete(record.id, str(interaction.user.id), "slash")
+        if deleted is None:
+            await interaction.response.send_message(memory_not_found(memory_id), ephemeral=True)
+            return
+        await interaction.response.send_message(f"そっと外したよ\n{deleted.id}", ephemeral=True)
+
+    @group.command(name="undo", description=f"{labels[kind]}scopeで自分が行った直近の変更を戻します")
+    async def undo(interaction: discord.Interaction) -> None:
+        scope = scope_for(interaction, kind)
+        if scope is None:
+            await interaction.response.send_message("サーバーの中で使ってね", ephemeral=True)
+            return
+        if not _can_mutate(interaction, kind):
+            await interaction.response.send_message("ここを変える権限がないみたい", ephemeral=True)
+            return
+        try:
+            result = await service.undo(scope, str(interaction.user.id))
+        except ValueError:
+            await interaction.response.send_message("その後に別の変更があるから、戻すのを止めたよ", ephemeral=True)
+            return
+        if result is None:
+            await interaction.response.send_message("戻せる変更はないみたい", ephemeral=True)
+            return
+        target, restored = result
+        await interaction.response.send_message(
+            f"ひとつ戻したよ\n{restored.id}: {target.action}", ephemeral=True
+        )
+
+    @group.command(name="history", description=f"{labels[kind]}scopeの変更履歴を表示します")
+    @app_commands.describe(page="ページ", limit="1ページの件数")
+    async def history(
+        interaction: discord.Interaction,
+        page: app_commands.Range[int, 1, 999] = 1,
+        limit: app_commands.Range[int, 1, 10] = 5,
+    ) -> None:
+        scope = scope_for(interaction, kind)
+        if scope is None:
+            await interaction.response.send_message("サーバーの中で使ってね", ephemeral=True)
+            return
+        changes = await service.history(scope)
+        total_pages = max(1, (len(changes) + int(limit) - 1) // int(limit))
+        safe_page = min(int(page), total_pages)
+        start = (safe_page - 1) * int(limit)
+        shown = changes[start:start + int(limit)]
+        if not shown:
+            text = "変更履歴は、まだないよ"
+        else:
+            lines = [f"{item.timestamp[:16]}  {item.action}  {item.memory_id}" for item in shown]
+            text = "変更履歴\n\n" + "\n".join(lines) + f"\n\n{safe_page}/{total_pages}"
+        await interaction.response.send_message(text, ephemeral=True)
 
     return group
 
 
-def create_memory_group(storage: MemoryStorage) -> app_commands.Group:
+def create_memory_group(
+    storage: MemoryStorage,
+    service: MemoryService,
+    runtime_settings: RuntimeSettings,
+    owner_id: Optional[int],
+) -> app_commands.Group:
     root = app_commands.Group(name="memory", description="scopeごとに記憶を扱います")
     for kind in ("user", "server", "channel"):
-        root.add_command(_create_scope_group(kind, storage))
+        root.add_command(_create_scope_group(kind, storage, service, runtime_settings, owner_id))
+
+    @root.command(name="get", description="IDから記憶を1件表示します")
+    @app_commands.rename(memory_id="id")
+    @app_commands.describe(memory_id="memory IDまたは数字", detail="詳細表示")
+    async def get(interaction: discord.Interaction, memory_id: str, detail: bool = False) -> None:
+        record = await _resolve_active_in_scope(storage, memory_id, accessible_scopes(interaction))
+        if record is None:
+            await interaction.response.send_message(memory_not_found(memory_id), ephemeral=True)
+            return
+        debug = await _debug_enabled(interaction, runtime_settings, owner_id)
+        await interaction.response.send_message(
+            format_record(record, detail=detail, debug=debug and detail)[:2000], ephemeral=True
+        )
+
+    @root.command(name="search", description="アクセスできる記憶を本文・タグから探します")
+    @app_commands.describe(query="検索語", page="ページ", limit="件数", detail="詳細表示")
+    async def search(
+        interaction: discord.Interaction,
+        query: str,
+        page: app_commands.Range[int, 1, 999] = 1,
+        limit: app_commands.Range[int, 1, 8] = 5,
+        detail: bool = False,
+    ) -> None:
+        needle = query.strip().casefold()
+        records = [
+            record for record in await storage.list_active(accessible_scopes(interaction))
+            if needle in record.content.casefold() or any(needle in tag for tag in record.tags)
+        ]
+        records.sort(key=lambda item: item.updated_at, reverse=True)
+        effective_limit = min(int(limit), 3) if detail else int(limit)
+        debug = await _debug_enabled(interaction, runtime_settings, owner_id)
+        text, _, _, _ = format_page(
+            "見つけた記憶", records, int(page), effective_limit, detail, debug and detail
+        )
+        await interaction.response.send_message(text[:2000], ephemeral=True)
+
     return root

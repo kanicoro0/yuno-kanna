@@ -31,6 +31,8 @@ class Settings:
     yuno_env: str
     memory_file: Path
     runtime_settings_file: Path = PROJECT_ROOT / "data" / "runtime_settings.json"
+    memory_changelog_file: Path = PROJECT_ROOT / "data" / "memory_changelog.json"
+    owner_id: Optional[int] = None
 
 
 def load_settings() -> Settings:
@@ -42,6 +44,10 @@ def load_settings() -> Settings:
     runtime_path = Path(runtime_value)
     if not runtime_path.is_absolute():
         runtime_path = PROJECT_ROOT / runtime_path
+    changelog_value = os.getenv("MEMORY_CHANGELOG_FILE", "data/memory_changelog.json").strip()
+    changelog_path = Path(changelog_value)
+    if not changelog_path.is_absolute():
+        changelog_path = PROJECT_ROOT / changelog_path
     return Settings(
         discord_token=os.getenv("DISCORD_TOKEN", "").strip(),
         discord_client_id=_optional_int("DISCORD_CLIENT_ID"),
@@ -51,4 +57,6 @@ def load_settings() -> Settings:
         yuno_env=os.getenv("YUNO_ENV", "dev").strip() or "dev",
         memory_file=memory_path,
         runtime_settings_file=runtime_path,
+        memory_changelog_file=changelog_path,
+        owner_id=_optional_int("OWNER_ID"),
     )

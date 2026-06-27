@@ -1,9 +1,13 @@
 import asyncio
 from dataclasses import replace
+import re
 from typing import Dict, List, Optional
 
 from yuno.infra.json_store import JsonStore
-from yuno.memory.records import MemoryRecord, utc_now
+from yuno.memory.records import MemoryRecord, new_memory_id, utc_now
+
+
+NUMERIC_MEMORY_ID = re.compile(r"^mem_(\d+)$")
 
 
 class MemoryStorage:
@@ -46,6 +50,12 @@ class MemoryStorage:
     async def get_by_id(self, memory_id: str) -> Optional[MemoryRecord]:
         return next((record for record in await self._load_records() if record.id == memory_id), None)
 
+    async def resolve_id(self, reference: str) -> Optional[str]:
+        value = reference.strip()
+        if value.isdigit():
+            value = f"mem_{int(value):04d}"
+        return value if await self.get_by_id(value) is not None else None
+
     async def search_recent(self, scopes: List[str], limit: int = 10) -> List[MemoryRecord]:
         records = await self.list_active(scopes)
         return sorted(records, key=lambda item: item.updated_at, reverse=True)[:limit]
@@ -73,6 +83,37 @@ class MemoryStorage:
                 records.append(record)
             await self._save_records(records)
             return record
+
+    @staticmethod
+    def _next_id(records: List[MemoryRecord]) -> str:
+        used = {record.id for record in records}
+        numeric = [int(match.group(1)) for record in records if (match := NUMERIC_MEMORY_ID.fullmatch(record.id))]
+        try:
+            candidate = max(numeric, default=0) + 1
+            while f"mem_{candidate:04d}" in used:
+                candidate += 1
+            return f"mem_{candidate:04d}"
+        except (OverflowError, ValueError):
+            fallback = new_memory_id()
+            while fallback in used:
+                fallback = new_memory_id()
+            return fallback
+
+    async def create(self, record: MemoryRecord) -> MemoryRecord:
+        """Create with a numeric ID atomically; existing IDs are never rewritten."""
+        record.validate()
+        async with self._mutation_lock:
+            records = await self._load_records()
+            created = replace(
+                record,
+                id=self._next_id(records),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+            created.validate()
+            records.append(created)
+            await self._save_records(records)
+            return created
 
     async def mark_deleted(self, memory_id: str) -> Optional[MemoryRecord]:
         async with self._mutation_lock:

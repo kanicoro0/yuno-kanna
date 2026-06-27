@@ -57,33 +57,37 @@ def register_events(bot: discord.Client, runtime: ConversationRuntime) -> None:
 
         scopes = message_scopes(message)
         try:
+            candidates = await runtime.retriever.retrieve(
+                route_content, scopes, route.context
+            )
+            plan = await runtime.planner.plan(
+                route_content,
+                route.context,
+                scopes,
+                list(history),
+                planner_memory_view(candidates),
+            )
+            execution = await runtime.executor.prepare(plan, candidates, scopes)
+
+            if not execution.should_speak:
+                await add_reactions(message, execution.reactions)
+                history.append({"role": "user", "content": route_content[:2000]})
+                return
+
             async with message.channel.typing():
-                candidates = await runtime.retriever.retrieve(
-                    route_content, scopes, route.context
-                )
-                plan = await runtime.planner.plan(
-                    route_content,
-                    route.context,
-                    scopes,
-                    list(history),
-                    planner_memory_view(candidates),
-                )
-                execution = await runtime.executor.prepare(plan, candidates, scopes)
-
-                if not execution.should_speak:
-                    await add_reactions(message, execution.reactions)
-                    history.append({"role": "user", "content": route_content[:2000]})
-                    return
-
                 speaker_output = await runtime.speaker.speak(route_content, plan, execution)
-                sent = await message.reply(
-                    speaker_output.reply[:2000],
-                    mention_author=False,
-                    allowed_mentions=discord.AllowedMentions.none(),
-                )
+            sent = await message.reply(
+                speaker_output.reply[:2000],
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
             # Commit boundary: nothing persistent above this line changes memory.
-            system_reactions = await runtime.executor.commit(execution.pending_commits)
+            system_reactions = await runtime.executor.commit(
+                execution.pending_commits,
+                actor_user_id=str(message.author.id),
+                source="planner_commit",
+            )
             await add_reactions(message, execution.reactions + system_reactions)
             history.append({"role": "user", "content": route_content[:2000]})
             history.append({"role": "assistant", "content": sent.content[:2000]})

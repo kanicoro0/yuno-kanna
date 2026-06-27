@@ -8,5 +8,8 @@
   "auto_reply": {
     "guilds": {},
     "channels": {}
+  },
+  "memory_view": {
+    "users": {}
   }
 }

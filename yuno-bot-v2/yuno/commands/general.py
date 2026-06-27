@@ -1,33 +1,23 @@
-from typing import List
+from typing import Optional
 
 import discord
-from discord import app_commands
 
 from yuno.core.config import Settings
-from yuno.core.preplanning import RateLimiter
 from yuno.infra.openai_client import OpenAIJsonClient
 from yuno.memory.storage import MemoryStorage
 from yuno.runtime.settings import RuntimeSettings
 
 
-GUIDE_TEXT = """ゆの v2で、いま使えるもの
+GUIDE_TEXT = """ゆの v2
 
-`/memory user show|add|edit|delete` — きみの記憶
-`/memory server show|add|edit|delete` — このサーバーの記憶
-`/memory channel show|add|edit|delete` — このチャンネルの記憶
-`/status` — いまの動作状態
-`/sleep` / `/wake` — このチャンネルで眠る / 起きる
-`/autorespond status` — 非メンション反応の設定を見る
-`/autorespond server` / `/autorespond channel` — 設定を切り替える
+`/memory user|server|channel`  記憶
+`/memory get|search`  ID表示・検索
+`/status`  状態
+`/sleep` `/wake`  眠る・起きる
+`/autorespond`  非メンション設定
+`/settings memory_view`  表示モード
 
-reminderは、まだ準備中だよ"""
-
-
-def _current_scopes(interaction: discord.Interaction) -> List[str]:
-    scopes = [f"user:{interaction.user.id}"]
-    if interaction.guild_id:
-        scopes.extend((f"guild:{interaction.guild_id}", f"channel:{interaction.channel_id}"))
-    return scopes
+詳しい使い方はREADMEに置いてあるよ"""
 
 
 def register_general_commands(
@@ -37,41 +27,53 @@ def register_general_commands(
     runtime_settings: RuntimeSettings,
     ai_client: OpenAIJsonClient,
 ) -> None:
-    @tree.command(name="guide", description="ゆの v2で使える機能を表示します")
+    @tree.command(name="guide", description="主要commandを表示します")
     async def guide(interaction: discord.Interaction) -> None:
         await interaction.response.send_message(GUIDE_TEXT, ephemeral=True)
 
-    @tree.command(name="status", description="ゆの v2の現在状態を表示します")
-    async def status(interaction: discord.Interaction) -> None:
-        scopes = _current_scopes(interaction)
-        counts = {scope: len(await storage.list_active([scope])) for scope in scopes}
-        guild_id = interaction.guild_id
-        channel_id = interaction.channel_id
-        sleeping = await runtime_settings.is_sleeping(guild_id, channel_id)
-        auto_reply = await runtime_settings.auto_reply_allowed(guild_id, channel_id)
-        sync_mode = (
-            f"guild:{settings.discord_guild_id}"
-            if settings.yuno_env.casefold() == "dev" and settings.discord_guild_id
-            else "global"
+    @tree.command(name="status", description="ゆの v2の状態を表示します")
+    async def status(interaction: discord.Interaction, debug: bool = False) -> None:
+        if debug and (settings.owner_id is None or interaction.user.id != settings.owner_id):
+            await interaction.response.send_message("debug表示は、いまは開けないよ", ephemeral=True)
+            return
+        try:
+            records = await storage.load()
+            memory_state = "ok"
+        except (OSError, ValueError):
+            records = []
+            memory_state = "error"
+        sleeping = await runtime_settings.is_sleeping(interaction.guild_id, interaction.channel_id)
+        auto_reply = await runtime_settings.auto_reply_allowed(
+            interaction.guild_id, interaction.channel_id
         )
-        user_scope = f"user:{interaction.user.id}"
-        guild_scope = f"guild:{guild_id}" if guild_id else None
-        channel_scope = f"channel:{channel_id}" if guild_id and channel_id else None
         lines = [
-            "ゆの v2の現在地",
+            "ゆの v2の状態",
             "",
-            f"環境: `{settings.yuno_env}`",
-            f"memory: `{settings.memory_file}`",
-            f"OpenAI: `{'mock fallback' if ai_client.is_mock else 'configured'}`",
-            f"slash sync: `{sync_mode}`",
-            f"sleep: `{'sleeping' if sleeping else 'awake'}`",
-            f"非メンション反応: `{'on' if auto_reply else 'off'}`",
-            f"user記憶: `{counts[user_scope]}`",
-            f"server記憶: `{counts.get(guild_scope, 0) if guild_scope else '-'}`",
-            f"channel記憶: `{counts.get(channel_scope, 0) if channel_scope else '-'}`",
-            (
-                "rate limit: `user 10秒 / channel 5秒 / "
-                f"global {RateLimiter.GLOBAL_MAX_REQUESTS}回/{int(RateLimiter.GLOBAL_WINDOW_SECONDS)}秒`"
-            ),
+            f"env: {settings.yuno_env}",
+            f"OpenAI: {'mock' if ai_client.is_mock else 'configured'}",
+            f"memory: {memory_state}",
+            f"sleep: {'sleeping' if sleeping else 'awake'}",
+            f"nonmention: {'on' if auto_reply else 'off'}",
+            "rate limit: on",
         ]
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+        if debug:
+            snapshot = await runtime_settings.snapshot()
+            scopes = [f"user:{interaction.user.id}"]
+            if interaction.guild_id:
+                scopes += [f"guild:{interaction.guild_id}", f"channel:{interaction.channel_id}"]
+            counts = {scope: len([record for record in records if record.state == "active" and record.scope == scope]) for scope in scopes}
+            sync_mode = (
+                f"guild:{settings.discord_guild_id}"
+                if settings.yuno_env.casefold() == "dev" and settings.discord_guild_id
+                else "global"
+            )
+            lines += [
+                "",
+                f"memory file: {settings.memory_file}",
+                f"changelog: {settings.memory_changelog_file}",
+                f"sync: {sync_mode}",
+                f"scope counts: {counts}",
+                f"sleep config: {snapshot['sleep']}",
+                "rate: user 10s / channel 5s / global 20 per 60s",
+            ]
+        await interaction.response.send_message("\n".join(lines)[:2000], ephemeral=True)

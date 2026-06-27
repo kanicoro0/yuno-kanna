@@ -21,6 +21,7 @@ def utc_now() -> str:
 
 
 def new_memory_id() -> str:
+    """Random fallback for malformed/imported records; normal creation uses MemoryStorage.create."""
     return "mem_" + uuid.uuid4().hex[:12]
 
 

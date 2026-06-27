@@ -1,11 +1,12 @@
 from dataclasses import replace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from yuno.actions.schema import ActionPlan, ExecutionResult, PendingCommit
 from yuno.memory.records import (
-    ALLOWED_CONTEXTS, ALLOWED_ROUTES, ALLOWED_STATES, MemoryRecord, new_memory_id, utc_now,
+    ALLOWED_CONTEXTS, ALLOWED_ROUTES, ALLOWED_STATES, MemoryRecord, utc_now,
 )
 from yuno.memory.retrieval import RetrievalCandidate
+from yuno.memory.service import MemoryService
 from yuno.memory.storage import MemoryStorage
 
 
@@ -15,8 +16,14 @@ EDITABLE_FIELDS = {"content", "routes", "contexts", "weight", "tags"}
 
 
 class ActionExecutor:
-    def __init__(self, storage: MemoryStorage, speaker_memory_limit: int = 6):
+    def __init__(
+        self,
+        storage: MemoryStorage,
+        memory_service: Optional[MemoryService] = None,
+        speaker_memory_limit: int = 6,
+    ):
         self.storage = storage
+        self.memory_service = memory_service
         self.speaker_memory_limit = speaker_memory_limit
 
     async def prepare(
@@ -71,14 +78,13 @@ class ActionExecutor:
 
         if action.record_action == "add":
             now = utc_now()
-            record = MemoryRecord.from_dict({
+            record = replace(MemoryRecord.from_dict({
                 **action.data,
-                "id": new_memory_id(),
                 "scope": action.scope,
                 "created_at": now,
                 "updated_at": now,
                 "state": "active",
-            })
+            }), id="")
             record.validate()
             active = await self.storage.list_active([record.scope])
             normalized = record.content.casefold().strip()
@@ -106,21 +112,41 @@ class ActionExecutor:
             raise ValueError("record action rejected: duplicate content in scope")
         return PendingCommit("rewrite", action.scope, target_id=target.id, changes=changes)
 
-    async def commit(self, pending: List[PendingCommit]) -> List[str]:
+    async def commit(
+        self,
+        pending: List[PendingCommit],
+        actor_user_id: str = "system",
+        source: str = "planner_commit",
+    ) -> List[str]:
         """Apply validated actions only after Discord send succeeds."""
         reactions: List[str] = []
         for item in pending:
             if item.action == "add" and item.record:
-                await self.storage.upsert(item.record)
+                if self.memory_service:
+                    await self.memory_service.add(item.record, actor_user_id, source)
+                else:
+                    await self.storage.create(item.record)
             elif item.action == "delete":
-                if await self.storage.mark_deleted(item.target_id) is None:
+                deleted = (
+                    await self.memory_service.delete(item.target_id, actor_user_id, source)
+                    if self.memory_service
+                    else await self.storage.mark_deleted(item.target_id)
+                )
+                if deleted is None:
                     continue
             elif item.action == "rewrite":
-                target = await self.storage.get_by_id(item.target_id)
-                if target is None or target.state != "active":
-                    continue
-                updated = MemoryRecord.from_dict({**target.to_dict(), **item.changes})
-                await self.storage.upsert(updated)
+                if self.memory_service:
+                    updated = await self.memory_service.rewrite(
+                        item.target_id, item.changes, actor_user_id, source
+                    )
+                    if updated is None:
+                        continue
+                else:
+                    target = await self.storage.get_by_id(item.target_id)
+                    if target is None or target.state != "active":
+                        continue
+                    updated = MemoryRecord.from_dict({**target.to_dict(), **item.changes})
+                    await self.storage.upsert(updated)
             else:
                 continue
             reactions.append(self._system_reaction(item))

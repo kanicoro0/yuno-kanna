@@ -12,7 +12,7 @@ Message
   → Commit（送信成功後に記憶と履歴を確定する）
 ```
 
-v1 の `yuno-bot/` とはコード・設定・記憶ファイルを共有しません。`MEMORY_FILE` の既定値は、このディレクトリ内の `data/memories.json` です。
+v1 の `yuno-bot/` とはコード・設定・記憶ファイルを共有しません。`MEMORY_FILE` の既定値は、このディレクトリ内の `data/memories.json` です。`memories.json` はGit管理しないローカル実データで、`data/memories.example.json` は空schemaの見本です。
 
 ## セットアップ
 
@@ -44,7 +44,7 @@ MEMORY_FILE=data/memories.json
 python main.py
 ```
 
-Discord Developer Portal で Message Content Intent を有効にしてください。slash command は通常運用として global sync します。`DISCORD_GUILD_ID` は将来、特定guildの古いcommandを明示的に掃除する場合のために予約しており、現在の起動処理では使いません。
+Discord Developer Portal で Message Content Intent を有効にしてください。`YUNO_ENV=dev` かつ `DISCORD_GUILD_ID` が設定されている場合、slash command は開発guildへ同期します。それ以外ではglobal syncします。
 
 ## 現在あるもの
 

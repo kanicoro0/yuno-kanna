@@ -23,10 +23,14 @@ class YunoBot(commands.Bot):
         self.settings = settings
 
     async def setup_hook(self) -> None:
-        # Global sync is intentional: v2 may be installed in multiple servers.
-        # DISCORD_GUILD_ID is reserved for an explicit, temporary cleanup workflow.
-        await self.tree.sync()
-        print("Slash commands synced globally")
+        if self.settings.yuno_env.casefold() == "dev" and self.settings.discord_guild_id:
+            guild = discord.Object(id=self.settings.discord_guild_id)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            print("Slash commands synced to the development guild")
+        else:
+            await self.tree.sync()
+            print("Slash commands synced globally")
 
     def run(self, token: Optional[str] = None, *args: Any, **kwargs: Any) -> None:
         selected_token = token or self.settings.discord_token

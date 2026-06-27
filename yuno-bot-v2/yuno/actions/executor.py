@@ -26,9 +26,13 @@ class ActionExecutor:
         allowed_scopes: List[str],
     ) -> ExecutionResult:
         by_id = {candidate.record.id: candidate for candidate in candidates}
-        hint_rank = {hint.id: index for index, hint in enumerate(plan.memory_hints) if hint.use != "no"}
-        selected = [by_id[memory_id].record for memory_id in hint_rank if memory_id in by_id]
-        if not selected:
+        if plan.memory_hints:
+            selected = [
+                by_id[hint.id].record
+                for hint in plan.memory_hints
+                if hint.use != "no" and hint.id in by_id
+            ]
+        else:
             selected = [candidate.record for candidate in candidates]
         selected = selected[: self.speaker_memory_limit]
 

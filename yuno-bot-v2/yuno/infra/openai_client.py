@@ -14,6 +14,11 @@ class OpenAIJsonClient:
     def __init__(self, api_key: str, model: str):
         self.model = model
         self._client: Optional[AsyncOpenAI] = AsyncOpenAI(api_key=api_key) if api_key else None
+        if self._client is None:
+            logger.warning(
+                "[YUNO-V2] OPENAI_API_KEY is not set. "
+                "Planner/Speaker will use mock fallback."
+            )
 
     @property
     def is_mock(self) -> bool:

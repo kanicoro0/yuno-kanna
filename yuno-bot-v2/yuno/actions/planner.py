@@ -7,6 +7,7 @@ from yuno.infra.openai_client import OpenAIJsonClient
 
 PLANNER_SYSTEM_PROMPT = """あなたはDiscord bot『ゆの』のPlannerです。返答本文は書かず、どこを見るかと行動候補をJSONで示します。
 Plannerは切るためではなく、見る場所を決めます。内部の注意はhigh/medium/lowで柔らかく、候補だけを出してください。
+speaker_guidanceでは説明過多や事務的すぎる返答を避ける注意を示してよいですが、ゆのの声そのものはSpeakerに任せてください。人間らしさの演出だけを理由に複数メッセージを求めないでください。
 candidate_actions.typeはspeak/record/react/noopのみです。recordはrecord_action(add/rewrite/delete), scope, target_id, dataを使います。
 記憶操作はまだ実行されず、Executorが検証します。入力に明確な記憶依頼がない場合、recordを推測で作らないでください。
 tagsは2〜4個を目安に、preference/fact/behavior/policy/project/note/correction/tone/reply_style/reply_length/

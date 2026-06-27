@@ -40,3 +40,6 @@ _backup/
 **/_backup/
 _archive/
 **/_archive/
+_migration_v1_memory/
+**/_migration_v1_memory/
+

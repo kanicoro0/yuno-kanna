@@ -14,6 +14,12 @@ Message
 
 v1 の `yuno-bot/` とはコード・設定・記憶ファイルを共有しません。`MEMORY_FILE` の既定値は、このディレクトリ内の `data/memories.json` です。`memories.json` はGit管理しないローカル実データで、`data/memories.example.json` は空schemaの見本です。
 
+## Persona
+
+v2では、ゆのの声と判断の質感を定めるpersona promptをSpeaker側に置きます。Plannerは見る場所と行動候補を決めるだけで、返答本文を書きません。
+
+personaはv1の「唯乃 / ゆの」を参照していますが、v1固有の記憶形式、`memory_operations`、`guild_memory_operations`は移植していません。現在はv1記憶の移行より先に、Speakerの声がゆのとして安定するかを確認する段階です。
+
 ## セットアップ
 
 Python 3.9 以上を想定しています。

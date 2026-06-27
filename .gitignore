@@ -33,6 +33,7 @@ chat_full_log.json
 **/auto_reply_settings.json
 **/pending_memory.json
 **/chat_full_log.json
+yuno-bot-v2/data/memories.json
 
 # local backups / archives
 _backup/

@@ -7,14 +7,18 @@ from discord.ext import commands
 from yuno.actions.executor import ActionExecutor
 from yuno.actions.planner import Planner
 from yuno.actions.speaker import Speaker
+from yuno.commands.control import create_autorespond_group, register_sleep_commands
+from yuno.commands.general import register_general_commands
 from yuno.commands.memory import create_memory_group
 from yuno.core.config import Settings, load_settings
 from yuno.core.events import ConversationRuntime, register_events
+from yuno.core.preplanning import PrePlanner
 from yuno.infra.discord_utils import PREFIXES
 from yuno.infra.json_store import JsonStore
 from yuno.infra.openai_client import OpenAIJsonClient
 from yuno.memory.retrieval import MemoryRetriever
 from yuno.memory.storage import MemoryStorage
+from yuno.runtime.settings import RuntimeSettings
 
 
 class YunoBot(commands.Bot):
@@ -54,13 +58,18 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     )
 
     storage = MemoryStorage(JsonStore(settings.memory_file))
+    runtime_settings = RuntimeSettings(JsonStore(settings.runtime_settings_file))
     ai_client = OpenAIJsonClient(settings.openai_api_key, settings.openai_model)
     runtime = ConversationRuntime(
         planner=Planner(ai_client),
         executor=ActionExecutor(storage),
         speaker=Speaker(ai_client),
         retriever=MemoryRetriever(storage),
+        preplanner=PrePlanner(runtime_settings),
     )
     bot.tree.add_command(create_memory_group(storage))
+    bot.tree.add_command(create_autorespond_group(runtime_settings))
+    register_sleep_commands(bot.tree, runtime_settings)
+    register_general_commands(bot.tree, settings, storage, runtime_settings, ai_client)
     register_events(bot, runtime)
     return bot

@@ -30,6 +30,7 @@ class Settings:
     openai_model: str
     yuno_env: str
     memory_file: Path
+    runtime_settings_file: Path = PROJECT_ROOT / "data" / "runtime_settings.json"
 
 
 def load_settings() -> Settings:
@@ -37,6 +38,10 @@ def load_settings() -> Settings:
     memory_path = Path(memory_value)
     if not memory_path.is_absolute():
         memory_path = PROJECT_ROOT / memory_path
+    runtime_value = os.getenv("RUNTIME_SETTINGS_FILE", "data/runtime_settings.json").strip()
+    runtime_path = Path(runtime_value)
+    if not runtime_path.is_absolute():
+        runtime_path = PROJECT_ROOT / runtime_path
     return Settings(
         discord_token=os.getenv("DISCORD_TOKEN", "").strip(),
         discord_client_id=_optional_int("DISCORD_CLIENT_ID"),
@@ -45,4 +50,5 @@ def load_settings() -> Settings:
         openai_model=os.getenv("OPENAI_MODEL", "gpt-5").strip() or "gpt-5",
         yuno_env=os.getenv("YUNO_ENV", "dev").strip() or "dev",
         memory_file=memory_path,
+        runtime_settings_file=runtime_path,
     )

@@ -34,6 +34,7 @@ chat_full_log.json
 **/pending_memory.json
 **/chat_full_log.json
 yuno-bot-v2/data/memories.json
+yuno-bot-v2/data/runtime_settings.json
 
 # local backups / archives
 _backup/

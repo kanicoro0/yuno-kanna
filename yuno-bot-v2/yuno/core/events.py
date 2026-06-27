@@ -8,9 +8,11 @@ import discord
 from yuno.actions.executor import ActionExecutor
 from yuno.actions.planner import Planner
 from yuno.actions.speaker import Speaker
+from yuno.core.preplanning import PrePlanner
 from yuno.infra.discord_utils import add_reactions, classify_message, message_scopes
 from yuno.memory.prompt_view import planner_memory_view
 from yuno.memory.retrieval import MemoryRetriever
+from yuno.text import GENERIC_ERROR, RATE_LIMITED
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,7 @@ class ConversationRuntime:
     executor: ActionExecutor
     speaker: Speaker
     retriever: MemoryRetriever
+    preplanner: PrePlanner
     histories: Dict[int, Deque[Dict[str, str]]] = field(
         default_factory=lambda: defaultdict(lambda: deque(maxlen=24))
     )
@@ -35,13 +38,17 @@ def register_events(bot: discord.Client, runtime: ConversationRuntime) -> None:
 
     @bot.event
     async def on_message(message: discord.Message) -> None:
-        if message.author.bot:
-            return
-
         route = classify_message(message, bot.user)
         history = runtime.histories[message.channel.id]
-        if not route.should_plan:
-            history.append({"role": "user", "content": route.clean_content[:2000]})
+        decision = await runtime.preplanner.decide(message, route)
+        if not decision.should_plan:
+            if route.context == "nonmention" and route.clean_content:
+                history.append({"role": "user", "content": route.clean_content[:2000]})
+            if decision.notify_rate_limit:
+                try:
+                    await message.reply(RATE_LIMITED, mention_author=False)
+                except discord.HTTPException:
+                    pass
             return
         if not route.clean_content:
             route_content = "呼びかけられた。"
@@ -87,6 +94,6 @@ def register_events(bot: discord.Client, runtime: ConversationRuntime) -> None:
         except Exception as error:
             logger.exception("Message pipeline failed (%s)", type(error).__name__)
             try:
-                await message.reply("うまく考えをまとめられなかった。少し置いて、もう一度呼んでね。", mention_author=False)
+                await message.reply(GENERIC_ERROR, mention_author=False)
             except discord.HTTPException:
                 pass

@@ -80,6 +80,10 @@ class ActionExecutor:
                 "state": "active",
             })
             record.validate()
+            active = await self.storage.list_active([record.scope])
+            normalized = record.content.casefold().strip()
+            if any(item.content.casefold().strip() == normalized for item in active):
+                raise ValueError("record action rejected: duplicate content in scope")
             return PendingCommit("add", action.scope, record=record)
 
         target = await self.storage.get_by_id(action.target_id)
@@ -96,6 +100,10 @@ class ActionExecutor:
         candidate = MemoryRecord.from_dict({**target.to_dict(), **changes})
         candidate = replace(candidate, id=target.id, scope=target.scope, created_at=target.created_at)
         candidate.validate()
+        active = await self.storage.list_active([target.scope])
+        normalized = candidate.content.casefold().strip()
+        if any(item.id != target.id and item.content.casefold().strip() == normalized for item in active):
+            raise ValueError("record action rejected: duplicate content in scope")
         return PendingCommit("rewrite", action.scope, target_id=target.id, changes=changes)
 
     async def commit(self, pending: List[PendingCommit]) -> List[str]:

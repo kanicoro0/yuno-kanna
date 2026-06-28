@@ -7,15 +7,15 @@ NO_NOTES = "ここには、まだ覚えていることはないみたい"
 
 
 def note_added(note_id: str, scope: str) -> str:
-    return f"覚えたよ\nID: `{note_id}`\nscope: `{scope}`"
+    return f"覚えたよ\nID: `{note_id}`\n対象: `{scope}`"
 
 
 def note_edited(note_id: str, scope: str) -> str:
-    return f"書き換えたよ\nID: `{note_id}`\nscope: `{scope}`"
+    return f"書き換えたよ\nID: `{note_id}`\n対象: `{scope}`"
 
 
 def note_deleted(note_id: str, scope: str) -> str:
-    return f"そのnoteは、そっと外したよ\nID: `{note_id}`\nscope: `{scope}`"
+    return f"そのnoteは、そっと外したよ\nID: `{note_id}`\n対象: `{scope}`"
 
 
 def note_not_found(note_id: str) -> str:

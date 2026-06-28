@@ -7,10 +7,11 @@ from yuno.runtime.settings import RuntimeSettings
 
 
 SLEEP_SCOPES = [
-    app_commands.Choice(name="channel", value="channel"),
-    app_commands.Choice(name="server", value="server"),
-    app_commands.Choice(name="global", value="global"),
+    app_commands.Choice(name="このチャンネル", value="channel"),
+    app_commands.Choice(name="このサーバー", value="server"),
+    app_commands.Choice(name="全体", value="global"),
 ]
+SLEEP_LABELS = {"channel": "このチャンネル", "server": "このサーバー", "global": "全体"}
 
 
 def _can_manage_channel(interaction: discord.Interaction) -> bool:
@@ -41,7 +42,7 @@ async def _set_sleep(
             return "globalは、いまは触れないよ"
         await runtime_settings.set_sleep("global", None, enabled)
     else:
-        return "そのscopeは選べないよ"
+        return "その場所は選べないよ"
     return None
 
 
@@ -50,23 +51,23 @@ def register_sleep_commands(
     runtime_settings: RuntimeSettings,
     owner_id: Optional[int],
 ) -> None:
-    @tree.command(name="sleep", description="scopeを指定して、ゆのを眠らせます")
-    @app_commands.choices(scope=SLEEP_SCOPES)
+    @tree.command(name="sleep", description="場所を指定して、ゆのを眠らせます")
+    @app_commands.choices(target=SLEEP_SCOPES)
     async def sleep(
         interaction: discord.Interaction,
-        scope: str = "channel",
+        target: str = "channel",
     ) -> None:
-        error = await _set_sleep(interaction, runtime_settings, owner_id, scope, True)
-        await interaction.response.send_message(error or f"{scope}で眠るね", ephemeral=True)
+        error = await _set_sleep(interaction, runtime_settings, owner_id, target, True)
+        await interaction.response.send_message(error or f"{SLEEP_LABELS[target]}で眠るね", ephemeral=True)
 
-    @tree.command(name="wake", description="scopeを指定して、ゆのを起こします")
-    @app_commands.choices(scope=SLEEP_SCOPES)
+    @tree.command(name="wake", description="場所を指定して、ゆのを起こします")
+    @app_commands.choices(target=SLEEP_SCOPES)
     async def wake(
         interaction: discord.Interaction,
-        scope: str = "channel",
+        target: str = "channel",
     ) -> None:
-        error = await _set_sleep(interaction, runtime_settings, owner_id, scope, False)
-        await interaction.response.send_message(error or f"{scope}で目が覚めた", ephemeral=True)
+        error = await _set_sleep(interaction, runtime_settings, owner_id, target, False)
+        await interaction.response.send_message(error or f"{SLEEP_LABELS[target]}で目が覚めた", ephemeral=True)
 
 
 def create_autorespond_group(runtime_settings: RuntimeSettings) -> app_commands.Group:

@@ -66,9 +66,9 @@ def _create_scope_group(
     owner_id: Optional[int],
 ) -> app_commands.Group:
     labels = {"user": "自分", "server": "サーバー", "channel": "チャンネル"}
-    group = app_commands.Group(name=kind, description=f"{labels[kind]}scopeのnote")
+    group = app_commands.Group(name=kind, description=f"{labels[kind]}のメモ帳")
 
-    @group.command(name="show", description=f"{labels[kind]}scopeのnoteを表示します")
+    @group.command(name="show", description=f"{labels[kind]}のnoteを表示します")
     @app_commands.describe(page="ページ", limit="1ページの件数", detail="詳細表示")
     async def show(
         interaction: discord.Interaction,
@@ -104,7 +104,7 @@ def _create_scope_group(
         except (discord.HTTPException, AttributeError):
             pass
 
-    @group.command(name="add", description=f"{labels[kind]}scopeへnoteを追加します")
+    @group.command(name="add", description=f"{labels[kind]}のメモ帳へnoteを追加します")
     @app_commands.describe(
         content="覚える内容", tags="カンマ区切りのタグ", routes="カンマ区切りのroute",
         contexts="カンマ区切りのcontext", weight="noteの強さ（1〜5）",
@@ -139,7 +139,7 @@ def _create_scope_group(
             return
         await interaction.response.send_message(f"覚えたよ\n{saved.id}", ephemeral=True)
 
-    @group.command(name="edit", description=f"{labels[kind]}scopeのnote本文を書き換えます")
+    @group.command(name="edit", description=f"{labels[kind]}のnoteを書き換えます")
     @app_commands.rename(note_id="id")
     @app_commands.describe(note_id="note IDまたは数字", content="新しいnote本文")
     async def edit(interaction: discord.Interaction, note_id: str, content: str) -> None:
@@ -165,7 +165,7 @@ def _create_scope_group(
             return
         await interaction.response.send_message(f"書き換えたよ\n{saved.id}", ephemeral=True)
 
-    @group.command(name="delete", description=f"{labels[kind]}scopeのnoteを外します")
+    @group.command(name="delete", description=f"{labels[kind]}のnoteを外します")
     @app_commands.rename(note_id="id")
     @app_commands.describe(note_id="note IDまたは数字")
     async def delete(interaction: discord.Interaction, note_id: str) -> None:
@@ -186,7 +186,7 @@ def _create_scope_group(
             return
         await interaction.response.send_message(f"そっと外したよ\n{deleted.id}", ephemeral=True)
 
-    @group.command(name="undo", description=f"{labels[kind]}scopeで自分が行った直近の変更を戻します")
+    @group.command(name="undo", description=f"{labels[kind]}のメモ帳で直近の変更を戻します")
     async def undo(interaction: discord.Interaction) -> None:
         scope = scope_for(interaction, kind)
         if scope is None:
@@ -208,7 +208,7 @@ def _create_scope_group(
             f"ひとつ戻したよ\n{restored.id}: {target.action}", ephemeral=True
         )
 
-    @group.command(name="history", description=f"{labels[kind]}scopeの変更履歴を表示します")
+    @group.command(name="history", description=f"{labels[kind]}のメモ帳の変更履歴")
     @app_commands.describe(page="ページ", limit="1ページの件数")
     async def history(
         interaction: discord.Interaction,
@@ -240,7 +240,7 @@ def create_notebook_group(
     runtime_settings: RuntimeSettings,
     owner_id: Optional[int],
 ) -> app_commands.Group:
-    root = app_commands.Group(name="notebook", description="scopeごとにnoteを扱います")
+    root = app_commands.Group(name="notebook", description="ゆののメモ帳")
     for kind in ("user", "server", "channel"):
         root.add_command(_create_scope_group(kind, storage, service, runtime_settings, owner_id))
 

@@ -16,7 +16,7 @@
 
 1. `/notebook user add`後、`note_####`のIDが返る
 2. `/notebook user show page:1 limit:5 detail:false`が`id: 内容`形式になる
-3. `detail:true limit:3`でid/content/scope/tags/weightが表示される
+3. `detail:true limit:3`でid/content/対象/tags/weightが表示される
 4. `/notebook get id:45 detail:true`と完全IDの両方で同じrecordを取得できる
 5. user notebookは別ユーザーの`/notebook get`から見えない
 6. server notebook変更は`manage_guild`なしで拒否される

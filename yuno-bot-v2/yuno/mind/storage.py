@@ -36,6 +36,9 @@ class MindStateStorage:
         states = await self._load()
         return [states[scope] for scope in scopes if scope in states]
 
+    async def count(self) -> int:
+        return len(await self._load())
+
     async def update(self, scope: str, update: MindUpdate, source_message_id: str) -> MindState:
         state = MindState.from_update(scope, update, source_message_id)
         async with self._lock:

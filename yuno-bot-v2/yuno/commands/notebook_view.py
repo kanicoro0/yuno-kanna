@@ -31,7 +31,7 @@ def format_record(record: Note, detail: bool, debug: bool = False) -> str:
     lines = [
         f"id: `{record.id}`",
         record.content,
-        f"scope: `{record.scope}`",
+        f"対象: `{record.scope}`",
         f"tags: `{', '.join(record.tags) or '-'}`",
         f"weight: `{record.weight}`",
     ]

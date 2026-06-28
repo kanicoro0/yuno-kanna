@@ -55,9 +55,22 @@ def register_general_commands(
             f"Planner: {'mock' if planner_client.is_mock else 'configured'}",
             f"Speaker: {'mock' if speaker_client.is_mock else 'configured'}",
             f"notebook: {notebook_state}",
+            f"notebook path: {settings.notebook_file}",
+            f"notes total: {len(records)}",
             f"sleep: {'sleeping' if sleeping else 'awake'}",
             f"nonmention: {'on' if auto_reply else 'off'}",
             "rate limit: on",
+        ]
+        user_target = f"user:{interaction.user.id}"
+        server_target = f"guild:{interaction.guild_id}" if interaction.guild_id else None
+        channel_target = f"channel:{interaction.channel_id}" if interaction.guild_id else None
+        active = [note for note in records if note.state == "active"]
+        lines += [
+            f"notes user: {sum(note.scope == user_target for note in active)}",
+            f"notes server: {sum(note.scope == server_target for note in active) if server_target else '-'}",
+            f"notes channel: {sum(note.scope == channel_target for note in active) if channel_target else '-'}",
+            f"mind_state path: {settings.mind_state_file}",
+            f"mind_state count: {await mind_storage.count()}",
         ]
         if debug:
             snapshot = await runtime_settings.snapshot()
@@ -72,13 +85,11 @@ def register_general_commands(
             )
             lines += [
                 "",
-                f"notebook file: {settings.notebook_file}",
                 f"changelog: {settings.notebook_changelog_file}",
-                f"mind state: {settings.mind_state_file}",
                 f"Planner model: {settings.openai_fallback_model}",
                 f"Speaker model: {settings.openai_model}",
                 f"sync: {sync_mode}",
-                f"scope counts: {counts}",
+                f"note counts by target: {counts}",
                 f"sleep config: {snapshot['sleep']}",
                 "rate: user 10s / channel 5s / global 20 per 60s",
             ]
@@ -87,5 +98,5 @@ def register_general_commands(
                        [f"user:{interaction.user.id}", f"guild:{interaction.guild_id}",
                         f"channel:{interaction.channel_id}"])
         mind_count = len(await mind_storage.get_many(mind_scopes))
-        lines.append(f"mind scopes: {mind_count}/{len(mind_scopes)}")
+        lines.append(f"mind current: {mind_count}/{len(mind_scopes)}")
         await interaction.response.send_message("\n".join(lines)[:2000], ephemeral=True)

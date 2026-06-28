@@ -61,18 +61,18 @@ API key未設定時はPlanner/Speakerともmock fallbackになります。secret
 /notebook get id:note_0045 detail:true|false
 /notebook get id:45 detail:true|false
 /notebook search query:...
-/mind show scope:user|server|channel|dm
-/mind clear scope:user|server|channel|dm
+/mind show target:user|server|channel|dm
+/mind clear target:user|server|channel|dm
 /mind status
 /settings notebook_view mode:normal|debug
 /status
 /guide
-/sleep scope:channel|server|global
-/wake scope:channel|server|global
+/sleep target:channel|server|global
+/wake target:channel|server|global
 /autorespond status|server|channel
 ```
 
-Notebook一覧は通常`note_0045: 内容`のcompact表示です。`detail:true`でscope/tags/weightを追加し、`OWNER_ID`本人がdebug modeを選んだ場合だけroute/context/timestamp等を追加します。button/select UIにもscopeと操作者の再検証があります。
+Notebook一覧は通常`note_0045: 内容`のcompact表示です。`detail:true`で対象/tags/weightを追加し、`OWNER_ID`本人がdebug modeを選んだ場合だけroute/context/timestamp等を追加します。button/select UIにも場所と操作者の再検証があります。
 
 新規Note IDは既存数値IDの最大値+1を`note_####`（最低4桁）として採番します。欠番や既存IDは変更しません。数字だけの入力は`note_####`へ解決します。
 

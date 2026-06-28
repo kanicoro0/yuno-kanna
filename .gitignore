@@ -46,3 +46,6 @@ _archive/
 _migration_v1_memory/
 **/_migration_v1_memory/
 
+yuno-bot-v2_old/
+yuno-bot-v2.0/_reference/old_v2_impl/
+

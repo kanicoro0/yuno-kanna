@@ -1,1 +1,0 @@
-"""Discord lifecycle and configuration."""

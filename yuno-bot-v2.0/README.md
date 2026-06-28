@@ -4,6 +4,8 @@ Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計
 
 現在は第2段階として、会話の縦切りを保ったままDiscord・routing・pipeline・context・Speakerの境界を分離しています。
 
+実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md) を読んでください。ゆのv2.0では、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」を優先します。
+
 ```text
 Discord入力変換 → routing → user保存 → ContextBuilder → Speaker
 → PipelineResult → Discord送信 → 送信成功後だけassistant保存

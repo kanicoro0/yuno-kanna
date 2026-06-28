@@ -62,6 +62,17 @@ class ConversationRepositoryTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.assertEqual(await self.repository.count_messages(stream.id), 10)
 
+    async def test_assistant_message_lookup_distinguishes_roles_and_missing_ids(self) -> None:
+        stream = await self.repository.get_or_create_stream("channel", "10", "1")
+        await self.repository.append(stream.id, "user-1", "user", "7", "A", "user")
+        await self.repository.append(
+            stream.id, "assistant-1", "assistant", "99", "ゆの", "assistant"
+        )
+        self.assertFalse(await self.repository.is_assistant_message("user-1"))
+        self.assertTrue(await self.repository.is_assistant_message("assistant-1"))
+        self.assertFalse(await self.repository.is_assistant_message("missing"))
+        self.assertFalse(await self.repository.is_assistant_message(None))
+
 
 class ContextTests(unittest.TestCase):
     def test_context_keeps_newest_messages_under_character_limit(self) -> None:

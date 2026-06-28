@@ -1,10 +1,28 @@
-from typing import Dict, List
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
 
 from yuno.conversation.models import ConversationMessage
+from yuno.conversation.repository import ConversationRepository
 
 
 RECENT_MESSAGE_LIMIT = 12
 RECENT_CHARACTER_LIMIT = 10_000
+
+
+@dataclass(frozen=True)
+class SpeakerContext:
+    history: Tuple[Dict[str, str], ...]
+
+
+class ContextBuilder:
+    """The sole assembly point for context shown to the Speaker."""
+
+    def __init__(self, repository: ConversationRepository):
+        self.repository = repository
+
+    async def build(self, stream_id: int) -> SpeakerContext:
+        recent = await self.repository.recent(stream_id, RECENT_MESSAGE_LIMIT)
+        return SpeakerContext(tuple(build_speaker_history(recent)))
 
 
 def build_speaker_history(

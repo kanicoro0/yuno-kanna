@@ -2,19 +2,21 @@
 
 Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計版です。
 
-現在の実装は最初の縦切りに限定しています。
+現在は第2段階として、会話の縦切りを保ったままDiscord・routing・pipeline・context・Speakerの境界を分離しています。
 
 ```text
-Discord受信 → SQLiteへ保存 → 直近の同じ場を読む → Speaker → Discord送信 → 返信を保存
+Discord入力変換 → routing → user保存 → ContextBuilder → Speaker
+→ PipelineResult → Discord送信 → 送信成功後だけassistant保存
 ```
 
-Notebook、Annotation、MindState、Planner、旧v2 Notebook importは次の段階です。先に記憶機能を増やさず、再起動をまたいでも同じ会話の続きを自然に返せることを優先しています。
+Notebook、Annotation、MindState、Planner、旧v2 Notebook importはまだ実装していません。将来の追加文脈はContextBuilderへだけ接続し、routingの内部判定をSpeakerへ渡さない構造です。
 
 ## 会話ログの範囲
 
 - DMは保存して返信します。
-- 直接mentionされた発言は保存して返信します。
-- `LISTENING_CHANNEL_IDS` のチャンネルでは人間の発言を保存しますが、直接mentionされた時だけ返信します。
+- 直接mentionと、DBに保存済みのゆのの発言へのDiscord replyは保存してreplyします。
+- `LISTENING_CHANNEL_IDS` のチャンネルでは人間の通常発言を保存しますが、割り込みません。
+- listening対象で `YUNO_CALL_NAMES` の呼び名を含む発言にはplain送信で返します。
 - それ以外のguild発言は保存しません。
 - `/status` で現在の保存範囲を確認できます。
 

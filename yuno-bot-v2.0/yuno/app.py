@@ -5,11 +5,13 @@ import discord
 from discord.ext import commands
 
 from yuno.config import Settings, load_settings
+from yuno.conversation.context import ContextBuilder
 from yuno.conversation.repository import ConversationRepository
-from yuno.conversation.service import ConversationService
+from yuno.discord.routing import MessageRouter
 from yuno.discord.events import ConversationRuntime, register_events
 from yuno.infra.database import Database
 from yuno.infra.openai_client import OpenAITextClient
+from yuno.pipeline import ConversationPipeline
 from yuno.speaking.speaker import Speaker
 
 
@@ -45,8 +47,13 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     intents.message_content = True
     database = Database(settings.database_file)
     repository = ConversationRepository(database)
-    conversations = ConversationService(repository)
     speaker = Speaker(OpenAITextClient(settings.openai_api_key, settings.openai_model))
+    pipeline = ConversationPipeline(
+        MessageRouter(settings, repository),
+        repository,
+        ContextBuilder(repository),
+        speaker,
+    )
     bot = YunoBot(
         settings,
         database,
@@ -55,21 +62,22 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
         help_command=None,
         application_id=settings.discord_client_id,
     )
-    register_events(
-        bot,
-        ConversationRuntime(settings, repository, conversations, speaker),
-    )
+    register_events(bot, ConversationRuntime(pipeline))
 
     @bot.tree.command(name="status", description="ゆのが保存する会話の範囲を確認します")
     async def status(interaction: discord.Interaction) -> None:
         listening = sorted(settings.listening_channel_ids)
         channels = "、".join(f"<#{channel_id}>" for channel_id in listening) or "なし"
+        call_names = "、".join(settings.yuno_call_names)
         await interaction.response.send_message(
             "会話ログの保存範囲\n"
             "- DM: 保存して返信\n"
-            "- 直接mention: 保存して返信\n"
-            f"- listening対象: {channels}（人の発言を保存、mention時だけ返信）\n"
-            "- それ以外のチャンネル発言: 保存しない",
+            "- mention: 保存してreply\n"
+            "- ゆのへのreply: 保存してreply\n"
+            f"- listening対象: {channels}（通常発言は保存するが割り込まない）\n"
+            "- listening対象でゆのへ向けられた発言: 保存して返信\n"
+            "- listening対象外の通常発言: 保存しない\n"
+            f"- 現在の呼び名: {call_names}",
             ephemeral=True,
         )
 

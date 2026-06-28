@@ -1,5 +1,4 @@
-from typing import Dict, List
-
+from yuno.conversation.context import SpeakerContext
 from yuno.infra.openai_client import OpenAITextClient
 from yuno.speaking.persona import YUNO_PERSONA
 
@@ -15,6 +14,6 @@ class Speaker:
     def __init__(self, client: OpenAITextClient):
         self.client = client
 
-    async def speak(self, history: List[Dict[str, str]]) -> str:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history]
+    async def speak(self, context: SpeakerContext) -> str:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, *context.history]
         return (await self.client.complete(messages)).strip()[:2000]

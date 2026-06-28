@@ -26,7 +26,7 @@ class OpenAITextClient:
 
     async def complete(self, messages: List[Dict[str, str]]) -> str:
         if self._client is None:
-            return "うん、聞いてるよ\n\nゆの、ここにいる"
+            return "うん、聞いてる"
         try:
             response = await self._client.chat.completions.create(
                 model=self.model,
@@ -38,4 +38,4 @@ class OpenAITextClient:
             return reply
         except Exception as error:
             logger.warning("Speaker call failed (%s)", type(error).__name__)
-            return "ちょっと言葉がほどけちゃった\n\nもう一度、聞かせて"
+            return "少し詰まった。もう一回言って"

@@ -16,6 +16,7 @@ class AppTests(unittest.TestCase):
                 openai_model="",
                 database_file=Path(directory) / "test.sqlite3",
                 listening_channel_ids=frozenset({123}),
+                yuno_call_names=("ゆの", "唯乃", "yuno"),
                 log_level="INFO",
             )
             bot = create_bot(settings)

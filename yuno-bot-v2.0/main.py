@@ -1,4 +1,4 @@
-from yuno.core.bot import create_bot
+from yuno.app import create_bot
 
 
 bot = create_bot()

@@ -1,5 +1,8 @@
-data/notebook.json
-data/notebook_changelog.json
-data/mind_state.json
-data/notebook_embeddings.json
-data/debug/
+data/
+!data/.gitkeep
+.env
+.venv/
+**/.venv/
+__pycache__/
+*.pyc
+*.bak

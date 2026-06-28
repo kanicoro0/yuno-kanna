@@ -111,18 +111,18 @@ def create_settings_group(
 ) -> app_commands.Group:
     group = app_commands.Group(name="settings", description="ゆの v2の表示設定")
 
-    @group.command(name="memory_view", description="記憶の表示モードを変更します")
+    @group.command(name="notebook_view", description="noteの表示モードを変更します")
     @app_commands.choices(mode=[
         app_commands.Choice(name="normal", value="normal"),
         app_commands.Choice(name="debug", value="debug"),
     ])
-    async def memory_view(
+    async def notebook_view(
         interaction: discord.Interaction, mode: app_commands.Choice[str]
     ) -> None:
         if mode.value == "debug" and (owner_id is None or interaction.user.id != owner_id):
             await interaction.response.send_message("debug表示は、いまは開けないよ", ephemeral=True)
             return
-        await runtime_settings.set_memory_view(interaction.user.id, mode.value)
-        await interaction.response.send_message(f"memory view: {mode.value}", ephemeral=True)
+        await runtime_settings.set_notebook_view(interaction.user.id, mode.value)
+        await interaction.response.send_message(f"notebook view: {mode.value}", ephemeral=True)
 
     return group

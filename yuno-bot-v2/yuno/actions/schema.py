@@ -1,12 +1,13 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from yuno.memory.records import MemoryRecord
+from yuno.notebook.records import Note
+from yuno.mind.records import MindUpdate
 
 
 LEVELS = {"high", "medium", "low"}
-ACTION_TYPES = {"speak", "record", "react", "noop"}
-RECORD_ACTIONS = {"add", "rewrite", "delete"}
+ACTION_TYPES = {"speak", "note", "react", "noop"}
+NOTE_ACTIONS = {"add", "rewrite", "delete"}
 NEXT_CALL_TYPES = {"none", "followup", "repair", "second_thought"}
 
 
@@ -23,9 +24,9 @@ class CandidateAction:
     confidence: str = "low"
     brief: str = ""
     emoji: str = ""
-    record_action: str = ""
+    note_action: str = ""
     scope: str = ""
-    target_id: str = ""
+    target_note_id: str = ""
     data: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -36,16 +37,16 @@ class CandidateAction:
             confidence=str(data.get("confidence", "low")),
             brief=str(data.get("brief", ""))[:1000],
             emoji=str(data.get("emoji", ""))[:16],
-            record_action=str(data.get("record_action", data.get("action", ""))),
+            note_action=str(data.get("note_action", data.get("action", ""))),
             scope=str(data.get("scope", "")),
-            target_id=str(data.get("target_id", "")),
+            target_note_id=str(data.get("target_note_id", "")),
             data=data.get("data", {}) if isinstance(data.get("data"), dict) else {},
         )
 
 
 @dataclass
-class MemoryHint:
-    id: str
+class NoteHint:
+    note_id: str
     relevance: str = "low"
     use: str = "possible"
     reason: str = ""
@@ -62,14 +63,18 @@ class SpeakerGuidance:
 class ActionPlan:
     reading: Reading
     attention: Dict[str, Dict[str, str]]
-    memory_hints: List[MemoryHint]
+    note_hints: List[NoteHint]
     candidate_actions: List[CandidateAction]
     speaker_guidance: SpeakerGuidance
+    needs_log_lookup: bool = False
+    log_lookup_query: Optional[str] = None
+    log_window: str = "minimal"
+    speaker_note: str = ""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ActionPlan":
         raw_reading = data.get("reading", {}) if isinstance(data.get("reading"), dict) else {}
-        raw_hints = data.get("memory_hints", [])
+        raw_hints = data.get("note_hints", [])
         raw_actions = data.get("candidate_actions", [])
         raw_guidance = data.get("speaker_guidance", {}) if isinstance(data.get("speaker_guidance"), dict) else {}
         attention = data.get("attention", {}) if isinstance(data.get("attention"), dict) else {}
@@ -80,8 +85,8 @@ class ActionPlan:
                 do_not_flatten=[str(item)[:300] for item in raw_reading.get("do_not_flatten", []) if isinstance(item, str)][:10],
             ),
             attention=attention,
-            memory_hints=[MemoryHint(
-                id=str(item.get("id", "")), relevance=str(item.get("relevance", "low")),
+            note_hints=[NoteHint(
+                note_id=str(item.get("note_id", "")), relevance=str(item.get("relevance", "low")),
                 use=str(item.get("use", "possible")), reason=str(item.get("reason", ""))[:500],
             ) for item in raw_hints if isinstance(item, dict)][:20],
             candidate_actions=[CandidateAction.from_dict(item) for item in raw_actions if isinstance(item, dict)][:10],
@@ -90,15 +95,20 @@ class ActionPlan:
                 style=str(raw_guidance.get("style", "natural")),
                 avoid=[str(item)[:300] for item in raw_guidance.get("avoid", []) if isinstance(item, str)][:10],
             ),
+            needs_log_lookup=bool(data.get("needs_log_lookup", False)),
+            log_lookup_query=(str(data["log_lookup_query"])[:300]
+                              if data.get("log_lookup_query") else None),
+            log_window="targeted" if data.get("log_window") == "targeted" else "minimal",
+            speaker_note=str(data.get("speaker_note", ""))[:200],
         )
 
 
 @dataclass
-class PendingCommit:
+class PendingNoteCommit:
     action: str
     scope: str
-    record: Optional[MemoryRecord] = None
-    target_id: str = ""
+    note: Optional[Note] = None
+    target_note_id: str = ""
     changes: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -106,8 +116,8 @@ class PendingCommit:
 class ExecutionResult:
     should_speak: bool
     speaker_brief: str
-    selected_memories: List[MemoryRecord]
-    pending_commits: List[PendingCommit]
+    selected_notes: List[Note]
+    pending_commits: List[PendingNoteCommit]
     reactions: List[str]
     rejected_actions: List[str] = field(default_factory=list)
 
@@ -123,6 +133,7 @@ class NextCall:
 @dataclass
 class SpeakerOutput:
     reply: str
+    mind_update: MindUpdate = field(default_factory=MindUpdate)
     next_call: NextCall = field(default_factory=NextCall)
 
     @classmethod
@@ -133,6 +144,7 @@ class SpeakerOutput:
             call_type = "none"
         return cls(
             reply=str(data.get("reply", "")).strip(),
+            mind_update=MindUpdate.from_dict(data.get("mind_update")),
             next_call=NextCall(
                 needed=bool(raw_next.get("needed", False)) and call_type != "none",
                 type=call_type,

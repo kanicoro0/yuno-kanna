@@ -3,9 +3,9 @@ from typing import List, Optional, Tuple
 
 import discord
 
-from yuno.memory.records import MemoryRecord
-from yuno.memory.storage import MemoryStorage
-from yuno.text import NO_MEMORIES
+from yuno.notebook.records import Note
+from yuno.notebook.storage import NotebookStorage
+from yuno.text import NO_NOTES
 
 
 def scope_for(interaction: discord.Interaction, kind: str) -> Optional[str]:
@@ -25,7 +25,7 @@ def accessible_scopes(interaction: discord.Interaction) -> List[str]:
     return scopes
 
 
-def format_record(record: MemoryRecord, detail: bool, debug: bool = False) -> str:
+def format_record(record: Note, detail: bool, debug: bool = False) -> str:
     if not detail:
         return f"{record.id}: {record.content}"
     lines = [
@@ -47,7 +47,7 @@ def format_record(record: MemoryRecord, detail: bool, debug: bool = False) -> st
     return "\n".join(lines)
 
 
-def paginate(records: List[MemoryRecord], page: int, limit: int) -> Tuple[List[MemoryRecord], int, int]:
+def paginate(records: List[Note], page: int, limit: int) -> Tuple[List[Note], int, int]:
     total_pages = max(1, math.ceil(len(records) / limit))
     safe_page = min(max(1, page), total_pages)
     start = (safe_page - 1) * limit
@@ -56,44 +56,44 @@ def paginate(records: List[MemoryRecord], page: int, limit: int) -> Tuple[List[M
 
 def format_page(
     title: str,
-    records: List[MemoryRecord],
+    records: List[Note],
     page: int,
     limit: int,
     detail: bool,
     debug: bool,
-) -> Tuple[str, List[MemoryRecord], int, int]:
+) -> Tuple[str, List[Note], int, int]:
     shown, safe_page, total_pages = paginate(records, page, limit)
     if not shown:
-        return f"{title}\n\n{NO_MEMORIES}", shown, safe_page, total_pages
+        return f"{title}\n\n{NO_NOTES}", shown, safe_page, total_pages
     separator = "\n\n" if detail else "\n"
     body = separator.join(format_record(record, detail, debug) for record in shown)
     return f"{title}\n\n{body}\n\n{safe_page}/{total_pages}", shown, safe_page, total_pages
 
 
-class MemorySelect(discord.ui.Select):
-    def __init__(self, pager: "MemoryPagerView", records: List[MemoryRecord]):
+class NoteSelect(discord.ui.Select):
+    def __init__(self, pager: "NotebookPagerView", records: List[Note]):
         options = [discord.SelectOption(
             label=(f"{record.id} {record.content}".replace("\n", " "))[:100],
             value=record.id,
         ) for record in records]
-        super().__init__(placeholder="詳しく見る記憶", options=options, min_values=1, max_values=1)
+        super().__init__(placeholder="詳しく見るnote", options=options, min_values=1, max_values=1)
         self.pager = pager
 
     async def callback(self, interaction: discord.Interaction) -> None:
         await self.pager.show_selected(interaction, self.values[0])
 
 
-class MemoryPagerView(discord.ui.View):
+class NotebookPagerView(discord.ui.View):
     def __init__(
         self,
         *,
-        storage: MemoryStorage,
+        storage: NotebookStorage,
         requester_id: int,
         owner_id: Optional[int],
         kind: str,
         scope: str,
         title: str,
-        records: List[MemoryRecord],
+        records: List[Note],
         page: int,
         limit: int,
         detail: bool,
@@ -140,16 +140,16 @@ class MemoryPagerView(discord.ui.View):
         self.add_item(detail_button)
         self.add_item(close)
         if shown:
-            self.add_item(MemorySelect(self, shown))
+            self.add_item(NoteSelect(self, shown))
 
     async def _allowed(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.requester_id:
             await interaction.response.send_message(
-                "これは、きみに向けて開いた記憶じゃないみたい", ephemeral=True
+                "これは、きみに向けて開いたnoteじゃないみたい", ephemeral=True
             )
             return False
         if scope_for(interaction, self.kind) != self.scope:
-            await interaction.response.send_message("この場所からは、その記憶を見られないよ", ephemeral=True)
+            await interaction.response.send_message("この場所からは、そのnoteを見られないよ", ephemeral=True)
             return False
         return True
 
@@ -177,12 +177,12 @@ class MemoryPagerView(discord.ui.View):
             self.page = 1
             await self._refresh(interaction)
 
-    async def show_selected(self, interaction: discord.Interaction, memory_id: str) -> None:
+    async def show_selected(self, interaction: discord.Interaction, note_id: str) -> None:
         if not await self._allowed(interaction):
             return
-        record = await self.storage.get_by_id(memory_id)
+        record = await self.storage.get_by_id(note_id)
         if record is None or record.state != "active" or record.scope != self.scope:
-            await interaction.response.send_message("その記憶は、もうここにないみたい", ephemeral=True)
+            await interaction.response.send_message("そのnoteは、もうここにないみたい", ephemeral=True)
             return
         await interaction.response.send_message(
             format_record(record, detail=True, debug=self.debug)[:2000], ephemeral=True

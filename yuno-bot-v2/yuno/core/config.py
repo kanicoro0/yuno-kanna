@@ -28,35 +28,45 @@ class Settings:
     discord_guild_id: Optional[int]
     openai_api_key: str
     openai_model: str
+    openai_fallback_model: str
     yuno_env: str
-    memory_file: Path
+    notebook_file: Path
     runtime_settings_file: Path = PROJECT_ROOT / "data" / "runtime_settings.json"
-    memory_changelog_file: Path = PROJECT_ROOT / "data" / "memory_changelog.json"
+    notebook_changelog_file: Path = PROJECT_ROOT / "data" / "notebook_changelog.json"
     owner_id: Optional[int] = None
+    mind_state_file: Path = PROJECT_ROOT / "data" / "mind_state.json"
 
 
 def load_settings() -> Settings:
-    memory_value = os.getenv("MEMORY_FILE", "data/memories.json").strip()
-    memory_path = Path(memory_value)
-    if not memory_path.is_absolute():
-        memory_path = PROJECT_ROOT / memory_path
+    notebook_value = os.getenv("NOTEBOOK_FILE", "data/notebook.json").strip()
+    notebook_path = Path(notebook_value)
+    if not notebook_path.is_absolute():
+        notebook_path = PROJECT_ROOT / notebook_path
     runtime_value = os.getenv("RUNTIME_SETTINGS_FILE", "data/runtime_settings.json").strip()
     runtime_path = Path(runtime_value)
     if not runtime_path.is_absolute():
         runtime_path = PROJECT_ROOT / runtime_path
-    changelog_value = os.getenv("MEMORY_CHANGELOG_FILE", "data/memory_changelog.json").strip()
+    changelog_value = os.getenv("NOTEBOOK_CHANGELOG_FILE", "data/notebook_changelog.json").strip()
     changelog_path = Path(changelog_value)
     if not changelog_path.is_absolute():
         changelog_path = PROJECT_ROOT / changelog_path
+    mind_value = os.getenv("MIND_STATE_FILE", "data/mind_state.json").strip()
+    mind_path = Path(mind_value)
+    if not mind_path.is_absolute():
+        mind_path = PROJECT_ROOT / mind_path
+    speaker_model = os.getenv("OPENAI_MODEL", "gpt-5").strip() or "gpt-5"
+    planner_model = os.getenv("OPENAI_FALLBACK_MODEL", "").strip() or speaker_model
     return Settings(
         discord_token=os.getenv("DISCORD_TOKEN", "").strip(),
         discord_client_id=_optional_int("DISCORD_CLIENT_ID"),
         discord_guild_id=_optional_int("DISCORD_GUILD_ID"),
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-5").strip() or "gpt-5",
+        openai_model=speaker_model,
+        openai_fallback_model=planner_model,
         yuno_env=os.getenv("YUNO_ENV", "dev").strip() or "dev",
-        memory_file=memory_path,
+        notebook_file=notebook_path,
         runtime_settings_file=runtime_path,
-        memory_changelog_file=changelog_path,
+        notebook_changelog_file=changelog_path,
         owner_id=_optional_int("OWNER_ID"),
+        mind_state_file=mind_path,
     )

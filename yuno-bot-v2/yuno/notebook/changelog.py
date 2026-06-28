@@ -4,17 +4,17 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 from yuno.infra.json_store import JsonStore
-from yuno.memory.records import utc_now
+from yuno.notebook.records import utc_now
 
 
 @dataclass
-class MemoryChange:
+class NoteChange:
     change_id: str
     timestamp: str
     actor_user_id: str
     source: str
     action: str
-    memory_id: str
+    note_id: str
     scope: str
     before: Optional[Dict[str, Any]]
     after: Optional[Dict[str, Any]]
@@ -27,19 +27,19 @@ class MemoryChange:
         actor_user_id: str,
         source: str,
         action: str,
-        memory_id: str,
+        note_id: str,
         scope: str,
         before: Optional[Dict[str, Any]],
         after: Optional[Dict[str, Any]],
         undo_of: Optional[str] = None,
-    ) -> "MemoryChange":
+    ) -> "NoteChange":
         return cls(
             change_id="chg_" + uuid.uuid4().hex[:12],
             timestamp=utc_now(),
             actor_user_id=str(actor_user_id),
             source=source,
             action=action,
-            memory_id=memory_id,
+            note_id=note_id,
             scope=scope,
             before=before,
             after=after,
@@ -47,14 +47,14 @@ class MemoryChange:
         )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MemoryChange":
+    def from_dict(cls, data: Dict[str, Any]) -> "NoteChange":
         return cls(
             change_id=str(data.get("change_id", "")),
             timestamp=str(data.get("timestamp", "")),
             actor_user_id=str(data.get("actor_user_id", "")),
             source=str(data.get("source", "system")),
             action=str(data.get("action", "rewrite")),
-            memory_id=str(data.get("memory_id", "")),
+            note_id=str(data.get("note_id", "")),
             scope=str(data.get("scope", "")),
             before=data.get("before") if isinstance(data.get("before"), dict) else None,
             after=data.get("after") if isinstance(data.get("after"), dict) else None,
@@ -65,33 +65,33 @@ class MemoryChange:
         return asdict(self)
 
 
-class MemoryChangeLog:
+class NotebookChangeLog:
     SCHEMA_VERSION = 1
 
     def __init__(self, store: JsonStore):
         self.store = store
         self._lock = asyncio.Lock()
 
-    async def _load(self) -> List[MemoryChange]:
+    async def _load(self) -> List[NoteChange]:
         payload = await self.store.load({"schema_version": 1, "changes": []})
         if not isinstance(payload, dict) or payload.get("schema_version") != self.SCHEMA_VERSION:
-            raise ValueError("unsupported memory changelog schema; expected schema_version 1")
+            raise ValueError("unsupported notebook changelog schema; expected schema_version 1")
         values = payload.get("changes", [])
         if not isinstance(values, list):
-            raise ValueError("memory changelog changes must be a list")
-        return [MemoryChange.from_dict(item) for item in values if isinstance(item, dict)]
+            raise ValueError("notebook changelog changes must be a list")
+        return [NoteChange.from_dict(item) for item in values if isinstance(item, dict)]
 
-    async def append(self, change: MemoryChange) -> MemoryChange:
+    async def append(self, change: NoteChange) -> NoteChange:
         async with self._lock:
             changes = await self._load()
             changes.append(change)
             await self.store.save({"schema_version": 1, "changes": [item.to_dict() for item in changes]})
         return change
 
-    async def list_scope(self, scope: str) -> List[MemoryChange]:
+    async def list_scope(self, scope: str) -> List[NoteChange]:
         return [change for change in await self._load() if change.scope == scope]
 
-    async def latest_undoable(self, scope: str, actor_user_id: str) -> Optional[MemoryChange]:
+    async def latest_undoable(self, scope: str, actor_user_id: str) -> Optional[NoteChange]:
         changes = await self._load()
         undone = {change.undo_of for change in changes if change.undo_of}
         for change in reversed(changes):

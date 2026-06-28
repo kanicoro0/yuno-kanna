@@ -10,7 +10,7 @@ ALLOWED_STATES = {"active", "deleted"}
 PREFERRED_TAGS = {
     "preference", "fact", "behavior", "policy", "project", "note", "correction",
     "tone", "reply_style", "reply_length", "confirmation", "nonmention",
-    "server_behavior", "channel_behavior", "dm_behavior", "memory_design",
+    "server_behavior", "channel_behavior", "dm_behavior", "notebook_design",
     "action_plan", "retrieval", "planner", "speaker", "executor", "commit",
     "discord_bot", "yuno_v2", "writing", "art", "philosophy", "app_design", "code",
 }
@@ -20,9 +20,9 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def new_memory_id() -> str:
-    """Random fallback for malformed/imported records; normal creation uses MemoryStorage.create."""
-    return "mem_" + uuid.uuid4().hex[:12]
+def new_note_id() -> str:
+    """Random fallback for malformed/imported records; normal creation uses NotebookStorage.create."""
+    return "note_" + uuid.uuid4().hex[:12]
 
 
 def _strings(value: Any, allowed: Optional[set] = None, limit: int = 20) -> List[str]:
@@ -39,7 +39,7 @@ def _strings(value: Any, allowed: Optional[set] = None, limit: int = 20) -> List
 
 
 @dataclass
-class MemoryRecord:
+class Note:
     id: str
     scope: str
     content: str
@@ -54,7 +54,7 @@ class MemoryRecord:
     use_count: int = 0
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MemoryRecord":
+    def from_dict(cls, data: Dict[str, Any]) -> "Note":
         weight = data.get("weight", 3)
         try:
             weight = max(1, min(5, int(weight)))
@@ -64,7 +64,7 @@ class MemoryRecord:
         if state not in ALLOWED_STATES:
             state = "active"
         return cls(
-            id=str(data.get("id") or new_memory_id()),
+            id=str(data.get("id") or new_note_id()),
             scope=str(data.get("scope", "")),
             content=str(data.get("content", "")).strip(),
             routes=_strings(data.get("routes"), ALLOWED_ROUTES) or ["explicit"],
@@ -83,16 +83,16 @@ class MemoryRecord:
 
     def validate(self) -> None:
         if not self.scope.startswith(("user:", "guild:", "channel:")):
-            raise ValueError("invalid memory scope")
+            raise ValueError("invalid notebook scope")
         if not self.content or len(self.content) > 1000:
-            raise ValueError("memory content must contain 1-1000 characters")
+            raise ValueError("notebook content must contain 1-1000 characters")
         if not self.routes or any(route not in ALLOWED_ROUTES for route in self.routes):
-            raise ValueError("invalid memory routes")
+            raise ValueError("invalid notebook routes")
         if any(context not in ALLOWED_CONTEXTS for context in self.contexts):
-            raise ValueError("invalid memory contexts")
+            raise ValueError("invalid notebook contexts")
         if not 1 <= self.weight <= 5:
-            raise ValueError("memory weight must be between 1 and 5")
+            raise ValueError("notebook weight must be between 1 and 5")
         if len(self.tags) > 5:
-            raise ValueError("memory tags must contain at most five values")
+            raise ValueError("notebook tags must contain at most five values")
         if self.state not in ALLOWED_STATES:
-            raise ValueError("invalid memory state")
+            raise ValueError("invalid notebook state")

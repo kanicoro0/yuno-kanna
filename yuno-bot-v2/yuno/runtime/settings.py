@@ -9,7 +9,7 @@ DEFAULT_RUNTIME_SETTINGS: Dict[str, Any] = {
     "schema_version": 1,
     "sleep": {"global": False, "guilds": [], "channels": []},
     "auto_reply": {"guilds": {}, "channels": {}},
-    "memory_view": {"users": {}},
+    "notebook_view": {"users": {}},
 }
 
 
@@ -27,12 +27,12 @@ class RuntimeSettings:
             raise ValueError("unsupported runtime settings schema; expected schema_version 1")
         sleep = payload.get("sleep") if isinstance(payload.get("sleep"), dict) else {}
         auto_reply = payload.get("auto_reply") if isinstance(payload.get("auto_reply"), dict) else {}
-        memory_view = payload.get("memory_view") if isinstance(payload.get("memory_view"), dict) else {}
+        notebook_view = payload.get("notebook_view") if isinstance(payload.get("notebook_view"), dict) else {}
         sleeping_guilds = sleep.get("guilds") if isinstance(sleep.get("guilds"), list) else []
         sleeping_channels = sleep.get("channels") if isinstance(sleep.get("channels"), list) else []
         auto_guilds = auto_reply.get("guilds") if isinstance(auto_reply.get("guilds"), dict) else {}
         auto_channels = auto_reply.get("channels") if isinstance(auto_reply.get("channels"), dict) else {}
-        view_users = memory_view.get("users") if isinstance(memory_view.get("users"), dict) else {}
+        view_users = notebook_view.get("users") if isinstance(notebook_view.get("users"), dict) else {}
         return {
             "schema_version": 1,
             "sleep": {
@@ -44,7 +44,7 @@ class RuntimeSettings:
                 "guilds": {str(key): bool(value) for key, value in auto_guilds.items()},
                 "channels": {str(key): bool(value) for key, value in auto_channels.items()},
             },
-            "memory_view": {
+            "notebook_view": {
                 "users": {
                     str(key): value
                     for key, value in view_users.items()
@@ -112,14 +112,14 @@ class RuntimeSettings:
             data["auto_reply"][scope][str(target_id)] = enabled
             await self._save_locked()
 
-    async def memory_view(self, user_id: int) -> str:
+    async def notebook_view(self, user_id: int) -> str:
         data = await self.snapshot()
-        return data["memory_view"]["users"].get(str(user_id), "normal")
+        return data["notebook_view"]["users"].get(str(user_id), "normal")
 
-    async def set_memory_view(self, user_id: int, mode: str) -> None:
+    async def set_notebook_view(self, user_id: int, mode: str) -> None:
         if mode not in {"normal", "debug"}:
-            raise ValueError("invalid memory view mode")
+            raise ValueError("invalid notebook view mode")
         async with self._lock:
             data = await self._data_locked()
-            data["memory_view"]["users"][str(user_id)] = mode
+            data["notebook_view"]["users"][str(user_id)] = mode
             await self._save_locked()

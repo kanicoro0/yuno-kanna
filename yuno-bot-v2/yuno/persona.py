@@ -1,6 +1,6 @@
 """The voice premise for Yuno's Speaker.
 
-This module intentionally contains no action, memory, scope, or JSON instructions.
+This module intentionally contains no action, notebook, scope, or JSON instructions.
 Those responsibilities belong to Planner, Executor, and Speaker's output contract.
 """
 

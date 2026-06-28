@@ -11,17 +11,19 @@ from yuno.commands.control import (
     create_autorespond_group, create_settings_group, register_sleep_commands,
 )
 from yuno.commands.general import register_general_commands
-from yuno.commands.memory import create_memory_group
+from yuno.commands.mind import create_mind_group
+from yuno.commands.notebook import create_notebook_group
 from yuno.core.config import Settings, load_settings
 from yuno.core.events import ConversationRuntime, register_events
 from yuno.core.preplanning import PrePlanner
 from yuno.infra.discord_utils import PREFIXES
 from yuno.infra.json_store import JsonStore
 from yuno.infra.openai_client import OpenAIJsonClient
-from yuno.memory.retrieval import MemoryRetriever
-from yuno.memory.changelog import MemoryChangeLog
-from yuno.memory.service import MemoryService
-from yuno.memory.storage import MemoryStorage
+from yuno.notebook.retrieval import NotebookRetriever
+from yuno.notebook.changelog import NotebookChangeLog
+from yuno.notebook.service import Notebook
+from yuno.notebook.storage import NotebookStorage
+from yuno.mind.storage import MindStateStorage
 from yuno.runtime.settings import RuntimeSettings
 
 
@@ -61,24 +63,31 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
         application_id=settings.discord_client_id,
     )
 
-    storage = MemoryStorage(JsonStore(settings.memory_file))
-    changelog = MemoryChangeLog(JsonStore(settings.memory_changelog_file))
-    memory_service = MemoryService(storage, changelog)
+    storage = NotebookStorage(JsonStore(settings.notebook_file))
+    changelog = NotebookChangeLog(JsonStore(settings.notebook_changelog_file))
+    notebook = Notebook(storage, changelog)
     runtime_settings = RuntimeSettings(JsonStore(settings.runtime_settings_file))
-    ai_client = OpenAIJsonClient(settings.openai_api_key, settings.openai_model)
+    mind_storage = MindStateStorage(JsonStore(settings.mind_state_file))
+    planner_client = OpenAIJsonClient(settings.openai_api_key, settings.openai_fallback_model)
+    speaker_client = OpenAIJsonClient(settings.openai_api_key, settings.openai_model)
     runtime = ConversationRuntime(
-        planner=Planner(ai_client),
-        executor=ActionExecutor(storage, memory_service),
-        speaker=Speaker(ai_client),
-        retriever=MemoryRetriever(storage),
+        planner=Planner(planner_client),
+        executor=ActionExecutor(storage, notebook),
+        speaker=Speaker(speaker_client),
+        retriever=NotebookRetriever(storage),
         preplanner=PrePlanner(runtime_settings),
+        mind_storage=mind_storage,
     )
-    bot.tree.add_command(create_memory_group(
-        storage, memory_service, runtime_settings, settings.owner_id
+    bot.tree.add_command(create_notebook_group(
+        storage, notebook, runtime_settings, settings.owner_id
     ))
     bot.tree.add_command(create_autorespond_group(runtime_settings))
     bot.tree.add_command(create_settings_group(runtime_settings, settings.owner_id))
+    bot.tree.add_command(create_mind_group(mind_storage, settings.owner_id))
     register_sleep_commands(bot.tree, runtime_settings, settings.owner_id)
-    register_general_commands(bot.tree, settings, storage, runtime_settings, ai_client)
+    register_general_commands(
+        bot.tree, settings, storage, runtime_settings, planner_client, speaker_client,
+        mind_storage,
+    )
     register_events(bot, runtime)
     return bot

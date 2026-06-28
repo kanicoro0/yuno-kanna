@@ -5,21 +5,22 @@
 ## Command registration
 
 - guild sync後、以下のcommandが更新される
-- `/guide`, `/status`, `/settings memory_view`
-- `/memory user|server|channel show|add|edit|delete|undo|history`
-- `/memory get`, `/memory search`
+- `/guide`, `/status`, `/settings notebook_view`
+- `/notebook user|server|channel show|add|edit|delete|undo|history`
+- `/notebook get`, `/notebook search`
+- `/mind show|clear|status`
 - `/sleep`, `/wake`, `/autorespond status|server|channel`
-- `/servermemory`, reminder系、owner debug toolsが登録されていない
+- 旧server memo command、reminder系、owner debug toolsが登録されていない
 
-## Memory scope and CRUD
+## Notebook scope and CRUD
 
-1. `/memory user add`後、`mem_####`のIDが返る
-2. `/memory user show page:1 limit:5 detail:false`が`id: 内容`形式になる
+1. `/notebook user add`後、`note_####`のIDが返る
+2. `/notebook user show page:1 limit:5 detail:false`が`id: 内容`形式になる
 3. `detail:true limit:3`でid/content/scope/tags/weightが表示される
-4. `/memory get id:45 detail:true`と完全IDの両方で同じrecordを取得できる
-5. user memoryは別ユーザーの`/memory get`から見えない
-6. server memory変更は`manage_guild`なしで拒否される
-7. channel memory変更は`manage_channels`なしで拒否される
+4. `/notebook get id:45 detail:true`と完全IDの両方で同じrecordを取得できる
+5. user notebookは別ユーザーの`/notebook get`から見えない
+6. server notebook変更は`manage_guild`なしで拒否される
+7. channel notebook変更は`manage_channels`なしで拒否される
 8. 別guildのserver/channel recordは取得できない
 9. delete後は通常show/getに出ず、IDは再利用されない
 
@@ -35,8 +36,8 @@
 
 ## Change log and undo
 
-1. add/edit/deleteの各操作が`/memory ... history`に出る
-2. `/memory ... undo`が自分の直近変更だけを戻す
+1. add/edit/deleteの各操作が`/notebook ... history`に出る
+2. `/notebook ... undo`が自分の直近変更だけを戻す
 3. delete undoで同じIDがactiveへ戻る
 4. add undoで同じIDがdeletedになる
 5. rewrite undoで以前の内容へ戻る
@@ -46,7 +47,7 @@
 ## Settings and debug
 
 1. 既定normalでは内部route/context/timestampが出ない
-2. ownerだけが`/settings memory_view mode:debug`を選べる
+2. ownerだけが`/settings notebook_view mode:debug`を選べる
 3. owner以外のdebug指定は拒否される
 4. debugでも他人・別guild・別channelのscopeは見えない
 5. `OWNER_ID`未設定時はdebugとglobal sleep/wakeが使えない
@@ -63,6 +64,23 @@
 ## Pipeline and fallback
 
 1. typing表示はSpeaker呼び出し中だけ出る
-2. Discord send成功後だけPlanner record actionとchange logが確定する
+2. Discord send成功後だけPlanner note actionとchange logが確定する
 3. semantic retrieval未実装の現在もalways/keyword/tag retrievalで通常応答できる
 4. OpenAI未設定時にmock fallbackでBot構築できる
+
+## MindState and ConversationLog
+
+1. `/mind show`はserverでchannel、DMでdm scopeを既定表示する
+2. user/server/channel/dm scopeの権限境界を越えない
+3. reply送信成功後だけ`mind_state.json`が更新される
+4. server会話の自動更新はchannel scope、DMはdm scopeへ保存される
+5. PlannerとSpeakerに統合済み`mind_context`が渡る
+6. 通常時はPlanner最大4件、Speaker最大2件のrecent logだけを使う
+7. 「前の案」「さっき」「前回」「ログ」等の明示参照時だけSpeakerへ最大16件渡る
+8. `active_note_ids`がretrieval候補を強め、`suppressed_note_ids`が候補を除外する
+
+## Model split
+
+1. Speakerは`OPENAI_MODEL`を使う
+2. Plannerは`OPENAI_FALLBACK_MODEL`を使う
+3. Planner model未設定時はSpeaker modelへfallbackする

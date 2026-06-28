@@ -1,10 +1,11 @@
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from yuno.actions.schema import ActionPlan, ExecutionResult, SpeakerOutput
 from yuno.infra.openai_client import OpenAIJsonClient
 from yuno.notebook.prompt_view import speaker_note_view
 from yuno.persona import YUNO_SPEAKER_PERSONA
+from yuno.debug.state import DebugState
 
 
 SPEAKER_SYSTEM_PROMPT = f"""あなたはDiscord bot『ゆの』のSpeakerです。
@@ -21,8 +22,9 @@ typeはnone/followup/repair/second_thought。3回目は例外なので、通常�
 
 
 class Speaker:
-    def __init__(self, client: OpenAIJsonClient):
+    def __init__(self, client: OpenAIJsonClient, debug: Optional[DebugState] = None):
         self.client = client
+        self.debug = debug
 
     async def speak(
         self,
@@ -62,10 +64,19 @@ class Speaker:
                 "next_call": {"needed": False, "type": "none", "reason": "", "brief": ""},
             }
 
-        raw = await self.client.complete_json([
+        messages = [
             {"role": "system", "content": SPEAKER_SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ], fallback)
+        ]
+        raw = await self.client.complete_json(messages, fallback)
+        if self.debug:
+            await self.debug.capture_speaker(messages, raw, {
+                "mode": "planner_speaker",
+                "recent_log_count": len(conversation_context),
+                "reply_tree_count": 0,
+                "notes_to_use_count": len(execution.selected_notes),
+                "needs_log_lookup": plan.needs_log_lookup,
+            })
         output = SpeakerOutput.from_dict(raw)
         if not output.reply:
             output = SpeakerOutput.from_dict(fallback())

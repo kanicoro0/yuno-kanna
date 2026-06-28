@@ -21,6 +21,10 @@ def _optional_int(name: str) -> Optional[int]:
         raise RuntimeError(f"{name} must be an integer") from error
 
 
+def _enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     discord_token: str
@@ -35,6 +39,8 @@ class Settings:
     notebook_changelog_file: Path = PROJECT_ROOT / "data" / "notebook_changelog.json"
     owner_id: Optional[int] = None
     mind_state_file: Path = PROJECT_ROOT / "data" / "mind_state.json"
+    debug_enabled: bool = False
+    debug_dir: Path = PROJECT_ROOT / "data" / "debug"
 
 
 def load_settings() -> Settings:
@@ -54,6 +60,10 @@ def load_settings() -> Settings:
     mind_path = Path(mind_value)
     if not mind_path.is_absolute():
         mind_path = PROJECT_ROOT / mind_path
+    debug_value = os.getenv("DEBUG_DIR", "data/debug").strip() or "data/debug"
+    debug_path = Path(debug_value)
+    if not debug_path.is_absolute():
+        debug_path = PROJECT_ROOT / debug_path
     speaker_model = os.getenv("OPENAI_MODEL", "gpt-5").strip() or "gpt-5"
     planner_model = os.getenv("OPENAI_FALLBACK_MODEL", "").strip() or speaker_model
     return Settings(
@@ -69,4 +79,6 @@ def load_settings() -> Settings:
         notebook_changelog_file=changelog_path,
         owner_id=_optional_int("OWNER_ID"),
         mind_state_file=mind_path,
+        debug_enabled=_enabled("DEBUG_ENABLED") or _enabled("PROMPT_DEBUG_ENABLED"),
+        debug_dir=debug_path,
     )

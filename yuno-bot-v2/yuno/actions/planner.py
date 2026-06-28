@@ -1,8 +1,9 @@
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from yuno.actions.schema import ActionPlan
 from yuno.infra.openai_client import OpenAIJsonClient
+from yuno.debug.state import DebugState
 
 
 PLANNER_SYSTEM_PROMPT = """あなたはDiscord bot『ゆの』の小さなPlannerです。返答本文やゆの口調は書きません。
@@ -21,8 +22,9 @@ needs_log_lookup, log_lookup_query, log_window, speaker_note。"""
 
 
 class Planner:
-    def __init__(self, client: OpenAIJsonClient):
+    def __init__(self, client: OpenAIJsonClient, debug: Optional[DebugState] = None):
         self.client = client
+        self.debug = debug
 
     async def plan(
         self,
@@ -60,8 +62,17 @@ class Planner:
                 "speaker_note": "現在の発言とmind contextを中心に返す",
             }
 
-        raw = await self.client.complete_json([
+        messages = [
             {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ], fallback)
+        ]
+        raw = await self.client.complete_json(messages, fallback)
+        if self.debug:
+            await self.debug.capture_planner(messages, raw, {
+                "mode": "planner_speaker",
+                "mind_context": mind_context,
+                "recent_log_count": len(payload["recent_history"]),
+                "reply_tree_count": 0,
+                "note_candidate_count": len(note_candidates),
+            })
         return ActionPlan.from_dict(raw)

@@ -25,6 +25,7 @@ from yuno.notebook.service import Notebook
 from yuno.notebook.storage import NotebookStorage
 from yuno.mind.storage import MindStateStorage
 from yuno.runtime.settings import RuntimeSettings
+from yuno.debug.state import DebugState
 
 
 class YunoBot(commands.Bot):
@@ -70,13 +71,15 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     mind_storage = MindStateStorage(JsonStore(settings.mind_state_file))
     planner_client = OpenAIJsonClient(settings.openai_api_key, settings.openai_fallback_model)
     speaker_client = OpenAIJsonClient(settings.openai_api_key, settings.openai_model)
+    debug = DebugState(settings.debug_enabled, settings.owner_id, settings.debug_dir)
     runtime = ConversationRuntime(
-        planner=Planner(planner_client),
+        planner=Planner(planner_client, debug),
         executor=ActionExecutor(storage, notebook),
-        speaker=Speaker(speaker_client),
+        speaker=Speaker(speaker_client, debug),
         retriever=NotebookRetriever(storage),
         preplanner=PrePlanner(runtime_settings),
         mind_storage=mind_storage,
+        debug=debug,
     )
     bot.tree.add_command(create_notebook_group(
         storage, notebook, runtime_settings, settings.owner_id

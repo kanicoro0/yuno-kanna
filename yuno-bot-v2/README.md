@@ -50,9 +50,26 @@ NOTEBOOK_CHANGELOG_FILE=data/notebook_changelog.json
 MIND_STATE_FILE=data/mind_state.json
 RUNTIME_SETTINGS_FILE=data/runtime_settings.json
 OWNER_ID=
+DEBUG_ENABLED=false
+PROMPT_DEBUG_ENABLED=false
+DEBUG_DIR=data/debug
 ```
 
 API key未設定時はPlanner/Speakerともmock fallbackになります。secretやprompt本文はログへ出しません。
+
+## Owner debug（hidden prefix）
+
+`OWNER_ID`本人かつ`DEBUG_ENABLED=true`（または`PROMPT_DEBUG_ENABLED=true`）のときだけ、次のprefix入力を処理します。slash commandには登録されません。
+
+```text
+yuno-debug trace last
+yuno-debug prompt last
+yuno-debug mind diff
+yuno-debug note find note_0045
+yuno-debug cost last
+```
+
+長いpromptや内部状態はDiscordへ貼らず、`DEBUG_DIR`（既定`data/debug/`）へ保存します。このdirectoryはGit管理外です。保持するのは再起動までの直前1処理分で、debug採取・保存の失敗は通常会話へ伝播させません。
 
 ## Commands
 
@@ -96,7 +113,7 @@ data/notebook_embeddings.json（将来用）
 - ConversationLogはプロセス内のみで永続化しない
 - server会話ではSpeakerのMindState更新をchannel scopeへ保存する（user/guild scopeは保存・統合可能だが自動更新policyは今後調整）
 - Notebook本体とchangelogの複数ファイルtransactionは未実装
-- Note metadata編集Modal、optional third call、reminder、owner debug toolsは未実装
+- Note metadata編集Modal、optional third call、reminder、より広いowner管理toolsは未実装
 
 実Discord確認項目は[`docs/manual_test_plan.md`](docs/manual_test_plan.md)にあります。
 

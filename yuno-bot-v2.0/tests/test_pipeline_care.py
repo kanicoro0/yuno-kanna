@@ -133,7 +133,19 @@ class PipelineCareTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(quiet_reader.requests), 1)
         self.assertEqual(quiet_speaker.contexts, [])
 
-        speaking_reader = FakeCareReader(CareReadResult(should_speak=True))
+        one_flag_reader = FakeCareReader(CareReadResult(
+            wants_to_speak=False, should_speak=True
+        ))
+        one_flag_speaker = RecordingSpeaker()
+        one_flag = await self.pipeline(one_flag_reader, one_flag_speaker).process(
+            self.incoming("one-flag", "天体観測はどうなるかな")
+        )
+        self.assertFalse(one_flag.should_send)
+        self.assertEqual(one_flag_speaker.contexts, [])
+
+        speaking_reader = FakeCareReader(CareReadResult(
+            wants_to_speak=True, should_speak=True
+        ))
         speaking_speaker = RecordingSpeaker()
         speaking = await self.pipeline(speaking_reader, speaking_speaker).process(
             self.incoming("2", "天体観測、晴れるかな")

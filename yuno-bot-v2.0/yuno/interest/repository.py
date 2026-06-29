@@ -74,6 +74,21 @@ class InterestRepository:
         )).fetchall()
         return [self._model(row) for row in rows]
 
+    async def list_for_stream(
+        self, stream_id: int, statuses: Iterable[str], limit: int = 10
+    ) -> List[InterestTerm]:
+        selected = tuple(value for value in statuses if value in {"active", "sleeping", "hidden"})
+        if not selected:
+            return []
+        placeholders = ",".join("?" for _ in selected)
+        rows = await (await self.database.connection.execute(
+            f"""SELECT * FROM interest_terms
+                WHERE stream_id = ? AND status IN ({placeholders})
+                ORDER BY id DESC LIMIT ?""",
+            (stream_id, *selected, max(1, min(limit, 20))),
+        )).fetchall()
+        return [self._model(row) for row in rows]
+
     async def touch_terms(self, stream_id: int, terms: Iterable[str]) -> None:
         selected = list(dict.fromkeys(term.strip() for term in terms if term.strip()))[:8]
         if not selected:
@@ -89,9 +104,20 @@ class InterestRepository:
         await self.database.connection.commit()
 
     async def hide(self, public_id: str) -> Optional[InterestTerm]:
+        return await self.set_status(public_id, "hidden")
+
+    async def sleep(self, public_id: str) -> Optional[InterestTerm]:
+        return await self.set_status(public_id, "sleeping")
+
+    async def wake(self, public_id: str) -> Optional[InterestTerm]:
+        return await self.set_status(public_id, "active")
+
+    async def set_status(self, public_id: str, status: str) -> Optional[InterestTerm]:
+        if status not in {"active", "sleeping", "hidden"}:
+            raise ValueError("invalid interest status")
         await self.database.connection.execute(
-            "UPDATE interest_terms SET status = 'hidden', updated_at = ? WHERE public_id = ?",
-            (utc_now(), public_id),
+            "UPDATE interest_terms SET status = ?, updated_at = ? WHERE public_id = ?",
+            (status, utc_now(), public_id),
         )
         await self.database.connection.commit()
         return await self.get_by_public_id(public_id)

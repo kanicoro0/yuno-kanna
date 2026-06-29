@@ -38,6 +38,15 @@ class ConversationRepository:
             raise ValueError("Discord channel is already bound to a different stream")
         return self._stream(row)
 
+    async def get_stream_by_channel_id(
+        self, discord_channel_id: str
+    ) -> Optional[Stream]:
+        row = await (await self.database.connection.execute(
+            "SELECT * FROM streams WHERE discord_channel_id = ?",
+            (discord_channel_id,),
+        )).fetchone()
+        return self._stream(row) if row else None
+
     async def append(
         self,
         stream_id: int,

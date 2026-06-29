@@ -25,7 +25,8 @@ class SchemaV2MigrationTests(unittest.IsolatedAsyncioTestCase):
                     DROP TABLE interest_terms;
                     DROP TABLE attention_items;
                     DROP TABLE memory_marks;
-                    DELETE FROM schema_migrations WHERE version = 2;
+                    DROP TABLE listening_channels;
+                    DELETE FROM schema_migrations WHERE version >= 2;
                     """
                 )
                 connection.commit()
@@ -42,17 +43,52 @@ class SchemaV2MigrationTests(unittest.IsolatedAsyncioTestCase):
                 }
                 self.assertTrue({
                     "streams", "messages", "memory_marks",
-                    "attention_items", "interest_terms",
+                    "attention_items", "interest_terms", "listening_channels",
                 }.issubset(tables))
                 versions = [
                     row["version"] for row in await (await migrated.connection.execute(
                         "SELECT version FROM schema_migrations ORDER BY version"
                     )).fetchall()
                 ]
-                self.assertEqual(versions, [1, 2])
+                self.assertEqual(versions, [1, 2, 3])
                 row = await (await migrated.connection.execute(
                     "SELECT content FROM messages WHERE discord_message_id = 'm1'"
                 )).fetchone()
                 self.assertEqual(row["content"], "残る会話")
+            finally:
+                await migrated.close()
+
+    async def test_v2_database_adds_listening_table_without_losing_core_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "v2-to-v3.sqlite3"
+            initial = Database(path)
+            await initial.open()
+            await initial.close()
+            connection = sqlite3.connect(path)
+            try:
+                connection.executescript(
+                    """
+                    DROP TABLE listening_channels;
+                    DELETE FROM schema_migrations WHERE version = 3;
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            migrated = Database(path)
+            await migrated.open()
+            try:
+                tables = {
+                    row["name"] for row in await (await migrated.connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )).fetchall()
+                }
+                self.assertIn("listening_channels", tables)
+                self.assertTrue({"memory_marks", "attention_items", "interest_terms"}.issubset(tables))
+                row = await (await migrated.connection.execute(
+                    "SELECT MAX(version) AS version FROM schema_migrations"
+                )).fetchone()
+                self.assertEqual(row["version"], 3)
             finally:
                 await migrated.close()

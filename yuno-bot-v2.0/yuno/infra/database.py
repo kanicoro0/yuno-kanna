@@ -4,7 +4,7 @@ from typing import Optional
 import aiosqlite
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class Database:
@@ -163,5 +163,21 @@ class Database:
             )
             await connection.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (2, datetime('now'))"
+            )
+        if current < 3:
+            await connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS listening_channels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    discord_channel_id TEXT NOT NULL UNIQUE,
+                    discord_guild_id TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS listening_channels_guild
+                    ON listening_channels(discord_guild_id, discord_channel_id);
+                """
+            )
+            await connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (3, datetime('now'))"
             )
         await connection.commit()

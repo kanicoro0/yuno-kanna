@@ -16,6 +16,14 @@ class MemoryMarkService:
             stream_id, source_message_id, kind, status, content, confidence, "care_reader"
         )
 
+    async def create_manual(
+        self, stream_id: int, content: str, kind: str = "pin",
+        status: str = "pending", confidence: float = 1.0,
+    ) -> MemoryMark:
+        return await self.repository.create(
+            stream_id, None, kind, status, content, confidence, "manual"
+        )
+
     async def activate(self, public_id: str) -> Optional[MemoryMark]:
         return await self.repository.activate(public_id)
 

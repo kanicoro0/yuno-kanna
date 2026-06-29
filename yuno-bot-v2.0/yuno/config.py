@@ -6,6 +6,14 @@ from typing import FrozenSet, Optional, Tuple
 from dotenv import load_dotenv
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_database_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (PROJECT_ROOT / path).resolve()
+
+
 def _optional_int(name: str) -> Optional[int]:
     value = os.getenv(name, "").strip()
     if not value:
@@ -45,13 +53,15 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    load_dotenv()
+    load_dotenv(PROJECT_ROOT / ".env")
     return Settings(
         discord_token=os.getenv("DISCORD_TOKEN", "").strip(),
         discord_client_id=_optional_int("DISCORD_CLIENT_ID"),
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         openai_model=os.getenv("OPENAI_MODEL", "").strip(),
-        database_file=Path(os.getenv("DATABASE_FILE", "data/yuno.sqlite3")),
+        database_file=resolve_database_path(
+            os.getenv("DATABASE_FILE", "data/yuno.sqlite3")
+        ),
         listening_channel_ids=_channel_ids(os.getenv("LISTENING_CHANNEL_IDS", "")),
         yuno_call_names=_call_names(os.getenv("YUNO_CALL_NAMES", "")),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",

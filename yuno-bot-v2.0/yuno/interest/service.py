@@ -35,3 +35,9 @@ class InterestService:
 
     async def hide(self, public_id: str) -> Optional[InterestTerm]:
         return await self.repository.hide(public_id)
+
+    async def sleep(self, public_id: str) -> Optional[InterestTerm]:
+        return await self.repository.sleep(public_id)
+
+    async def wake(self, public_id: str) -> Optional[InterestTerm]:
+        return await self.repository.wake(public_id)

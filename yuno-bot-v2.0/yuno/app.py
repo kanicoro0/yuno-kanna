@@ -8,6 +8,11 @@ from yuno.attention.repository import AttentionRepository
 from yuno.attention.service import AttentionService
 from yuno.care.reader import CareReader
 from yuno.care.service import CareService
+from yuno.commands.admin_service import CoreAdminService
+from yuno.commands.core import (
+    create_attention_group, create_interest_group, create_memory_group,
+)
+from yuno.commands.listening import create_listening_group
 from yuno.config import Settings, load_settings
 from yuno.conversation.context import ContextBuilder
 from yuno.conversation.repository import ConversationRepository
@@ -17,10 +22,30 @@ from yuno.infra.database import Database
 from yuno.infra.openai_client import OpenAITextClient
 from yuno.interest.repository import InterestRepository
 from yuno.interest.service import InterestService
+from yuno.listening.repository import ListeningChannelRepository
+from yuno.listening.service import ListeningChannelService
 from yuno.memory.repository import MemoryMarkRepository
 from yuno.memory.service import MemoryMarkService
 from yuno.pipeline import ConversationPipeline
 from yuno.speaking.speaker import Speaker
+
+
+def status_text(listening_items, call_names) -> str:
+    channels = "、".join(
+        f"<#{item.discord_channel_id}>({item.source})" for item in listening_items
+    ) or "なし"
+    names = "、".join(call_names)
+    return (
+        "会話ログの保存範囲\n"
+        "- DM: 保存して返信\n"
+        "- mention: 保存してreply\n"
+        "- ゆのへのreply: 保存してreply\n"
+        f"- listening対象: {channels}\n"
+        "  通常発言は保存。関心語や開いた話題に重なる時だけCareReaderが読み、必要な時だけ返答\n"
+        "- listening対象でゆのへ向けられた発言: 保存して返信\n"
+        "- listening対象外の通常発言: 保存しない\n"
+        f"- 現在の呼び名: {names}"
+    )
 
 
 class YunoBot(commands.Bot):
@@ -58,11 +83,14 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     memory = MemoryMarkService(MemoryMarkRepository(database))
     attention = AttentionService(AttentionRepository(database))
     interest = InterestService(InterestRepository(database))
+    listening = ListeningChannelService(
+        ListeningChannelRepository(database), settings.listening_channel_ids
+    )
     client = OpenAITextClient(settings.openai_api_key, settings.openai_model)
     speaker = Speaker(client)
     care_service = CareService(repository, memory, attention, interest)
     pipeline = ConversationPipeline(
-        MessageRouter(settings, repository),
+        MessageRouter(settings, repository, listening),
         repository,
         ContextBuilder(repository, memory, attention, interest),
         speaker,
@@ -78,21 +106,17 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
         application_id=settings.discord_client_id,
     )
     register_events(bot, ConversationRuntime(pipeline))
+    admin = CoreAdminService(repository, memory, attention, interest)
+    bot.tree.add_command(create_memory_group(admin))
+    bot.tree.add_command(create_attention_group(admin))
+    bot.tree.add_command(create_interest_group(admin))
+    bot.tree.add_command(create_listening_group(listening))
 
     @bot.tree.command(name="status", description="ゆのが保存する会話の範囲を確認します")
     async def status(interaction: discord.Interaction) -> None:
-        listening = sorted(settings.listening_channel_ids)
-        channels = "、".join(f"<#{channel_id}>" for channel_id in listening) or "なし"
-        call_names = "、".join(settings.yuno_call_names)
+        listening_items = await listening.list_all()
         await interaction.response.send_message(
-            "会話ログの保存範囲\n"
-            "- DM: 保存して返信\n"
-            "- mention: 保存してreply\n"
-            "- ゆのへのreply: 保存してreply\n"
-            f"- listening対象: {channels}（通常発言は保存するが割り込まない）\n"
-            "- listening対象でゆのへ向けられた発言: 保存して返信\n"
-            "- listening対象外の通常発言: 保存しない\n"
-            f"- 現在の呼び名: {call_names}",
+            status_text(listening_items, settings.yuno_call_names),
             ephemeral=True,
         )
 

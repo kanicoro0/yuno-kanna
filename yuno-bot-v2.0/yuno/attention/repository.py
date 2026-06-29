@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 import aiosqlite
 
@@ -60,6 +60,21 @@ class AttentionRepository:
         )).fetchall()
         return [self._model(row) for row in rows]
 
+    async def list_for_stream(
+        self, stream_id: int, statuses: Iterable[str], limit: int = 10
+    ) -> List[AttentionItem]:
+        selected = tuple(value for value in statuses if value in {"open", "closed", "hidden"})
+        if not selected:
+            return []
+        placeholders = ",".join("?" for _ in selected)
+        rows = await (await self.database.connection.execute(
+            f"""SELECT * FROM attention_items
+                WHERE stream_id = ? AND status IN ({placeholders})
+                ORDER BY id DESC LIMIT ?""",
+            (stream_id, *selected, max(1, min(limit, 20))),
+        )).fetchall()
+        return [self._model(row) for row in rows]
+
     async def touch(self, public_id: str) -> Optional[AttentionItem]:
         now = utc_now()
         await self.database.connection.execute(
@@ -76,6 +91,9 @@ class AttentionRepository:
 
     async def hide(self, public_id: str) -> Optional[AttentionItem]:
         return await self._set_status(public_id, "hidden")
+
+    async def reopen(self, public_id: str) -> Optional[AttentionItem]:
+        return await self._set_status(public_id, "open")
 
     async def _set_status(self, public_id: str, status: str) -> Optional[AttentionItem]:
         now = utc_now()

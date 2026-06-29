@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 from typing import Optional
 
 from yuno.care.models import CareReadResult
@@ -9,6 +10,9 @@ from yuno.conversation.repository import ConversationRepository
 from yuno.discord.routing import MessageRouter
 from yuno.messages import IncomingMessage, SentMessage
 from yuno.speaking.speaker import Speaker
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,10 @@ class ConversationPipeline:
                 route.speaker_content, attention
             )
             if should_read:
+                logger.debug(
+                    "care_reader called stream_id=%s directed=%s",
+                    stream.id, route.should_reply,
+                )
                 request = await self.care_service.build_request(
                     stream.id,
                     route.speaker_content,
@@ -78,10 +86,26 @@ class ConversationPipeline:
                 application = await self.care_service.apply(
                     stream.id, user_record.id, care_result
                 )
+                logger.debug(
+                    "care_reader result stream_id=%s memory=%d attention=%d interest=%d",
+                    stream.id,
+                    len(care_result.memory_candidates),
+                    len(care_result.attention_candidates),
+                    len(care_result.interest_updates),
+                )
+            else:
+                logger.debug("care_reader skipped stream_id=%s", stream.id)
 
-        should_speak = route.should_reply or (
-            route.reason == "listening_only" and care_result.should_speak
+        listening_should_speak = (
+            route.reason == "listening_only"
+            and care_result.wants_to_speak
+            and care_result.should_speak
         )
+        logger.debug(
+            "listening speech decision stream_id=%s should_speak=%s",
+            stream.id, listening_should_speak,
+        )
+        should_speak = route.should_reply or listening_should_speak
         if not should_speak:
             return PipelineResult(False, "", "none", stream.id, None)
 

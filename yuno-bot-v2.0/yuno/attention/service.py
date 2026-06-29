@@ -34,6 +34,9 @@ class AttentionService:
     async def hide(self, public_id: str) -> Optional[AttentionItem]:
         return await self.repository.hide(public_id)
 
+    async def reopen(self, public_id: str) -> Optional[AttentionItem]:
+        return await self.repository.reopen(public_id)
+
     async def references_for_stream(
         self, stream_id: int, limit: int = 8, public_ids: Optional[Iterable[str]] = None
     ) -> List[AttentionItem]:

@@ -22,6 +22,9 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             bot = create_bot(settings)
             try:
                 self.assertEqual(bot.settings.listening_channel_ids, frozenset({123}))
-                self.assertIn("status", [command.name for command in bot.tree.get_commands()])
+                names = {command.name for command in bot.tree.get_commands()}
+                self.assertTrue(
+                    {"status", "memory", "attention", "interest", "listening"}.issubset(names)
+                )
             finally:
                 await bot.close()

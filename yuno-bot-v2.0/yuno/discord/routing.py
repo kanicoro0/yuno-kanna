@@ -4,6 +4,7 @@ from typing import Iterable
 
 from yuno.config import Settings
 from yuno.conversation.repository import ConversationRepository
+from yuno.listening.service import ListeningChannelService
 from yuno.messages import IncomingMessage
 
 
@@ -17,16 +18,24 @@ class MessageRoute:
 
 
 class MessageRouter:
-    def __init__(self, settings: Settings, repository: ConversationRepository):
+    def __init__(
+        self, settings: Settings, repository: ConversationRepository,
+        listening: ListeningChannelService = None,
+    ):
         self.settings = settings
         self.repository = repository
+        self.listening = listening
 
     async def route(self, message: IncomingMessage) -> MessageRoute:
         if message.author_is_bot:
             return _ignored()
 
         is_dm = message.stream_kind == "dm"
-        is_listening = int(message.discord_channel_id) in self.settings.listening_channel_ids
+        is_listening = (
+            await self.listening.is_listening(message.discord_channel_id)
+            if self.listening else
+            int(message.discord_channel_id) in self.settings.listening_channel_ids
+        )
         reply_to_yuno = await self.repository.is_assistant_message(
             message.reply_to_discord_message_id
         )

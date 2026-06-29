@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from yuno.care.models import CareReadResult
+from yuno.care.reader import CareReader
+from yuno.care.service import CareService, interest_salience, overlaps_attention
 from yuno.conversation.context import ContextBuilder
 from yuno.conversation.repository import ConversationRepository
 from yuno.discord.routing import MessageRouter
@@ -24,11 +27,15 @@ class ConversationPipeline:
         repository: ConversationRepository,
         context_builder: ContextBuilder,
         speaker: Speaker,
+        care_reader: Optional[CareReader] = None,
+        care_service: Optional[CareService] = None,
     ):
         self.router = router
         self.repository = repository
         self.context_builder = context_builder
         self.speaker = speaker
+        self.care_reader = care_reader
+        self.care_service = care_service
 
     async def process(self, message: IncomingMessage) -> PipelineResult:
         route = await self.router.route(message)
@@ -40,7 +47,7 @@ class ConversationPipeline:
             discord_channel_id=message.discord_channel_id,
             discord_guild_id=message.discord_guild_id,
         )
-        await self.repository.append(
+        user_record = await self.repository.append(
             stream_id=stream.id,
             discord_message_id=message.discord_message_id,
             role="user",
@@ -50,15 +57,48 @@ class ConversationPipeline:
             reply_to_discord_message_id=message.reply_to_discord_message_id,
             created_at=message.created_at,
         )
-        if not route.should_reply:
+        care_result = CareReadResult()
+        application = None
+        if self.care_reader and self.care_service:
+            state = await self.care_service.current_state(stream.id)
+            _, attention, interests = state
+            salience = interest_salience(route.speaker_content, interests)
+            should_read = route.should_reply or salience > 0 or overlaps_attention(
+                route.speaker_content, attention
+            )
+            if should_read:
+                request = await self.care_service.build_request(
+                    stream.id,
+                    route.speaker_content,
+                    1.0 if route.should_reply else 0.0,
+                    salience,
+                    state,
+                )
+                care_result = await self.care_reader.read(request)
+                application = await self.care_service.apply(
+                    stream.id, user_record.id, care_result
+                )
+
+        should_speak = route.should_reply or (
+            route.reason == "listening_only" and care_result.should_speak
+        )
+        if not should_speak:
             return PipelineResult(False, "", "none", stream.id, None)
 
-        context = await self.context_builder.build(stream.id)
-        reply = await self.speaker.speak(context)
-        reply_to = (
-            message.discord_message_id if route.reply_mode == "discord_reply" else None
+        memory_ids = list(care_result.include_memory_ids)
+        attention_ids = list(care_result.include_attention_ids)
+        if application:
+            memory_ids.extend(application.created_memory_ids)
+            attention_ids.extend(application.created_attention_ids)
+        context = await self.context_builder.build(
+            stream.id,
+            memory_ids or None,
+            attention_ids or None,
         )
-        return PipelineResult(True, reply, route.reply_mode, stream.id, reply_to)
+        reply = await self.speaker.speak(context)
+        reply_mode = route.reply_mode if route.should_reply else "plain"
+        reply_to = message.discord_message_id if reply_mode == "discord_reply" else None
+        return PipelineResult(True, reply, reply_mode, stream.id, reply_to)
 
     async def record_sent_assistant(
         self,

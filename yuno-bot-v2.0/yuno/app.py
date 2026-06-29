@@ -4,6 +4,10 @@ from typing import Any, Optional
 import discord
 from discord.ext import commands
 
+from yuno.attention.repository import AttentionRepository
+from yuno.attention.service import AttentionService
+from yuno.care.reader import CareReader
+from yuno.care.service import CareService
 from yuno.config import Settings, load_settings
 from yuno.conversation.context import ContextBuilder
 from yuno.conversation.repository import ConversationRepository
@@ -11,6 +15,10 @@ from yuno.discord.routing import MessageRouter
 from yuno.discord.events import ConversationRuntime, register_events
 from yuno.infra.database import Database
 from yuno.infra.openai_client import OpenAITextClient
+from yuno.interest.repository import InterestRepository
+from yuno.interest.service import InterestService
+from yuno.memory.repository import MemoryMarkRepository
+from yuno.memory.service import MemoryMarkService
 from yuno.pipeline import ConversationPipeline
 from yuno.speaking.speaker import Speaker
 
@@ -47,12 +55,19 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     intents.message_content = True
     database = Database(settings.database_file)
     repository = ConversationRepository(database)
-    speaker = Speaker(OpenAITextClient(settings.openai_api_key, settings.openai_model))
+    memory = MemoryMarkService(MemoryMarkRepository(database))
+    attention = AttentionService(AttentionRepository(database))
+    interest = InterestService(InterestRepository(database))
+    client = OpenAITextClient(settings.openai_api_key, settings.openai_model)
+    speaker = Speaker(client)
+    care_service = CareService(repository, memory, attention, interest)
     pipeline = ConversationPipeline(
         MessageRouter(settings, repository),
         repository,
-        ContextBuilder(repository),
+        ContextBuilder(repository, memory, attention, interest),
         speaker,
+        CareReader(client),
+        care_service,
     )
     bot = YunoBot(
         settings,

@@ -2,16 +2,25 @@
 
 Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計版です。
 
-現在は第2段階として、会話の縦切りを保ったままDiscord・routing・pipeline・context・Speakerの境界を分離しています。
+実装判断の基準は [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md) にあります。
+
+現在は第3A段階として、会話の縦切りを保ったままMemoryMark、AttentionItem、InterestTerm、CareReaderを接続しています。
 
 実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md) を読んでください。ゆのv2.0では、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」を優先します。
 
 ```text
-Discord入力変換 → routing → user保存 → ContextBuilder → Speaker
+Discord入力変換 → routing → user保存 → CareReader → Core更新
+→ ContextBuilder → Speaker
 → PipelineResult → Discord送信 → 送信成功後だけassistant保存
 ```
 
-Notebook、Annotation、MindState、Planner、旧v2 Notebook importはまだ実装していません。将来の追加文脈はContextBuilderへだけ接続し、routingの内部判定をSpeakerへ渡さない構造です。
+MemoryMarkは独立した記憶庫ではなく、ConversationLogにつく印です。`pending` は失くさない候補、`active` は通常参照可能、`hidden` は通常contextから外した状態です。
+
+AttentionItemは、まだ閉じていない話題や問いです。人格状態、気分、口調のmodeではありません。InterestTermはCareReaderの注意を少し寄せる語であり、返信スイッチや返信確率ではありません。
+
+CareReaderは同じstreamを静かに読み、印・Attention・関心語・話すかどうかをJSONで返します。返答本文や口調指示は書きません。SpeakerへはContextBuilderが組み立てた実際の履歴と、同じstreamのvisibleな参照だけを渡します。routing名、内部理由、salienceは渡しません。
+
+操作command、完全削除、legacy v2 import本体は次段階です。Notebook専用tableや旧Notebook JSONは復活させません。
 
 ## 会話ログの範囲
 

@@ -6,3 +6,6 @@ data/
 __pycache__/
 *.pyc
 *.bak
+*.db
+*.sqlite
+*.sqlite3

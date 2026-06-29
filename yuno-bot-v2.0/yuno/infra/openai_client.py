@@ -1,5 +1,6 @@
+import json
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 
@@ -17,7 +18,7 @@ class OpenAITextClient:
         )
         if self._client is None:
             logger.warning(
-                "OPENAI_API_KEY or OPENAI_MODEL is unset; Speaker uses a local fallback"
+                "OPENAI_API_KEY or OPENAI_MODEL is unset; model calls use local fallbacks"
             )
 
     @property
@@ -39,3 +40,18 @@ class OpenAITextClient:
         except Exception as error:
             logger.warning("Speaker call failed (%s)", type(error).__name__)
             return "少し詰まった。もう一回言って"
+
+    async def complete_json(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
+        if self._client is None:
+            return {}
+        try:
+            response = await self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+            value = json.loads(response.choices[0].message.content or "{}")
+            return value if isinstance(value, dict) else {}
+        except Exception as error:
+            logger.warning("CareReader call failed (%s)", type(error).__name__)
+            return {}

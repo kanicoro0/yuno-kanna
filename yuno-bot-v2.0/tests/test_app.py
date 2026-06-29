@@ -6,8 +6,8 @@ from yuno.app import create_bot
 from yuno.config import Settings
 
 
-class AppTests(unittest.TestCase):
-    def test_bot_can_be_constructed_without_network(self) -> None:
+class AppTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bot_can_be_constructed_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             settings = Settings(
                 discord_token="",
@@ -20,5 +20,8 @@ class AppTests(unittest.TestCase):
                 log_level="INFO",
             )
             bot = create_bot(settings)
-            self.assertEqual(bot.settings.listening_channel_ids, frozenset({123}))
-            self.assertIn("status", [command.name for command in bot.tree.get_commands()])
+            try:
+                self.assertEqual(bot.settings.listening_channel_ids, frozenset({123}))
+                self.assertIn("status", [command.name for command in bot.tree.get_commands()])
+            finally:
+                await bot.close()

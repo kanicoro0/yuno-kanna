@@ -37,15 +37,15 @@ def status_text(listening_items, call_names) -> str:
     ) or "なし"
     names = "、".join(call_names)
     return (
-        "会話ログの保存範囲\n"
-        "- DM: 保存して返信\n"
-        "- mention: 保存してreply\n"
-        "- ゆのへのreply: 保存してreply\n"
-        f"- listening対象: {channels}\n"
-        "  通常発言は保存。関心語や開いた話題に重なる時だけCareReaderが読み、必要な時だけ返答\n"
-        "- listening対象でゆのへ向けられた発言: 保存して返信\n"
-        "- listening対象外の通常発言: 保存しない\n"
-        f"- 現在の呼び名: {names}"
+        "ゆのが聞いている範囲\n"
+        "- DM: 保存して返します\n"
+        "- mention: 保存してreplyで返します\n"
+        "- ゆのへのreply: 保存してreplyで返します\n"
+        f"- 聞き耳の場所: {channels}\n"
+        "  通常発言は保存します。関心語や開いた気がかりに触れた時だけCareReaderが読み、必要な時だけ返します\n"
+        "- 聞き耳の場所でゆのへ向けられた発言: 保存して返します\n"
+        "- それ以外の通常発言: 保存しません\n"
+        f"- 今の呼び名: {names}"
     )
 
 
@@ -114,7 +114,7 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     bot.tree.add_command(create_interest_group(admin))
     bot.tree.add_command(create_listening_group(listening))
 
-    @bot.tree.command(name="status", description="ゆのが保存する会話の範囲を確認します")
+    @bot.tree.command(name="status", description="ゆのがどこで聞いて、どこで返すかを確認します")
     async def status(interaction: discord.Interaction) -> None:
         listening_items = await listening.list_all()
         await interaction.response.send_message(

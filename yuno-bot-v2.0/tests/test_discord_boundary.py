@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
 
-from yuno.discord.events import send_result
+from yuno.discord.events import finalize_sent_message, send_result
 from yuno.discord.input import to_incoming_message
 from yuno.pipeline import PipelineResult
 
@@ -65,3 +65,60 @@ class DiscordBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source.channel.calls, [])
         self.assertFalse(source.reply_calls[0][1]["mention_author"])
         self.assertIn("allowed_mentions", source.reply_calls[0][1])
+
+    async def test_assistant_is_saved_before_post_send_observation(self) -> None:
+        class Pipeline:
+            def __init__(self):
+                self.calls = []
+
+            async def record_sent_assistant(self, result, sent):
+                self.calls.append("saved")
+
+            async def observe_after_send(self, ticket):
+                self.calls.append("observed")
+
+        pipeline = Pipeline()
+        result = PipelineResult(True, "返事", "plain", 1, None)
+        from yuno.messages import SentMessage
+        await finalize_sent_message(
+            pipeline, result, SentMessage("2", "99", "ゆの", "返事", "now")
+        )
+        self.assertEqual(pipeline.calls, ["saved", "observed"])
+
+    async def test_observation_failure_does_not_undo_assistant_save(self) -> None:
+        class Pipeline:
+            def __init__(self):
+                self.saved = False
+
+            async def record_sent_assistant(self, result, sent):
+                self.saved = True
+
+            async def observe_after_send(self, ticket):
+                raise RuntimeError("care failed")
+
+        pipeline = Pipeline()
+        result = PipelineResult(True, "返事", "plain", 1, None)
+        from yuno.messages import SentMessage
+        await finalize_sent_message(
+            pipeline, result, SentMessage("2", "99", "ゆの", "返事", "now")
+        )
+        self.assertTrue(pipeline.saved)
+
+    async def test_assistant_save_failure_skips_observation(self) -> None:
+        class Pipeline:
+            def __init__(self):
+                self.observed = False
+
+            async def record_sent_assistant(self, result, sent):
+                raise RuntimeError("save failed")
+
+            async def observe_after_send(self, ticket):
+                self.observed = True
+
+        pipeline = Pipeline()
+        result = PipelineResult(True, "返事", "plain", 1, None)
+        from yuno.messages import SentMessage
+        await finalize_sent_message(
+            pipeline, result, SentMessage("2", "99", "ゆの", "返事", "now")
+        )
+        self.assertFalse(pipeline.observed)

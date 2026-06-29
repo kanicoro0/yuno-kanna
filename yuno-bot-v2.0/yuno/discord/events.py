@@ -41,19 +41,34 @@ def register_events(bot: commands.Bot, runtime: ConversationRuntime) -> None:
             logger.exception("Discord send failed")
             return
 
-        try:
-            await runtime.pipeline.record_sent_assistant(
-                result,
-                SentMessage(
-                    discord_message_id=str(sent.id),
-                    author_id=str(bot.user.id),
-                    author_name=bot.user.display_name,
-                    content=sent.content,
-                    created_at=sent.created_at.isoformat(),
-                ),
-            )
-        except Exception:
-            logger.exception("Discord send succeeded but assistant log commit failed")
+        await finalize_sent_message(
+            runtime.pipeline,
+            result,
+            SentMessage(
+                discord_message_id=str(sent.id),
+                author_id=str(bot.user.id),
+                author_name=bot.user.display_name,
+                content=sent.content,
+                created_at=sent.created_at.isoformat(),
+            ),
+        )
+
+
+async def finalize_sent_message(
+    pipeline: ConversationPipeline,
+    result: PipelineResult,
+    sent: SentMessage,
+) -> None:
+    try:
+        await pipeline.record_sent_assistant(result, sent)
+    except Exception:
+        logger.exception("Discord send succeeded but assistant log commit failed")
+        return
+
+    try:
+        await pipeline.observe_after_send(result.observation_ticket)
+    except Exception:
+        logger.exception("Assistant log saved but post-send observation failed")
 
 
 async def send_result(

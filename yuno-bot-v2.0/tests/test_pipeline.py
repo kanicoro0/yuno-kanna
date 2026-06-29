@@ -126,3 +126,14 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("mention", rendered)
         self.assertNotIn("discord_reply", rendered)
         self.assertNotIn("呼びかけられた", rendered)
+
+    async def test_directed_context_uses_only_six_recent_messages(self) -> None:
+        for index in range(7):
+            await self.pipeline.process(self.incoming(str(index), f"近くの会話{index}"))
+        await self.pipeline.process(
+            self.incoming("directed", "<@99> いまの話", mention=True)
+        )
+        history = self.speaker.contexts[-1].history
+        self.assertEqual(len(history), 6)
+        self.assertNotIn("近くの会話0", str(history))
+        self.assertIn("いまの話", str(history))

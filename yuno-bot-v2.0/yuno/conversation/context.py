@@ -8,8 +8,9 @@ from yuno.interest.service import InterestService
 from yuno.memory.service import MemoryMarkService
 
 
-RECENT_MESSAGE_LIMIT = 12
+RECENT_MESSAGE_LIMIT = 6
 RECENT_CHARACTER_LIMIT = 10_000
+REFERENCE_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -44,36 +45,28 @@ class ContextBuilder:
     async def build(
         self,
         stream_id: int,
-        include_memory_ids: Optional[Iterable[str]] = None,
-        include_attention_ids: Optional[Iterable[str]] = None,
+        include_memory_ids: Iterable[str] = (),
+        include_attention_ids: Iterable[str] = (),
     ) -> SpeakerContext:
         recent = await self.repository.recent(stream_id, RECENT_MESSAGE_LIMIT)
         references: List[SpeakerReference] = []
-        if self.memory:
-            marks = await self.memory.references_for_stream(
-                stream_id, 8, include_memory_ids
-            )
-            references.extend(
-                SpeakerReference(
+        for public_id in dict.fromkeys(include_memory_ids):
+            if len(references) >= REFERENCE_LIMIT or not self.memory:
+                break
+            mark = await self.memory.repository.get_by_public_id(public_id)
+            if mark and mark.stream_id == stream_id and mark.status == "active":
+                references.append(SpeakerReference(
                     "memory", mark.public_id, mark.content,
                     "legacy" if mark.provenance == "legacy" else "conversation",
-                )
-                for mark in marks
-            )
-        if self.attention:
-            items = await self.attention.references_for_stream(
-                stream_id, 8, include_attention_ids
-            )
-            references.extend(
-                SpeakerReference("attention", item.public_id, item.text, "conversation")
-                for item in items
-            )
-        if self.interest:
-            terms = await self.interest.references_for_stream(stream_id, 8)
-            references.extend(
-                SpeakerReference("interest", item.public_id, item.term, "conversation")
-                for item in terms
-            )
+                ))
+        for public_id in dict.fromkeys(include_attention_ids):
+            if len(references) >= REFERENCE_LIMIT or not self.attention:
+                break
+            item = await self.attention.repository.get_by_public_id(public_id)
+            if item and item.stream_id == stream_id and item.status == "open":
+                references.append(SpeakerReference(
+                    "attention", item.public_id, item.text, "conversation"
+                ))
         return SpeakerContext(tuple(build_speaker_history(recent)), tuple(references))
 
 

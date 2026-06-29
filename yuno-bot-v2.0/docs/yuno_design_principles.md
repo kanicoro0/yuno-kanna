@@ -102,7 +102,7 @@ Surface側で扱うもの:
 
 ## CareReader と Speaker
 
-ゆのは、原則として2回に分けて扱います。
+返答と観察は分けて扱います。ゆのへ向けられた通常会話ではSpeakerが先に一通を返し、送信に成功した後でCareReaderが静かに観察します。listening通常発言だけは、割り込むかを見るためにCareReaderが先に読みます。
 
 ### CareReader
 
@@ -113,11 +113,10 @@ CareReaderが見るもの:
 
 - 何をMemoryMark候補にするか
 - 何をpendingに置くか
-- 何をactive contextに入れるか
+- 後で必要になりうる断片はどれか
 - 何をAttentionとして開いたままにするか
 - ゆのが今話したいか
 - 今は黙って保存だけする方がよいか
-- Speakerへ渡してはいけないものがないか
 
 CareReaderがしてはいけないこと:
 
@@ -135,13 +134,14 @@ CareReaderは、静かに読むだけです。
 
 Speakerは、一通だけ返します。
 Speakerには、CareReaderの判断理由や内部スコアを渡しません。
+通常は同じstreamの直近の会話だけを読みます。補助断片は既定で空にし、必要な時だけ少数を選びます。
 
 Speakerに渡してよいもの:
 
 - 実際の会話履歴
 - 選ばれたMemoryMark
 - 選ばれたAttention
-- 必要な参照情報
+- 必要な時だけ選ばれた少数の補助断片
 
 Speakerに渡してはいけないもの:
 
@@ -169,7 +169,7 @@ Speakerは、読めるものを読んで、ゆのとして返します。
 
 これは「ゆのに向けられた発話か」を見るための入口なので必要です。
 
-それ以外の自然文は、基本的にConversationLogとして保存し、CareReaderに読ませます。
+それ以外の自然文は、基本的にConversationLogとして保存します。ゆのへ向けられた発話はSpeakerが先に返し、送信成功後にCareReaderが観察します。listening通常発言は、安い前処理にかかった時だけCareReaderに読ませます。
 
 特定の語が入っているから、即座に記憶する、返答する、重要扱いする、という実装にしないでください。
 

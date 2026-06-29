@@ -6,6 +6,7 @@ from yuno.attention.repository import AttentionRepository
 from yuno.attention.service import AttentionService
 from yuno.care.models import InterestUpdate
 from yuno.conversation.context import ContextBuilder
+from yuno.conversation.reference_selector import ReferenceSelector
 from yuno.conversation.repository import ConversationRepository
 from yuno.infra.database import Database
 from yuno.interest.repository import InterestRepository
@@ -123,12 +124,18 @@ class CoreReferenceTests(unittest.IsolatedAsyncioTestCase):
             self.other.id, self.other_message.id, "other memory", status="active"
         )
 
-        context = await self.context.build(self.stream.id)
+        default_context = await self.context.build(self.stream.id)
+        self.assertEqual(default_context.references, ())
+        context = await self.context.build(
+            self.stream.id,
+            (active.public_id, hidden.public_id),
+            (open_item.public_id, closed.public_id),
+        )
         contents = {item.content for item in context.references}
-        self.assertEqual(contents, {"active memory", "open attention", "interest"})
+        self.assertEqual(contents, {"active memory", "open attention"})
         self.assertEqual(
             {item.public_id for item in context.references},
-            {active.public_id, open_item.public_id, interest.public_id},
+            {active.public_id, open_item.public_id},
         )
         rendered = str(context)
         for forbidden in (
@@ -136,3 +143,41 @@ class CoreReferenceTests(unittest.IsolatedAsyncioTestCase):
             "reply_mode", "routing reason", "salience", "CareReader reason",
         ):
             self.assertNotIn(forbidden, rendered)
+
+    async def test_reference_selector_uses_visible_same_stream_items_and_limits_three(self) -> None:
+        memory_ids = []
+        for index in range(4):
+            mark = await self.memory.create_pending_from_care(
+                self.stream.id, self.message.id, f"星の話 {index}", status="active"
+            )
+            memory_ids.append(mark.public_id)
+        hidden = await self.memory.create_pending_from_care(
+            self.stream.id, self.message.id, "星の秘密", status="active"
+        )
+        await self.memory.hide(hidden.public_id)
+        attention = await self.attention.create_open(
+            self.stream.id, "星を見に行く話", self.message.id
+        )
+        closed = await self.attention.create_open(
+            self.stream.id, "星の閉じた話", self.message.id
+        )
+        await self.attention.close(closed.public_id)
+        await self.memory.create_pending_from_care(
+            self.other.id, self.other_message.id, "星の別stream", status="active"
+        )
+        await self.interest.repository.upsert_term(
+            self.stream.id, "星", 0.4, "manual"
+        )
+
+        selection = await ReferenceSelector(
+            self.memory, self.attention, self.interest
+        ).select(self.stream.id, "星の話をしよう")
+        selected = selection.memory_ids + selection.attention_ids
+        self.assertLessEqual(len(selected), 3)
+        self.assertNotIn(hidden.public_id, selected)
+        self.assertNotIn(closed.public_id, selected)
+        context = await self.context.build(
+            self.stream.id, selection.memory_ids, selection.attention_ids
+        )
+        self.assertLessEqual(len(context.references), 3)
+        self.assertNotIn("星", {item.content for item in context.references})

@@ -17,7 +17,7 @@ from yuno.interest.repository import InterestRepository
 from yuno.interest.service import InterestService
 from yuno.memory.repository import MemoryMarkRepository
 from yuno.memory.service import MemoryMarkService
-from yuno.messages import IncomingMessage
+from yuno.messages import IncomingMessage, SentMessage
 from yuno.pipeline import ConversationPipeline
 
 
@@ -88,19 +88,31 @@ class PipelineCareTests(unittest.IsolatedAsyncioTestCase):
             care,
         )
 
-    async def test_directed_message_calls_care_and_applies_candidates(self) -> None:
+    async def test_directed_message_observes_only_after_assistant_is_saved(self) -> None:
         reader = FakeCareReader(CareReadResult(
             memory_candidates=(MemoryCandidate("大事な断片", "pin", "active", 0.8),),
             attention_candidates=(AttentionCandidate("開いた話", 0.6),),
             interest_updates=(InterestUpdate("星", 0.4),),
         ))
         speaker = RecordingSpeaker()
-        result = await self.pipeline(reader, speaker).process(
+        pipeline = self.pipeline(reader, speaker)
+        result = await pipeline.process(
             self.incoming("1", "<@99> 聞いて", mention=True)
         )
         self.assertTrue(result.should_send)
+        self.assertEqual(reader.requests, [])
+        self.assertEqual(speaker.contexts[0].references, ())
+        await pipeline.record_sent_assistant(
+            result,
+            SentMessage("2", "99", "ゆの", "返事", "2026-01-01T00:00:01+00:00"),
+        )
+        await pipeline.observe_after_send(result.observation_ticket)
         self.assertEqual(len(reader.requests), 1)
         self.assertEqual(reader.requests[0].addressing_strength, 1.0)
+        self.assertTrue(any(
+            item["role"] == "assistant"
+            for item in reader.requests[0].recent_messages
+        ))
         stream_id = result.stream_id
         self.assertEqual(len(await self.memory.references_for_stream(stream_id)), 1)
         self.assertEqual(len(await self.attention.references_for_stream(stream_id)), 1)
@@ -109,6 +121,16 @@ class PipelineCareTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("salience", rendered)
         self.assertNotIn("routing", rendered)
         self.assertNotIn("reason", rendered)
+        mark = (await self.memory.references_for_stream(stream_id))[0]
+        source = await (await self.database.connection.execute(
+            "SELECT role FROM messages WHERE id = ?", (mark.source_message_id,)
+        )).fetchone()
+        self.assertEqual(source["role"], "user")
+        attention = (await self.attention.references_for_stream(stream_id))[0]
+        source = await (await self.database.connection.execute(
+            "SELECT role FROM messages WHERE id = ?", (attention.source_message_id,)
+        )).fetchone()
+        self.assertEqual(source["role"], "user")
 
     async def test_unmatched_listening_message_is_store_only_without_care(self) -> None:
         reader = FakeCareReader(CareReadResult(should_speak=True))
@@ -153,6 +175,10 @@ class PipelineCareTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(speaking.should_send)
         self.assertEqual(speaking.reply_mode, "plain")
         self.assertEqual(len(speaking_speaker.contexts), 1)
+        await self.pipeline(speaking_reader, speaking_speaker).observe_after_send(
+            speaking.observation_ticket
+        )
+        self.assertEqual(len(speaking_reader.requests), 1)
 
     async def test_speaker_failure_keeps_user_message_without_assistant(self) -> None:
         reader = FakeCareReader()

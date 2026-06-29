@@ -15,6 +15,7 @@ from yuno.commands.core import (
 from yuno.commands.listening import create_listening_group
 from yuno.config import Settings, load_settings
 from yuno.conversation.context import ContextBuilder
+from yuno.conversation.reference_selector import ReferenceSelector
 from yuno.conversation.repository import ConversationRepository
 from yuno.discord.routing import MessageRouter
 from yuno.discord.events import ConversationRuntime, register_events
@@ -96,6 +97,7 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
         speaker,
         CareReader(client),
         care_service,
+        ReferenceSelector(memory, attention, interest),
     )
     bot = YunoBot(
         settings,

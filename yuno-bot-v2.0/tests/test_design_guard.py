@@ -33,12 +33,12 @@ class DesignGuardTests(unittest.TestCase):
         self.assertIn("CareReader", text)
         self.assertIn("必要な時だけ返答", text)
 
-    def test_prompts_do_not_claim_unimplemented_media_capabilities(self) -> None:
-        for prompt in (SYSTEM_PROMPT, CARE_SYSTEM_PROMPT):
-            self.assertIn("画像", prompt)
-            self.assertIn("音声", prompt)
-            self.assertIn("外部リンク", prompt)
-        self.assertIn("読めません", SYSTEM_PROMPT)
+    def test_prompts_do_not_claim_unprovided_capabilities(self) -> None:
+        self.assertIn("与えられていないものを見たふり", SYSTEM_PROMPT)
+        for word in ("履歴", "references", "memory mark", "attention item"):
+            self.assertNotIn(word, SYSTEM_PROMPT.casefold())
+        for word in ("画像", "音声", "外部リンク"):
+            self.assertIn(word, CARE_SYSTEM_PROMPT)
         self.assertIn("テキストだけ", CARE_SYSTEM_PROMPT)
 
     def test_command_responses_are_ephemeral(self) -> None:
@@ -69,6 +69,9 @@ class SpeakerReferenceBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("参照する断片", payload)
         self.assertNotIn("mem_0001", payload)
         self.assertNotIn("public_id", payload)
+        self.assertNotIn("\"kind\"", payload)
+        self.assertNotIn("\"source\"", payload)
+        self.assertNotIn("references", payload)
         for forbidden in (
             "interest_salience", "addressing_strength", "reply_mode",
             "wants_to_speak", "should_speak", "CareReader reason",

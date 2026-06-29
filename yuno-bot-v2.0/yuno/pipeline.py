@@ -6,6 +6,7 @@ from yuno.care.models import CareReadResult
 from yuno.care.reader import CareReader
 from yuno.care.service import CareService, interest_salience, overlaps_attention
 from yuno.conversation.context import ContextBuilder
+from yuno.conversation.reference_selector import ReferenceSelector
 from yuno.conversation.repository import ConversationRepository
 from yuno.discord.routing import MessageRouter
 from yuno.messages import IncomingMessage, SentMessage
@@ -22,6 +23,16 @@ class PipelineResult:
     reply_mode: str
     stream_id: Optional[int]
     reply_to_discord_message_id: Optional[str]
+    observation_ticket: Optional["ObservationTicket"] = None
+
+
+@dataclass(frozen=True)
+class ObservationTicket:
+    stream_id: int
+    user_message_id: int
+    user_content: str
+    route_reason: str
+    pre_care_completed: bool
 
 
 class ConversationPipeline:
@@ -33,6 +44,7 @@ class ConversationPipeline:
         speaker: Speaker,
         care_reader: Optional[CareReader] = None,
         care_service: Optional[CareService] = None,
+        reference_selector: Optional[ReferenceSelector] = None,
     ):
         self.router = router
         self.repository = repository
@@ -40,6 +52,7 @@ class ConversationPipeline:
         self.speaker = speaker
         self.care_reader = care_reader
         self.care_service = care_service
+        self.reference_selector = reference_selector
 
     async def process(self, message: IncomingMessage) -> PipelineResult:
         route = await self.router.route(message)
@@ -62,30 +75,32 @@ class ConversationPipeline:
             created_at=message.created_at,
         )
         care_result = CareReadResult()
-        application = None
-        if self.care_reader and self.care_service:
+        pre_care_completed = False
+        if (
+            route.reason == "listening_only"
+            and self.care_reader
+            and self.care_service
+        ):
             state = await self.care_service.current_state(stream.id)
             _, attention, interests = state
             salience = interest_salience(route.speaker_content, interests)
-            should_read = route.should_reply or salience > 0 or overlaps_attention(
+            should_read = salience > 0 or overlaps_attention(
                 route.speaker_content, attention
             )
             if should_read:
-                logger.debug(
-                    "care_reader called stream_id=%s directed=%s",
-                    stream.id, route.should_reply,
-                )
+                logger.debug("care_reader called before send stream_id=%s", stream.id)
                 request = await self.care_service.build_request(
                     stream.id,
                     route.speaker_content,
-                    1.0 if route.should_reply else 0.0,
+                    0.0,
                     salience,
                     state,
                 )
                 care_result = await self.care_reader.read(request)
-                application = await self.care_service.apply(
+                await self.care_service.apply(
                     stream.id, user_record.id, care_result
                 )
+                pre_care_completed = True
                 logger.debug(
                     "care_reader result stream_id=%s memory=%d attention=%d interest=%d",
                     stream.id,
@@ -111,18 +126,28 @@ class ConversationPipeline:
 
         memory_ids = list(care_result.include_memory_ids)
         attention_ids = list(care_result.include_attention_ids)
-        if application:
-            memory_ids.extend(application.created_memory_ids)
-            attention_ids.extend(application.created_attention_ids)
+        if route.should_reply and self.reference_selector:
+            selection = await self.reference_selector.select(
+                stream.id, route.speaker_content
+            )
+            memory_ids = list(selection.memory_ids)
+            attention_ids = list(selection.attention_ids)
         context = await self.context_builder.build(
             stream.id,
-            memory_ids or None,
-            attention_ids or None,
+            memory_ids,
+            attention_ids,
         )
         reply = await self.speaker.speak(context)
         reply_mode = route.reply_mode if route.should_reply else "plain"
         reply_to = message.discord_message_id if reply_mode == "discord_reply" else None
-        return PipelineResult(True, reply, reply_mode, stream.id, reply_to)
+        ticket = ObservationTicket(
+            stream_id=stream.id,
+            user_message_id=user_record.id,
+            user_content=route.speaker_content,
+            route_reason=route.reason,
+            pre_care_completed=pre_care_completed,
+        )
+        return PipelineResult(True, reply, reply_mode, stream.id, reply_to, ticket)
 
     async def record_sent_assistant(
         self,
@@ -140,4 +165,36 @@ class ConversationPipeline:
             content=sent.content,
             reply_to_discord_message_id=result.reply_to_discord_message_id,
             created_at=sent.created_at,
+        )
+
+    async def observe_after_send(
+        self, ticket: Optional[ObservationTicket]
+    ) -> None:
+        if (
+            ticket is None
+            or ticket.pre_care_completed
+            or not self.care_reader
+            or not self.care_service
+        ):
+            return
+        state = await self.care_service.current_state(ticket.stream_id)
+        _, _, interests = state
+        salience = interest_salience(ticket.user_content, interests)
+        request = await self.care_service.build_request(
+            ticket.stream_id,
+            ticket.user_content,
+            1.0,
+            salience,
+            state,
+        )
+        result = await self.care_reader.read(request)
+        await self.care_service.apply(
+            ticket.stream_id, ticket.user_message_id, result
+        )
+        logger.debug(
+            "care_reader observed after send stream_id=%s memory=%d attention=%d interest=%d",
+            ticket.stream_id,
+            len(result.memory_candidates),
+            len(result.attention_candidates),
+            len(result.interest_updates),
         )

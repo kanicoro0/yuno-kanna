@@ -7,17 +7,17 @@ from yuno.listening.service import ListeningChannelService
 
 
 def create_listening_group(service: ListeningChannelService) -> app_commands.Group:
-    group = app_commands.Group(name="listening", description="listening対象を管理します")
+    group = app_commands.Group(name="listening", description="ゆのが聞き耳を立てる場所を管理します")
 
-    @group.command(name="list", description="現在のlistening対象を表示します")
+    @group.command(name="list", description="今ゆのが聞いている場所を表示します")
     async def listening_list(interaction: discord.Interaction) -> None:
         items = await service.list_all()
         text = "\n".join(
-            f"<#{item.discord_channel_id}> source: {item.source}" for item in items
-        ) or "listening対象はありません"
+            f"<#{item.discord_channel_id}> 由来: {item.source}" for item in items
+        ) or "ゆのが聞き耳を立てている場所は、まだないみたい"
         await _reply(interaction, text)
 
-    @group.command(name="add", description="listening対象を追加します")
+    @group.command(name="add", description="聞き耳の場所を追加します")
     async def listening_add(
         interaction: discord.Interaction,
         channel: Optional[discord.TextChannel] = None,
@@ -30,13 +30,13 @@ def create_listening_group(service: ListeningChannelService) -> app_commands.Gro
             or not isinstance(target, discord.TextChannel)
             or target.guild.id != interaction.guild_id
         ):
-            await _reply(interaction, "guildのテキストチャンネルで実行してください")
+            await _reply(interaction, "サーバーのテキストチャンネルで実行してね")
             return
         result = await service.add(str(target.id), str(interaction.guild_id))
-        text = "追加しました" if result.changed else "すでにlistening対象です"
+        text = "聞き耳の場所に追加したよ" if result.changed else "そこはもう聞き耳の場所だよ"
         await _reply(interaction, text)
 
-    @group.command(name="remove", description="DB由来のlistening対象を解除します")
+    @group.command(name="remove", description="後から追加した聞き耳の場所を解除します")
     async def listening_remove(
         interaction: discord.Interaction,
         channel: Optional[discord.TextChannel] = None,
@@ -49,37 +49,37 @@ def create_listening_group(service: ListeningChannelService) -> app_commands.Gro
             or not isinstance(target, discord.TextChannel)
             or target.guild.id != interaction.guild_id
         ):
-            await _reply(interaction, "guildのテキストチャンネルで実行してください")
+            await _reply(interaction, "サーバーのテキストチャンネルで実行してね")
             return
         result = await service.remove(str(target.id))
         if result.reason == "env_protected":
-            text = ".env由来なのでcommandでは解除できません"
+            text = ".envで決めた場所なので、コマンドでは解除できないよ"
         elif result.changed:
-            text = "解除しました"
+            text = "聞き耳を少し閉じたよ"
         else:
-            text = "DB由来のlistening対象ではありません"
+            text = "そこはDB由来の聞き耳ではないみたい"
         await _reply(interaction, text)
 
-    @group.command(name="clear", description="このguildのDB由来設定を解除します")
+    @group.command(name="clear", description="このサーバーで後から追加した聞き耳設定を解除します")
     async def listening_clear(interaction: discord.Interaction) -> None:
         if not await _can_change(interaction):
             return
         if interaction.guild_id is None:
-            await _reply(interaction, "guildで実行してください")
+            await _reply(interaction, "サーバーで実行してね")
             return
         count = await service.clear(str(interaction.guild_id))
-        await _reply(interaction, f"DB由来の設定を{count}件解除しました")
+        await _reply(interaction, f"DB由来の設定を{count}件解除したよ")
 
     return group
 
 
 async def _can_change(interaction: discord.Interaction) -> bool:
     if interaction.guild_id is None:
-        await _reply(interaction, "DMでは変更できません")
+        await _reply(interaction, "DMでは変更できないよ")
         return False
     permissions = getattr(interaction.user, "guild_permissions", None)
     if not permissions or not permissions.manage_channels:
-        await _reply(interaction, "Manage Channels権限が必要です")
+        await _reply(interaction, "この耳を動かすには、チャンネル管理権限が必要です")
         return False
     return True
 

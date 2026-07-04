@@ -28,7 +28,10 @@ def register_events(bot: commands.Bot, runtime: ConversationRuntime) -> None:
             return
         incoming = to_incoming_message(message, bot.user)
         try:
-            result = await runtime.pipeline.process(incoming)
+            turn = await runtime.pipeline.intake(incoming)
+            if turn is None:
+                return
+            result = await runtime.pipeline.process_turn(turn)
         except Exception:
             logger.exception("Conversation pipeline failed before send")
             return

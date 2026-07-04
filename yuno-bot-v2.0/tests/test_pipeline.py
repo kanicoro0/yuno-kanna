@@ -55,6 +55,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         channel_id: str = "10",
         *,
         mention: bool = False,
+        author_is_bot: bool = False,
         guild_id="1",
         reply_to=None,
     ) -> IncomingMessage:
@@ -65,7 +66,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             stream_kind="dm" if guild_id is None else "channel",
             author_id="7",
             author_name="こはる",
-            author_is_bot=False,
+            author_is_bot=author_is_bot,
             bot_user_id="99",
             mentions_bot=mention,
             raw_content=content,
@@ -83,6 +84,60 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             "SELECT COUNT(*) AS count FROM messages"
         )).fetchone()
         self.assertEqual(row["count"], 0)
+
+    async def test_ignored_bot_message_does_not_create_a_turn_or_store(self) -> None:
+        turn = await self.pipeline.intake(
+            self.incoming("bot", "bot message", author_is_bot=True)
+        )
+
+        self.assertIsNone(turn)
+        row = await (await self.database.connection.execute(
+            "SELECT COUNT(*) AS count FROM messages"
+        )).fetchone()
+        self.assertEqual(row["count"], 0)
+
+    async def test_single_dm_is_stored_then_processed_as_one_turn(self) -> None:
+        incoming = self.incoming("dm-1", "DMで話そう", channel_id="30", guild_id=None)
+
+        turn = await self.pipeline.intake(incoming)
+
+        self.assertIsNotNone(turn)
+        stored = await self.repository.find_by_discord_message_id("dm-1")
+        self.assertEqual(turn.source_user_message_ids, (stored.id,))
+        self.assertEqual(turn.content, "DMで話そう")
+        result = await self.pipeline.process_turn(turn)
+        self.assertTrue(result.should_send)
+        self.assertEqual(result.reply_mode, "plain")
+
+    async def test_turn_uses_stored_content_without_route_metadata(self) -> None:
+        turn = await self.pipeline.intake(
+            self.incoming("turn-1", "<@99> 続けよう", mention=True)
+        )
+
+        stored = await self.repository.find_by_discord_message_id("turn-1")
+        self.assertEqual(turn.source_user_message_ids, (stored.id,))
+        self.assertEqual(stored.discord_message_id, "turn-1")
+        result = await self.pipeline.process_turn(turn)
+        rendered = str(self.speaker.contexts[-1].history)
+        self.assertTrue(result.should_send)
+        self.assertEqual(result.reply_mode, "discord_reply")
+        self.assertIn("続けよう", rendered)
+        self.assertNotIn("mention", rendered)
+        self.assertNotIn("discord_reply", rendered)
+
+    async def test_reply_to_yuno_still_uses_discord_reply(self) -> None:
+        stream = await self.repository.get_or_create_stream("channel", "10", "1")
+        await self.repository.append(
+            stream.id, "yuno-1", "assistant", "99", "ゆの", "前の返事"
+        )
+
+        result = await self.pipeline.process(
+            self.incoming("reply-1", "続き", reply_to="yuno-1")
+        )
+
+        self.assertTrue(result.should_send)
+        self.assertEqual(result.reply_mode, "discord_reply")
+        self.assertEqual(result.reply_to_discord_message_id, "reply-1")
 
     async def test_listening_message_is_saved_without_speaker(self) -> None:
         result = await self.pipeline.process(self.incoming("1", "近くの会話"))

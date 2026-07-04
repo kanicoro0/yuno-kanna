@@ -31,8 +31,9 @@ Every Codex task should start by reading:
 5. `005_status_entry.md`
 6. `006_attention_cue_plan.md`
 7. `007_readonly_toolreader.md`
+8. `008_intake_turn_boundary.md`
 
-Do not skip directly to tool execution. The queue intentionally builds the boundary first: permission, scope, tool definitions, status display, then natural-language read-only operation.
+Do not skip directly to tool execution. The queue intentionally builds boundaries first: permission, scope, tool definitions, status display, then message intake / turn boundaries before natural-language operations.
 
 ## Default rule
 

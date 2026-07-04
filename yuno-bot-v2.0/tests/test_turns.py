@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from yuno.turns import PipelineTurn, TurnBuffer
+from yuno.turns import PipelineTurn, TurnBuffer, TurnManager, TurnPhase
 
 
 def make_turn(
@@ -93,6 +93,109 @@ class TurnBufferTests(unittest.IsolatedAsyncioTestCase):
             {item.source_user_message_ids for item in results}, {(10,), (11,)}
         )
 
+
+class TurnManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.manager = TurnManager(TurnBuffer(debounce_seconds=0.01))
+
+    async def test_buffering_messages_can_still_merge(self) -> None:
+        first, second = await asyncio.gather(
+            self.manager.select(make_turn(10, "first")),
+            self.manager.select(make_turn(11, "second")),
+        )
+
+        selected = first or second
+        self.assertEqual(selected.source_user_message_ids, (10, 11))
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.BUFFERING)
+
+        async with self.manager.processing(selected):
+            self.assertEqual(self.manager.phase_for(1), TurnPhase.GENERATING)
+
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.IDLE)
+
+    async def test_new_turn_during_generation_waits_for_current_turn(self) -> None:
+        first = await self.manager.select(make_turn(10, "first"))
+        first_entered = asyncio.Event()
+        release_first = asyncio.Event()
+        second_entered = asyncio.Event()
+        active = 0
+        maximum_active = 0
+
+        async def process_first() -> None:
+            nonlocal active, maximum_active
+            async with self.manager.processing(first):
+                active += 1
+                maximum_active = max(maximum_active, active)
+                first_entered.set()
+                await release_first.wait()
+                self.manager.mark_sending(1)
+                active -= 1
+
+        async def process_second() -> None:
+            nonlocal active, maximum_active
+            selected = await self.manager.select(make_turn(11, "second"))
+            async with self.manager.processing(selected):
+                active += 1
+                maximum_active = max(maximum_active, active)
+                second_entered.set()
+                active -= 1
+
+        first_task = asyncio.create_task(process_first())
+        await first_entered.wait()
+        second_task = asyncio.create_task(process_second())
+        await asyncio.sleep(0.02)
+
+        self.assertFalse(second_entered.is_set())
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.GENERATING)
+
+        release_first.set()
+        await asyncio.gather(first_task, second_task)
+
+        self.assertEqual(maximum_active, 1)
+        self.assertTrue(second_entered.is_set())
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.IDLE)
+
+    async def test_generation_failure_returns_stream_to_idle(self) -> None:
+        selected = await self.manager.select(make_turn(10, "first"))
+
+        with self.assertRaises(RuntimeError):
+            async with self.manager.processing(selected):
+                raise RuntimeError("generation failed")
+
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.IDLE)
+
+    async def test_two_sends_in_one_stream_do_not_overlap(self) -> None:
+        first = await self.manager.select(make_turn(10, "first"))
+        second = await self.manager.select(make_turn(11, "second"))
+        first_sending = asyncio.Event()
+        release_first = asyncio.Event()
+        active_sends = 0
+        maximum_active_sends = 0
+
+        async def send(selected, *, wait: bool) -> None:
+            nonlocal active_sends, maximum_active_sends
+            async with self.manager.processing(selected):
+                self.manager.mark_sending(1)
+                active_sends += 1
+                maximum_active_sends = max(maximum_active_sends, active_sends)
+                if wait:
+                    first_sending.set()
+                    await release_first.wait()
+                active_sends -= 1
+
+        first_task = asyncio.create_task(send(first, wait=True))
+        await first_sending.wait()
+        second_task = asyncio.create_task(send(second, wait=False))
+        await asyncio.sleep(0)
+
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.SENDING)
+        self.assertFalse(second_task.done())
+
+        release_first.set()
+        await asyncio.gather(first_task, second_task)
+
+        self.assertEqual(maximum_active_sends, 1)
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.IDLE)
 
 if __name__ == "__main__":
     unittest.main()

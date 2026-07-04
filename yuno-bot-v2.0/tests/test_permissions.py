@@ -16,6 +16,13 @@ class PermissionServiceTests(unittest.TestCase):
             service.allows(ActorIdentity("10"), PermissionLevel.OWNER)
         )
 
+    def test_integer_actor_id_matches_string_owner_id(self) -> None:
+        service = PermissionService({"123"})
+
+        self.assertTrue(
+            service.allows(ActorIdentity(123), PermissionLevel.OWNER)
+        )
+
     def test_guild_admin_is_allowed_for_guild_admin_action(self) -> None:
         service = PermissionService()
         discord = DiscordPermissionContext(guild_id="100", is_guild_admin=True)

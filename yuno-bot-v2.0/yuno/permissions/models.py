@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional
+from typing import Optional, Union
 
 
 class PermissionLevel(IntEnum):
@@ -11,7 +11,7 @@ class PermissionLevel(IntEnum):
 
 @dataclass(frozen=True)
 class ActorIdentity:
-    user_id: str
+    user_id: Union[str, int]
 
 
 @dataclass(frozen=True)

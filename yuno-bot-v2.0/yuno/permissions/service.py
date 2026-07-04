@@ -20,7 +20,7 @@ class PermissionService:
         actor: ActorIdentity,
         discord: DiscordPermissionContext = DiscordPermissionContext(),
     ) -> PermissionLevel:
-        if actor.user_id in self._owner_user_ids:
+        if str(actor.user_id).strip() in self._owner_user_ids:
             return PermissionLevel.OWNER
         if discord.guild_id is not None and discord.is_guild_admin:
             return PermissionLevel.GUILD_ADMIN

@@ -8,6 +8,8 @@ from yuno.attention.repository import AttentionRepository
 from yuno.attention.service import AttentionService
 from yuno.care.reader import CareReader
 from yuno.care.service import CareService
+from yuno.care_marks.repository import CareMarkRepository
+from yuno.care_marks.service import CareMarkService
 from yuno.commands.admin_service import CoreAdminService
 from yuno.commands.core import (
     create_attention_group, create_interest_group, create_memory_group,
@@ -16,7 +18,6 @@ from yuno.commands.listening import create_listening_group
 from yuno.commands.status import create_status_command
 from yuno.config import Settings, load_settings
 from yuno.conversation.context import ContextBuilder
-from yuno.conversation.reference_selector import ReferenceSelector
 from yuno.conversation.repository import ConversationRepository
 from yuno.discord.routing import MessageRouter
 from yuno.discord.events import ConversationRuntime, register_events
@@ -29,6 +30,8 @@ from yuno.listening.service import ListeningChannelService
 from yuno.memory.repository import MemoryMarkRepository
 from yuno.memory.service import MemoryMarkService
 from yuno.pipeline import ConversationPipeline
+from yuno.read_cues.repository import ReadCueRepository
+from yuno.read_cues.service import ReadCueService
 from yuno.speaking.speaker import Speaker
 
 class YunoBot(commands.Bot):
@@ -66,20 +69,21 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     memory = MemoryMarkService(MemoryMarkRepository(database))
     attention = AttentionService(AttentionRepository(database))
     interest = InterestService(InterestRepository(database))
+    care_marks = CareMarkService(CareMarkRepository(database))
+    read_cues = ReadCueService(ReadCueRepository(database))
     listening = ListeningChannelService(
         ListeningChannelRepository(database), settings.listening_channel_ids
     )
     client = OpenAITextClient(settings.openai_api_key, settings.openai_model)
     speaker = Speaker(client)
-    care_service = CareService(repository, memory, attention, interest)
+    care_service = CareService(repository, care_marks, read_cues)
     pipeline = ConversationPipeline(
         MessageRouter(settings, repository, listening),
         repository,
-        ContextBuilder(repository, memory, attention, interest),
+        ContextBuilder(repository),
         speaker,
         CareReader(client),
         care_service,
-        ReferenceSelector(memory, attention, interest),
     )
     bot = YunoBot(
         settings,

@@ -82,6 +82,31 @@ class ReadCueRepository:
         )).fetchall()
         return [self._model(row) for row in rows]
 
+    async def list_for_stream(
+        self,
+        stream_id: int,
+        statuses: Optional[Iterable[str]] = None,
+        limit: int = 40,
+    ) -> List[ReadCue]:
+        parameters = [stream_id]
+        status_clause = ''
+        if statuses is not None:
+            selected = tuple(dict.fromkeys(statuses))
+            if not selected:
+                return []
+            placeholders = ','.join('?' for _ in selected)
+            status_clause = f' AND read_cues.status IN ({placeholders})'
+            parameters.extend(selected)
+        parameters.append(max(1, min(int(limit), 100)))
+        rows = await (await self.database.connection.execute(
+            f'''SELECT read_cues.* FROM read_cues
+                JOIN care_marks ON care_marks.id = read_cues.care_mark_id
+                WHERE care_marks.stream_id = ?{status_clause}
+                ORDER BY read_cues.weight DESC, read_cues.id DESC LIMIT ?''',
+            tuple(parameters),
+        )).fetchall()
+        return [self._model(row) for row in rows]
+
     async def delete(self, read_cue_id: int) -> bool:
         cursor = await self.database.connection.execute(
             'DELETE FROM read_cues WHERE id = ?', (read_cue_id,)

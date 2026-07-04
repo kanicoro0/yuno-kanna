@@ -4,7 +4,7 @@ from typing import Optional
 
 from yuno.care.models import CareReadResult
 from yuno.care.reader import CareReader
-from yuno.care.service import CareService, interest_salience, overlaps_attention
+from yuno.care.service import CareService, cue_salience, overlaps_attention
 from yuno.conversation.context import ContextBuilder
 from yuno.conversation.reference_selector import ReferenceSelector
 from yuno.conversation.repository import ConversationRepository
@@ -118,10 +118,9 @@ class ConversationPipeline:
             and self.care_service
         ):
             state = await self.care_service.current_state(turn.stream_id)
-            _, attention, interests = state
-            salience = interest_salience(turn.content, interests)
+            salience = cue_salience(turn.content, state.read_cues)
             should_read = salience > 0 or overlaps_attention(
-                turn.content, attention
+                turn.content, state.care_marks
             )
             if should_read:
                 logger.debug(
@@ -142,11 +141,17 @@ class ConversationPipeline:
                 )
                 pre_care_completed = True
                 logger.debug(
-                    "care_reader result stream_id=%s memory=%d attention=%d interest=%d",
+                    "care_reader result stream_id=%s memory=%d attention=%d cues=%d",
                     turn.stream_id,
-                    len(care_result.memory_candidates),
-                    len(care_result.attention_candidates),
-                    len(care_result.interest_updates),
+                    sum(
+                        item.kind == 'memory'
+                        for item in care_result.care_mark_candidates
+                    ),
+                    sum(
+                        item.kind == 'attention'
+                        for item in care_result.care_mark_candidates
+                    ),
+                    len(care_result.read_cue_updates),
                 )
             else:
                 logger.debug("care_reader skipped stream_id=%s", turn.stream_id)
@@ -164,8 +169,8 @@ class ConversationPipeline:
         if not should_speak:
             return PipelineResult(False, "", "none", turn.stream_id, None)
 
-        memory_ids = list(care_result.include_memory_ids)
-        attention_ids = list(care_result.include_attention_ids)
+        memory_ids = []
+        attention_ids = []
         if turn.should_reply and self.reference_selector:
             selection = await self.reference_selector.select(
                 turn.stream_id, turn.content
@@ -224,8 +229,7 @@ class ConversationPipeline:
         ):
             return
         state = await self.care_service.current_state(ticket.stream_id)
-        _, _, interests = state
-        salience = interest_salience(ticket.user_content, interests)
+        salience = cue_salience(ticket.user_content, state.read_cues)
         request = await self.care_service.build_request(
             ticket.stream_id,
             ticket.user_content,
@@ -238,9 +242,15 @@ class ConversationPipeline:
             ticket.stream_id, ticket.care_source_user_message_id, result
         )
         logger.debug(
-            "care_reader observed after send stream_id=%s memory=%d attention=%d interest=%d",
+            "care_reader observed after send stream_id=%s memory=%d attention=%d cues=%d",
             ticket.stream_id,
-            len(result.memory_candidates),
-            len(result.attention_candidates),
-            len(result.interest_updates),
+            sum(
+                item.kind == 'memory'
+                for item in result.care_mark_candidates
+            ),
+            sum(
+                item.kind == 'attention'
+                for item in result.care_mark_candidates
+            ),
+            len(result.read_cue_updates),
         )

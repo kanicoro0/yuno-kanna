@@ -6,6 +6,10 @@ Add a small scope model for future settings, memory visibility, and tool operati
 
 This should define where an operation applies. It should not decide who is allowed to perform it; that belongs to PermissionService.
 
+## Working directory
+
+Run this task from `yuno-bot-v2.0/`.
+
 ## Read first
 
 - `docs/yuno_design_principles.md`
@@ -53,7 +57,13 @@ This should define where an operation applies. It should not decide who is allow
 
 ## Checks
 
-Run:
+Run from `yuno-bot-v2.0/`:
+
+```bash
+python scripts/check_yuno.py
+```
+
+If the script is unavailable for some reason, run:
 
 ```bash
 python -m compileall main.py yuno tests

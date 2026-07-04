@@ -6,6 +6,10 @@ Review the current `yuno-bot-v2.0` structure before adding new implementation la
 
 This task should produce a short map and recommendations. It should not change runtime behavior.
 
+## Working directory
+
+Run this task from `yuno-bot-v2.0/`.
+
 ## Read first
 
 - `docs/yuno_design_principles.md`
@@ -15,8 +19,8 @@ This task should produce a short map and recommendations. It should not change r
 
 ## Allowed scope
 
-- `yuno-bot-v2.0/docs/`
-- optional notes under `yuno-bot-v2.0/docs/codex_queue/`
+- `docs/`
+- optional notes under `docs/codex_queue/`
 
 ## Do not touch
 

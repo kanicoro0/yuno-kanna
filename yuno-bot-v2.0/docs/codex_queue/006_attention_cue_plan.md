@@ -6,6 +6,10 @@ Plan the migration from independent `InterestTerm` to Attention-owned cue/term b
 
 This task is mostly planning. It should not drop tables or break compatibility.
 
+## Working directory
+
+Run this task from `yuno-bot-v2.0/`.
+
 ## Read first
 
 - `docs/yuno_design_principles.md`
@@ -52,7 +56,13 @@ This task is mostly planning. It should not drop tables or break compatibility.
 
 No runtime checks are required if only docs change.
 
-If code changes, run:
+If code changes, run from `yuno-bot-v2.0/`:
+
+```bash
+python scripts/check_yuno.py
+```
+
+If the script is unavailable for some reason, run:
 
 ```bash
 python -m compileall main.py yuno tests

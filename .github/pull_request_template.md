@@ -36,8 +36,17 @@ Not touched:
 
 ## Checks
 
+Run from repo root:
+
 - [ ] `python yuno-bot-v2.0/scripts/check_yuno.py`
-- [ ] Other:
+
+Or run from `yuno-bot-v2.0/`:
+
+- [ ] `python scripts/check_yuno.py`
+
+Other:
+
+- [ ]
 - [ ] Not run, because:
 
 ## Risk notes
@@ -47,7 +56,7 @@ Not touched:
 - [ ] Does not change normal conversation behavior unexpectedly
 - [ ] Does not add arbitrary shell execution
 - [ ] Does not add arbitrary file reads
-- [ ] Does not expose raw logs, secrets, internal scores, or tracebacks to Speaker
+- [ ] Does not expose raw logs, secrets, internal scores, internal paths, or tracebacks to Speaker
 - [ ] Does not add destructive migration or delete data
 
 ## Human decision needed

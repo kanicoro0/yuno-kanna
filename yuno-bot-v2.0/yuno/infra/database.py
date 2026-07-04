@@ -4,7 +4,7 @@ from typing import Optional
 import aiosqlite
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class Database:
@@ -92,73 +92,6 @@ class Database:
         if current < 2:
             await connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS memory_marks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    public_id TEXT NOT NULL UNIQUE,
-                    stream_id INTEGER REFERENCES streams(id) ON DELETE CASCADE,
-                    source_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
-                    kind TEXT NOT NULL CHECK (kind IN ('pin', 'correction')),
-                    status TEXT NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending', 'active', 'hidden')),
-                    content TEXT NOT NULL,
-                    confidence REAL NOT NULL DEFAULT 0.5,
-                    provenance TEXT NOT NULL DEFAULT 'care_reader'
-                        CHECK (provenance IN ('care_reader', 'manual', 'legacy')),
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    hidden_at TEXT,
-                    legacy_source_id TEXT,
-                    legacy_import_batch_id TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS memory_marks_stream_status
-                    ON memory_marks(stream_id, status, id DESC);
-                CREATE INDEX IF NOT EXISTS memory_marks_source_message
-                    ON memory_marks(source_message_id);
-                CREATE UNIQUE INDEX IF NOT EXISTS memory_marks_legacy_unique
-                    ON memory_marks(legacy_source_id)
-                    WHERE legacy_source_id IS NOT NULL;
-
-                CREATE TABLE IF NOT EXISTS attention_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    public_id TEXT NOT NULL UNIQUE,
-                    stream_id INTEGER NOT NULL REFERENCES streams(id) ON DELETE CASCADE,
-                    source_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
-                    memory_mark_id INTEGER REFERENCES memory_marks(id) ON DELETE SET NULL,
-                    status TEXT NOT NULL DEFAULT 'open'
-                        CHECK (status IN ('open', 'closed', 'hidden')),
-                    text TEXT NOT NULL,
-                    rank REAL NOT NULL DEFAULT 0.5,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    last_touched_at TEXT,
-                    closed_at TEXT,
-                    hidden_at TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS attention_items_stream_status
-                    ON attention_items(stream_id, status, rank DESC, id DESC);
-
-                CREATE TABLE IF NOT EXISTS interest_terms (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    public_id TEXT NOT NULL UNIQUE,
-                    stream_id INTEGER NOT NULL REFERENCES streams(id) ON DELETE CASCADE,
-                    term TEXT NOT NULL,
-                    weight REAL NOT NULL DEFAULT 0.3,
-                    status TEXT NOT NULL DEFAULT 'active'
-                        CHECK (status IN ('active', 'sleeping', 'hidden')),
-                    source TEXT NOT NULL DEFAULT 'care_reader'
-                        CHECK (source IN ('care_reader', 'memory', 'attention', 'manual')),
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    last_touched_at TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS interest_terms_stream_status
-                    ON interest_terms(stream_id, status, weight DESC, id DESC);
-                CREATE UNIQUE INDEX IF NOT EXISTS interest_terms_unique_active
-                    ON interest_terms(stream_id, term)
-                    WHERE status != 'hidden';
                 """
             )
             await connection.execute(
@@ -179,5 +112,57 @@ class Database:
             )
             await connection.execute(
                 "INSERT INTO schema_migrations(version, applied_at) VALUES (3, datetime('now'))"
+            )
+        if current < 4:
+            await connection.executescript(
+                '''
+                DROP TABLE IF EXISTS read_cues;
+                DROP TABLE IF EXISTS care_marks;
+                DROP TABLE IF EXISTS interest_terms;
+                DROP TABLE IF EXISTS attention_items;
+                DROP TABLE IF EXISTS memory_marks;
+
+                CREATE TABLE care_marks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    public_id TEXT NOT NULL UNIQUE,
+                    stream_id INTEGER NOT NULL REFERENCES streams(id) ON DELETE CASCADE,
+                    source_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                    kind TEXT NOT NULL CHECK (kind IN ('memory', 'attention')),
+                    status TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_touched_at TEXT
+                );
+
+                CREATE INDEX care_marks_stream_kind_status
+                    ON care_marks(stream_id, kind, status, id DESC);
+                CREATE INDEX care_marks_source_message
+                    ON care_marks(source_message_id);
+
+                CREATE TABLE read_cues (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    care_mark_id INTEGER NOT NULL
+                        REFERENCES care_marks(id) ON DELETE CASCADE,
+                    term TEXT NOT NULL,
+                    normalized_term TEXT NOT NULL,
+                    weight REAL NOT NULL DEFAULT 0.3,
+                    status TEXT NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'sleeping', 'hidden')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_touched_at TEXT,
+                    UNIQUE(care_mark_id, normalized_term)
+                );
+
+                CREATE INDEX read_cues_mark_status
+                    ON read_cues(care_mark_id, status, weight DESC, id DESC);
+                CREATE INDEX read_cues_normalized_status
+                    ON read_cues(normalized_term, status);
+                '''
+            )
+            await connection.execute(
+                'INSERT INTO schema_migrations(version, applied_at) '
+                'VALUES (4, datetime(\'now\'))'
             )
         await connection.commit()

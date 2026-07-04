@@ -8,7 +8,7 @@ The current runtime sends every raw Discord message directly into `ConversationP
 
 ```text
 raw Discord message intake
-→ stored conversation message
+→ stored eligible conversation message
 → turn / utterance selected for Speaker and CareReader
 ```
 
@@ -33,10 +33,12 @@ Run this task from `yuno-bot-v2.0/`.
 
 A direct TurnBuffer in `yuno/discord/events.py` would be tempting, but the current pipeline also owns routing and database append. If buffering is added only outside the pipeline, the bot may either:
 
-- delay storage of raw messages, or
+- delay storage of messages that should be kept, or
 - store only the final merged message, losing the original Discord message boundary.
 
-The next design wants `ConversationLog` to stay the original record and `Turn` to be the unit Yuno reads. So first split intake from turn processing.
+The next design wants `ConversationLog` to keep the stored Discord message boundary and `Turn` to be the unit Yuno reads. So first split intake from turn processing.
+
+This task does not require storing ignored messages. Preserve the current rule: bot/self messages and ordinary non-listening channel messages are ignored. For messages that are stored, keep their individual Discord message identity even if a later turn combines several of them.
 
 ## Allowed scope
 
@@ -67,9 +69,9 @@ Do not use `create_tree` for exploration.
    - Keep it minimal.
 
 2. Split `ConversationPipeline.process(message)` into smaller steps while preserving current behavior:
-   - intake / route / store the raw incoming message
+   - intake / route / store the eligible incoming message
    - turn processing for Speaker and CareReader
-   - a compatibility path where one message becomes one turn
+   - a compatibility path where one stored message becomes one turn
 
 3. Preserve the existing public behavior for now:
    - direct DM still replies
@@ -83,7 +85,8 @@ Do not use `create_tree` for exploration.
    - A later task will add short debounce windows, typing presence, and interruption handling.
 
 5. Make the storage semantics explicit in code comments or tests:
-   - raw incoming Discord messages are stored as conversation messages
+   - messages selected by routing for storage remain individual conversation messages
+   - ignored messages remain ignored
    - turn processing may later combine several stored user messages into one turn
 
 6. Keep the current `PipelineResult` send/finalize flow working.

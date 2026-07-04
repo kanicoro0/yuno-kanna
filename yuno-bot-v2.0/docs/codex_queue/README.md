@@ -31,8 +31,17 @@ Every Codex task should start by reading:
 5. `005_status_entry.md`
 6. `006_attention_cue_plan.md`
 7. `007_readonly_toolreader.md`
+8. `008_intake_turn_boundary.md`
+9. `009_turnbuffer_basic_typing.md`
+10. `010_interruption_generation_state.md`
+11. `011_schema_reset_caremark_readcue.md`
+12. `012_care_reader_service_rewrite.md`
+13. `013_context_reference_rewrite.md`
+14. `014_command_cleanup_ci.md`
+15. `015_read_operation_draft.md`
+16. `016_reaction_surface.md`
 
-Do not skip directly to tool execution. The queue intentionally builds the boundary first: permission, scope, tool definitions, status display, then natural-language read-only operation.
+Do not skip directly to tool execution. The queue intentionally builds boundaries first: permission, scope, tool definitions, status display, message intake / turn boundaries, and the simple CareMark / ReadCue base before broader natural-language operations.
 
 ## Default rule
 

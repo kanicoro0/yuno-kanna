@@ -41,6 +41,12 @@ class ObservationTicket:
             raise ValueError("current CareService attribution requires one source message")
         return self.source_user_message_ids[0]
 
+    @property
+    def care_source_user_message_id(self) -> int:
+        if not self.source_user_message_ids:
+            raise ValueError("an observation must have at least one source message")
+        return self.source_user_message_ids[-1]
+
 
 class ConversationPipeline:
     def __init__(
@@ -131,7 +137,7 @@ class ConversationPipeline:
                 care_result = await self.care_reader.read(request)
                 await self.care_service.apply(
                     turn.stream_id,
-                    turn.single_source_user_message_id,
+                    turn.care_source_user_message_id,
                     care_result,
                 )
                 pre_care_completed = True
@@ -229,7 +235,7 @@ class ConversationPipeline:
         )
         result = await self.care_reader.read(request)
         await self.care_service.apply(
-            ticket.stream_id, ticket.single_source_user_message_id, result
+            ticket.stream_id, ticket.care_source_user_message_id, result
         )
         logger.debug(
             "care_reader observed after send stream_id=%s memory=%d attention=%d interest=%d",

@@ -188,3 +188,26 @@ class PipelineCareTests(unittest.IsolatedAsyncioTestCase):
         stream = await self.conversations.get_or_create_stream("channel", "10", "1")
         messages = await self.conversations.recent(stream.id)
         self.assertEqual([(item.role, item.content) for item in messages], [("user", "聞いて")])
+
+    async def test_combined_turn_keeps_sources_and_attributes_care_to_latest(self) -> None:
+        stream = await self.conversations.get_or_create_stream("channel", "10", "1")
+        await self.interest.repository.upsert_term(stream.id, "天体", 0.5, "manual")
+        reader = FakeCareReader(CareReadResult(
+            memory_candidates=(MemoryCandidate("一緒の断片", "pin", "pending", 0.7),)
+        ))
+        pipeline = self.pipeline(reader, RecordingSpeaker())
+        first = await pipeline.intake(self.incoming("combined-1", "天体の"))
+        second = await pipeline.intake(self.incoming("combined-2", "話"))
+        combined = first.merged_with(second)
+
+        result = await pipeline.process_turn(combined)
+
+        self.assertFalse(result.should_send)
+        self.assertEqual(await self.conversations.count_messages(stream.id), 2)
+        self.assertEqual(combined.source_user_message_ids, (
+            first.source_user_message_ids[0], second.source_user_message_ids[0]
+        ))
+        marks = await self.memory.repository.list_for_stream(
+            stream.id, ("pending",), 8
+        )
+        self.assertEqual(marks[0].source_message_id, second.source_user_message_ids[0])

@@ -2,15 +2,38 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
 
-from yuno.discord.events import finalize_sent_message, send_result
+from yuno.discord.events import (
+    ConversationRuntime,
+    finalize_sent_message,
+    handle_message,
+    process_turn_with_typing,
+    send_result,
+)
 from yuno.discord.input import to_incoming_message
 from yuno.pipeline import PipelineResult
+from yuno.turns import PipelineTurn, TurnBuffer
+
+
+class FakeTyping:
+    def __init__(self, channel):
+        self.channel = channel
+
+    async def __aenter__(self):
+        self.channel.typing_enters += 1
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        self.channel.typing_exits += 1
 
 
 class FakeChannel:
     def __init__(self):
         self.id = 10
         self.calls = []
+        self.typing_enters = 0
+        self.typing_exits = 0
+
+    def typing(self):
+        return FakeTyping(self)
 
     async def send(self, content, **kwargs):
         self.calls.append((content, kwargs))
@@ -65,6 +88,45 @@ class DiscordBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source.channel.calls, [])
         self.assertFalse(source.reply_calls[0][1]["mention_author"])
         self.assertIn("allowed_mentions", source.reply_calls[0][1])
+
+    async def test_ignored_intake_does_not_start_typing(self) -> None:
+        class Pipeline:
+            async def intake(self, incoming):
+                return None
+
+            async def process_turn(self, turn):
+                raise AssertionError("ignored input must not be processed")
+
+        source = FakeMessage()
+        bot = SimpleNamespace(user=SimpleNamespace(id=99, display_name="ゆの"))
+        runtime = ConversationRuntime(Pipeline(), TurnBuffer(0))
+
+        await handle_message(bot, source, runtime)
+
+        self.assertEqual(source.channel.typing_enters, 0)
+
+    async def test_directed_generation_uses_one_typing_context(self) -> None:
+        class Pipeline:
+            async def process_turn(self, turn):
+                return PipelineResult(True, "返事", "plain", 1, None)
+
+        source = FakeMessage()
+        turn = PipelineTurn(
+            stream_id=1,
+            author_id="7",
+            content="話そう",
+            source_user_message_ids=(10,),
+            should_reply=True,
+            route_reason="dm",
+            reply_mode="plain",
+            reply_to_discord_message_id=None,
+        )
+
+        result = await process_turn_with_typing(source, Pipeline(), turn)
+
+        self.assertTrue(result.should_send)
+        self.assertEqual(source.channel.typing_enters, 1)
+        self.assertEqual(source.channel.typing_exits, 1)
 
     async def test_assistant_is_saved_before_post_send_observation(self) -> None:
         class Pipeline:

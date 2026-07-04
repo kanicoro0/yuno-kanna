@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
+import asyncio
 import unittest
 
 from yuno.discord.events import (
@@ -11,7 +12,7 @@ from yuno.discord.events import (
 )
 from yuno.discord.input import to_incoming_message
 from yuno.pipeline import PipelineResult
-from yuno.turns import PipelineTurn, TurnBuffer
+from yuno.turns import PipelineTurn, TurnBuffer, TurnManager
 
 
 class FakeTyping:
@@ -99,7 +100,7 @@ class DiscordBoundaryTests(unittest.IsolatedAsyncioTestCase):
 
         source = FakeMessage()
         bot = SimpleNamespace(user=SimpleNamespace(id=99, display_name="ゆの"))
-        runtime = ConversationRuntime(Pipeline(), TurnBuffer(0))
+        runtime = ConversationRuntime(Pipeline(), TurnManager(TurnBuffer(0)))
 
         await handle_message(bot, source, runtime)
 
@@ -125,6 +126,58 @@ class DiscordBoundaryTests(unittest.IsolatedAsyncioTestCase):
         result = await process_turn_with_typing(source, Pipeline(), turn)
 
         self.assertTrue(result.should_send)
+        self.assertEqual(source.channel.typing_enters, 1)
+        self.assertEqual(source.channel.typing_exits, 1)
+
+    async def test_typing_context_is_closed_after_generation_failure(self) -> None:
+        class Pipeline:
+            async def process_turn(self, turn):
+                raise RuntimeError("generation failed")
+
+        source = FakeMessage()
+        turn = PipelineTurn(
+            stream_id=1,
+            author_id="7",
+            content="hello",
+            source_user_message_ids=(10,),
+            should_reply=True,
+            route_reason="dm",
+            reply_mode="plain",
+            reply_to_discord_message_id=None,
+        )
+
+        with self.assertRaises(RuntimeError):
+            await process_turn_with_typing(source, Pipeline(), turn)
+
+        self.assertEqual(source.channel.typing_enters, 1)
+        self.assertEqual(source.channel.typing_exits, 1)
+
+    async def test_typing_context_is_closed_after_cancellation(self) -> None:
+        started = asyncio.Event()
+
+        class Pipeline:
+            async def process_turn(self, turn):
+                started.set()
+                await asyncio.Event().wait()
+
+        source = FakeMessage()
+        turn = PipelineTurn(
+            stream_id=1,
+            author_id="7",
+            content="hello",
+            source_user_message_ids=(10,),
+            should_reply=True,
+            route_reason="dm",
+            reply_mode="plain",
+            reply_to_discord_message_id=None,
+        )
+        task = asyncio.create_task(process_turn_with_typing(source, Pipeline(), turn))
+        await started.wait()
+        task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
         self.assertEqual(source.channel.typing_enters, 1)
         self.assertEqual(source.channel.typing_exits, 1)
 

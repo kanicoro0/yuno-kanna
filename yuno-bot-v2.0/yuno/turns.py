@@ -1,6 +1,8 @@
 import asyncio
-from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import AsyncIterator, Dict, Optional, Tuple
 
 from yuno.conversation.models import ConversationMessage
 
@@ -138,3 +140,83 @@ class TurnBuffer:
             turn.route_reason,
             turn.reply_mode,
         )
+
+
+class TurnPhase(str, Enum):
+    IDLE = "idle"
+    BUFFERING = "buffering"
+    GENERATING = "generating"
+    SENDING = "sending"
+
+
+@dataclass
+class _StreamRuntime:
+    phase: TurnPhase = TurnPhase.IDLE
+    buffering_count: int = 0
+    ready_count: int = 0
+    processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+class TurnManager:
+    """Coordinates buffering and one generation/send lifecycle per stream."""
+
+    def __init__(self, turn_buffer: Optional[TurnBuffer] = None):
+        self.turn_buffer = turn_buffer or TurnBuffer()
+        self._streams: Dict[int, _StreamRuntime] = {}
+
+    def phase_for(self, stream_id: int) -> TurnPhase:
+        runtime = self._streams.get(stream_id)
+        return runtime.phase if runtime else TurnPhase.IDLE
+
+    async def select(self, turn: PipelineTurn) -> Optional[PipelineTurn]:
+        runtime = self._runtime(turn.stream_id)
+        runtime.buffering_count += 1
+        if runtime.phase == TurnPhase.IDLE:
+            runtime.phase = TurnPhase.BUFFERING
+        selected: Optional[PipelineTurn] = None
+        try:
+            selected = await self.turn_buffer.push(turn)
+            if selected is not None:
+                runtime.ready_count += 1
+            return selected
+        finally:
+            runtime.buffering_count -= 1
+            self._settle(runtime)
+
+    @asynccontextmanager
+    async def processing(self, turn: PipelineTurn) -> AsyncIterator[None]:
+        runtime = self._runtime(turn.stream_id)
+        acquired = False
+        try:
+            await runtime.processing_lock.acquire()
+            acquired = True
+            runtime.ready_count -= 1
+            runtime.phase = TurnPhase.GENERATING
+            yield
+        finally:
+            if acquired:
+                self._settle(runtime, processing_finished=True)
+                runtime.processing_lock.release()
+            else:
+                runtime.ready_count -= 1
+                self._settle(runtime)
+
+    def mark_sending(self, stream_id: int) -> None:
+        runtime = self._runtime(stream_id)
+        if not runtime.processing_lock.locked():
+            raise RuntimeError("sending requires an active stream turn")
+        runtime.phase = TurnPhase.SENDING
+
+    def _runtime(self, stream_id: int) -> _StreamRuntime:
+        return self._streams.setdefault(stream_id, _StreamRuntime())
+
+    @staticmethod
+    def _settle(
+        runtime: _StreamRuntime, *, processing_finished: bool = False
+    ) -> None:
+        if runtime.processing_lock.locked() and not processing_finished:
+            return
+        if runtime.buffering_count or runtime.ready_count:
+            runtime.phase = TurnPhase.BUFFERING
+        else:
+            runtime.phase = TurnPhase.IDLE

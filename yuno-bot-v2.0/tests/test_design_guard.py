@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 from yuno.conversation.context import SpeakerContext, SpeakerReference
-from yuno.app import status_text
+from yuno.commands.status import status_text
 from yuno.listening.models import ListeningChannel
 from yuno.care.reader import CARE_SYSTEM_PROMPT
 from yuno.speaking.speaker import SYSTEM_PROMPT

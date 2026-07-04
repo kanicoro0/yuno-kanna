@@ -6,6 +6,10 @@ Add the first natural-language operation path only after permission, scope, and 
 
 This task should support read-only status/health-style planning. It should not add write, restart, delete, backup, or arbitrary shell behavior.
 
+## Working directory
+
+Run this task from `yuno-bot-v2.0/`.
+
 ## Read first
 
 - `docs/yuno_design_principles.md`
@@ -26,7 +30,7 @@ This task should support read-only status/health-style planning. It should not a
 
 ## Do not touch
 
-- Speaker persona or prompt except adding a small, sanitized tool-result input path if unavoidable
+- Speaker persona or prompt
 - CareReader prompt
 - database schema
 - listening behavior
@@ -45,12 +49,13 @@ This task should support read-only status/health-style planning. It should not a
    - available tools
 3. If the message is ordinary conversation, do not call ToolReader.
 4. Execute only allowlisted read-only tools.
-5. Route sanitized `ToolResult` to Speaker or a simple renderer.
+5. Route only sanitized `ToolResult` content to Speaker or a simple renderer. Do not modify the Speaker persona/prompt for this task.
 6. Add tests for:
    - ordinary chat does not plan a tool
    - clear status request creates a read-only plan
    - permission denial blocks execution
    - raw/internal result is not exposed
+   - ToolReader does not retry or loop
 
 ## Important constraints
 
@@ -58,10 +63,17 @@ This task should support read-only status/health-style planning. It should not a
 - Do not create an agent loop.
 - Do not let ToolReader retry tools repeatedly.
 - Do not use LLM for permission decisions.
+- If a safe integration point is unclear, stop and report instead of changing pipeline broadly.
 
 ## Checks
 
-Run:
+Run from `yuno-bot-v2.0/`:
+
+```bash
+python scripts/check_yuno.py
+```
+
+If the script is unavailable for some reason, run:
 
 ```bash
 python -m compileall main.py yuno tests

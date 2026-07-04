@@ -11,6 +11,7 @@ from yuno.conversation.repository import ConversationRepository
 from yuno.discord.routing import MessageRouter
 from yuno.messages import IncomingMessage, SentMessage
 from yuno.speaking.speaker import Speaker
+from yuno.turns import PipelineTurn
 
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,16 @@ class PipelineResult:
 @dataclass(frozen=True)
 class ObservationTicket:
     stream_id: int
-    user_message_id: int
+    source_user_message_ids: tuple[int, ...]
     user_content: str
     route_reason: str
     pre_care_completed: bool
+
+    @property
+    def single_source_user_message_id(self) -> int:
+        if len(self.source_user_message_ids) != 1:
+            raise ValueError("current CareService attribution requires one source message")
+        return self.source_user_message_ids[0]
 
 
 class ConversationPipeline:
@@ -55,9 +62,17 @@ class ConversationPipeline:
         self.reference_selector = reference_selector
 
     async def process(self, message: IncomingMessage) -> PipelineResult:
+        """Compatibility path: one eligible stored message becomes one turn."""
+        turn = await self.intake(message)
+        if turn is None:
+            return PipelineResult(False, "", "none", None, None)
+        return await self.process_turn(turn)
+
+    async def intake(self, message: IncomingMessage) -> Optional[PipelineTurn]:
+        """Route and store one Discord message without yet reading it as a turn."""
         route = await self.router.route(message)
         if not route.should_store:
-            return PipelineResult(False, "", "none", None, None)
+            return None
 
         stream = await self.repository.get_or_create_stream(
             kind=message.stream_kind,
@@ -74,80 +89,105 @@ class ConversationPipeline:
             reply_to_discord_message_id=message.reply_to_discord_message_id,
             created_at=message.created_at,
         )
+        reply_to = (
+            message.discord_message_id
+            if route.reply_mode == "discord_reply"
+            else None
+        )
+        return PipelineTurn.from_stored_message(
+            user_record,
+            should_reply=route.should_reply,
+            route_reason=route.reason,
+            reply_mode=route.reply_mode,
+            reply_to_discord_message_id=reply_to,
+        )
+
+    async def process_turn(self, turn: PipelineTurn) -> PipelineResult:
+        """Run existing CareReader/Speaker behavior for an already stored turn."""
         care_result = CareReadResult()
         pre_care_completed = False
         if (
-            route.reason == "listening_only"
+            turn.route_reason == "listening_only"
             and self.care_reader
             and self.care_service
         ):
-            state = await self.care_service.current_state(stream.id)
+            state = await self.care_service.current_state(turn.stream_id)
             _, attention, interests = state
-            salience = interest_salience(route.speaker_content, interests)
+            salience = interest_salience(turn.content, interests)
             should_read = salience > 0 or overlaps_attention(
-                route.speaker_content, attention
+                turn.content, attention
             )
             if should_read:
-                logger.debug("care_reader called before send stream_id=%s", stream.id)
+                logger.debug(
+                    "care_reader called before send stream_id=%s", turn.stream_id
+                )
                 request = await self.care_service.build_request(
-                    stream.id,
-                    route.speaker_content,
+                    turn.stream_id,
+                    turn.content,
                     0.0,
                     salience,
                     state,
                 )
                 care_result = await self.care_reader.read(request)
                 await self.care_service.apply(
-                    stream.id, user_record.id, care_result
+                    turn.stream_id,
+                    turn.single_source_user_message_id,
+                    care_result,
                 )
                 pre_care_completed = True
                 logger.debug(
                     "care_reader result stream_id=%s memory=%d attention=%d interest=%d",
-                    stream.id,
+                    turn.stream_id,
                     len(care_result.memory_candidates),
                     len(care_result.attention_candidates),
                     len(care_result.interest_updates),
                 )
             else:
-                logger.debug("care_reader skipped stream_id=%s", stream.id)
+                logger.debug("care_reader skipped stream_id=%s", turn.stream_id)
 
         listening_should_speak = (
-            route.reason == "listening_only"
+            turn.route_reason == "listening_only"
             and care_result.wants_to_speak
             and care_result.should_speak
         )
         logger.debug(
             "listening speech decision stream_id=%s should_speak=%s",
-            stream.id, listening_should_speak,
+            turn.stream_id, listening_should_speak,
         )
-        should_speak = route.should_reply or listening_should_speak
+        should_speak = turn.should_reply or listening_should_speak
         if not should_speak:
-            return PipelineResult(False, "", "none", stream.id, None)
+            return PipelineResult(False, "", "none", turn.stream_id, None)
 
         memory_ids = list(care_result.include_memory_ids)
         attention_ids = list(care_result.include_attention_ids)
-        if route.should_reply and self.reference_selector:
+        if turn.should_reply and self.reference_selector:
             selection = await self.reference_selector.select(
-                stream.id, route.speaker_content
+                turn.stream_id, turn.content
             )
             memory_ids = list(selection.memory_ids)
             attention_ids = list(selection.attention_ids)
         context = await self.context_builder.build(
-            stream.id,
+            turn.stream_id,
             memory_ids,
             attention_ids,
         )
         reply = await self.speaker.speak(context)
-        reply_mode = route.reply_mode if route.should_reply else "plain"
-        reply_to = message.discord_message_id if reply_mode == "discord_reply" else None
+        reply_mode = turn.reply_mode if turn.should_reply else "plain"
+        reply_to = (
+            turn.reply_to_discord_message_id
+            if reply_mode == "discord_reply"
+            else None
+        )
         ticket = ObservationTicket(
-            stream_id=stream.id,
-            user_message_id=user_record.id,
-            user_content=route.speaker_content,
-            route_reason=route.reason,
+            stream_id=turn.stream_id,
+            source_user_message_ids=turn.source_user_message_ids,
+            user_content=turn.content,
+            route_reason=turn.route_reason,
             pre_care_completed=pre_care_completed,
         )
-        return PipelineResult(True, reply, reply_mode, stream.id, reply_to, ticket)
+        return PipelineResult(
+            True, reply, reply_mode, turn.stream_id, reply_to, ticket
+        )
 
     async def record_sent_assistant(
         self,
@@ -189,7 +229,7 @@ class ConversationPipeline:
         )
         result = await self.care_reader.read(request)
         await self.care_service.apply(
-            ticket.stream_id, ticket.user_message_id, result
+            ticket.stream_id, ticket.single_source_user_message_id, result
         )
         logger.debug(
             "care_reader observed after send stream_id=%s memory=%d attention=%d interest=%d",

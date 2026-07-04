@@ -33,6 +33,10 @@ def _channel_ids(value: str) -> FrozenSet[int]:
         raise ValueError("LISTENING_CHANNEL_IDS must contain comma-separated integers") from error
 
 
+def _user_ids(value: str) -> FrozenSet[str]:
+    return frozenset(item.strip() for item in value.split(",") if item.strip())
+
+
 def _call_names(value: str) -> Tuple[str, ...]:
     names = [item.strip() for item in value.split(",") if item.strip()]
     if not names:
@@ -50,6 +54,7 @@ class Settings:
     listening_channel_ids: FrozenSet[int]
     yuno_call_names: Tuple[str, ...]
     log_level: str
+    owner_user_ids: FrozenSet[str] = frozenset()
 
 
 def load_settings() -> Settings:
@@ -65,4 +70,5 @@ def load_settings() -> Settings:
         listening_channel_ids=_channel_ids(os.getenv("LISTENING_CHANNEL_IDS", "")),
         yuno_call_names=_call_names(os.getenv("YUNO_CALL_NAMES", "")),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
+        owner_user_ids=_user_ids(os.getenv("OWNER_USER_IDS", "")),
     )

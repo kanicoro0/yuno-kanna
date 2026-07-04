@@ -3,10 +3,11 @@
 Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計版です。
 
 実装判断の基準は [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md) にあります。
+次にどう変化させるか、道具・権限・整理の方針は [`docs/next_direction.md`](docs/next_direction.md) にあります。
 
-現在は第3A補修と第3B管理段階です。軽い通常返信を保ったままMemoryMark、AttentionItem、InterestTerm、CareReaderを接続し、同じ場のCoreをephemeral commandで管理できます。
+現在は第3A補修と第3B管理段階です。軽い通常返信を保ったままMemoryMark、AttentionItem、CareReaderを接続し、同じ場のCoreをephemeral commandで管理できます。InterestTermは当面既存実装として残しますが、今後はAttentionにぶら下がるCue / Termへ寄せます。
 
-実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md) を読んでください。ゆのv2.0では、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」を優先します。
+実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md) と [`docs/next_direction.md`](docs/next_direction.md) を読んでください。ゆのv2.0では、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」と、不要な概念を増やさず整理しながら進めることを優先します。
 
 ```text
 directed: user保存 → recent 6件 → Speaker → Discord送信
@@ -18,20 +19,20 @@ listening通常発言: user保存 → pre-filter → CareReader
 
 MemoryMarkは独立した記憶庫ではなく、ConversationLogにつく印です。`pending` は失くさない候補、`active` は通常参照可能、`hidden` は通常contextから外した状態です。
 
-AttentionItemは、まだ閉じていない話題や問いです。人格状態、気分、口調のmodeではありません。InterestTermはCareReaderの注意を少し寄せる語であり、返信スイッチや返信確率ではありません。
+AttentionItemは、まだ閉じていない話題や問いです。人格状態、気分、口調のmodeではありません。Cue / TermはAttentionに反応するための語であり、返信スイッチや返信確率ではありません。
 
-CareReaderは同じstreamを静かに読み、印・Attention・関心語をJSONで返します。返答本文や口調指示は書きません。directed会話では送信前に挟まず、送信成功後に観察します。listening通常発言では割り込み判断も担います。
+CareReaderは同じstreamを静かに読み、印・Attention・CueをJSONで返します。返答本文や口調指示は書きません。directed会話では送信前に挟まず、送信成功後に観察します。listening通常発言では割り込み判断も担います。
 
-Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive MemoryMarkとopen Attentionから合計3件までを選び、本文だけを渡します。InterestTermやID、状態、routing名、内部理由、salienceは渡しません。
+Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive MemoryMarkとopen Attentionから合計3件までを選び、本文だけを渡します。Cue / Term、ID、状態、routing名、内部理由、salienceは渡しません。
 
-管理commandは `/memory`、`/attention`、`/interest` です。表示と操作は実行したDMまたはchannelのstreamだけに限定され、すべてephemeralです。完全削除、legacy v2 import本体は次段階です。Notebook専用tableや旧Notebook JSONは復活させません。
+管理commandは現状 `/memory`、`/attention`、`/interest`、`/listening` です。表示と操作は実行したDMまたはchannelのstreamだけに限定され、すべてephemeralです。今後の表の入口は `/status`、`/settings`、`/memories`、`/tools` に寄せ、既存commandはlegacy/debug扱いへ移します。
 
 ## 会話ログの範囲
 
 - DMは保存して返信します。
 - 直接mentionと、DBに保存済みのゆのの発言へのDiscord replyは保存してreplyします。
 - `LISTENING_CHANNEL_IDS` と `/listening add` の対象では人間の通常発言を保存します。
-- 通常発言は、activeな関心語やopen Attentionに軽く重なる場合だけCareReaderが読み、`wants_to_speak` と `should_speak` の両方が成立した時だけ控えめに返します。それ以外は保存のみです。
+- 通常発言は、Cue / Termやopen Attentionに軽く重なる場合だけCareReaderが読み、`wants_to_speak` と `should_speak` の両方が成立した時だけ控えめに返します。それ以外は保存のみです。
 - listening対象で `YUNO_CALL_NAMES` の呼び名を含む発言にはplain送信で返します。
 - それ以外のguild発言は保存しません。
 - `/status` で現在の保存範囲を確認できます。
@@ -56,6 +57,7 @@ SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは�
 ## 管理command
 
 ```text
+/status
 /memory list|pending|activate|hide|restore|add
 /attention list|close|hide|reopen|add
 /interest list|add|hide|sleep|wake
@@ -64,18 +66,27 @@ SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは�
 
 `/listening` は `.env` 初期値とDB設定を統合します。`.env` 由来はcommandで解除できず、DB由来の追加・解除は再起動なしでroutingへ反映されます。変更操作にはManage Channels権限が必要です。
 
+今後は次の入口へ整理します。
+
+```text
+/status
+/settings
+/memories
+/tools
+```
+
 画像・添付・音声・外部リンク本文の読み取りは未実装です。与えられていないものを見たふりはせず、CareReaderもテキストで説明された内容だけを扱います。
 
 ## 旧v2 Notebookの扱い
 
 旧記憶は破棄しません。後続段階で、明示的なdry-run付きimportとして実装します。
 
-- 旧noteをannotationへ変換する
+- 旧noteをMemoryMarkまたはAttentionItemへ変換する
 - source messageがなければ `legacy_v2_notebook` sourceとする
 - 旧note ID、import日時、batch IDを保持する
 - scopeを拡大せず、不明なscopeは `legacy_unscoped` とする
 - 同じ旧noteを重複作成しない
-- ConversationLog由来annotationと矛盾した場合は新しい方を優先する
+- ConversationLog由来のMemoryMark / Attentionと矛盾した場合は新しい方を優先する
 - previewを `data/import_preview_*.json` に出力できるようにする
 
 この互換sourceは新規記憶の通常経路には使用しません。

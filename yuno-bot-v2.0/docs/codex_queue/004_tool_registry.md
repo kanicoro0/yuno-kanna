@@ -6,6 +6,10 @@ Add the non-executing skeleton for future tools.
 
 This task should define tool metadata and registration. It should not run tools yet.
 
+## Working directory
+
+Run this task from `yuno-bot-v2.0/`.
+
 ## Read first
 
 - `docs/yuno_design_principles.md`
@@ -36,7 +40,7 @@ This task should define tool metadata and registration. It should not run tools 
    - `ToolPlan`
    - `ToolResult`
    - risk level
-   - result visibility / whether raw result may be shown to Speaker
+   - result visibility / sanitized Speaker visibility
 2. Add a simple `ToolRegistry` that can register and look up definitions by name.
 3. Require metadata for each tool definition:
    - name
@@ -46,8 +50,9 @@ This task should define tool metadata and registration. It should not run tools 
    - risk level
    - input schema or minimal parameter description
    - executor identifier or placeholder
-   - whether raw output may be exposed to Speaker
-4. Add tests for registration, duplicate names, missing lookup, and metadata preservation.
+   - whether a sanitized result may be exposed to Speaker
+4. Make raw output non-speaker-visible by default.
+5. Add tests for registration, duplicate names, missing lookup, metadata preservation, and default raw-output privacy.
 
 ## Important constraints
 
@@ -55,11 +60,18 @@ This task should define tool metadata and registration. It should not run tools 
 - Do not read arbitrary files.
 - Do not add restart/delete/write actions.
 - Do not let LLM decide permissions.
-- Do not pass raw logs or secrets to Speaker.
+- Do not pass raw logs, secrets, tracebacks, internal paths, or internal scores to Speaker.
+- Avoid names implying raw tool output is safe by default.
 
 ## Checks
 
-Run:
+Run from `yuno-bot-v2.0/`:
+
+```bash
+python scripts/check_yuno.py
+```
+
+If the script is unavailable for some reason, run:
 
 ```bash
 python -m compileall main.py yuno tests

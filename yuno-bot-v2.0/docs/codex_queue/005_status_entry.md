@@ -6,6 +6,10 @@ Prepare `/status` as the low-friction status entry without expanding the command
 
 This task should improve status visibility carefully. It should not turn status into a large management UI.
 
+## Working directory
+
+Run this task from `yuno-bot-v2.0/`.
+
 ## Read first
 
 - `docs/yuno_design_principles.md`
@@ -42,10 +46,10 @@ This task should improve status visibility carefully. It should not turn status 
 4. Include only safe information:
    - listening channel state
    - configured call names
-   - model name if already safe to expose
-   - database path only for owner/admin if exposed at all
+   - model name only if already safe to expose
+   - database status or masked basename for owner/admin only; do not expose raw absolute paths
    - registered tool names only if a registry already exists
-5. Do not expose secrets, raw paths, tracebacks, or internal scores.
+5. Do not expose secrets, raw paths, tracebacks, internal scores, or raw tool/log output.
 6. Add tests if a service or renderer is added.
 
 ## Important constraints
@@ -56,7 +60,13 @@ This task should improve status visibility carefully. It should not turn status 
 
 ## Checks
 
-Run:
+Run from `yuno-bot-v2.0/`:
+
+```bash
+python scripts/check_yuno.py
+```
+
+If the script is unavailable for some reason, run:
 
 ```bash
 python -m compileall main.py yuno tests

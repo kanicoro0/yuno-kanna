@@ -13,6 +13,7 @@ from yuno.commands.core import (
     create_attention_group, create_interest_group, create_memory_group,
 )
 from yuno.commands.listening import create_listening_group
+from yuno.commands.status import create_status_command
 from yuno.config import Settings, load_settings
 from yuno.conversation.context import ContextBuilder
 from yuno.conversation.reference_selector import ReferenceSelector
@@ -29,25 +30,6 @@ from yuno.memory.repository import MemoryMarkRepository
 from yuno.memory.service import MemoryMarkService
 from yuno.pipeline import ConversationPipeline
 from yuno.speaking.speaker import Speaker
-
-
-def status_text(listening_items, call_names) -> str:
-    channels = "、".join(
-        f"<#{item.discord_channel_id}>({item.source})" for item in listening_items
-    ) or "なし"
-    names = "、".join(call_names)
-    return (
-        "ゆのが聞いている範囲\n"
-        "- DM: 保存して返します\n"
-        "- mention: 保存してreplyで返します\n"
-        "- ゆのへのreply: 保存してreplyで返します\n"
-        f"- 聞き耳の場所: {channels}\n"
-        "  通常発言は保存します。関心語や開いた気がかりに触れた時だけCareReaderが読み、必要な時だけ返します\n"
-        "- 聞き耳の場所でゆのへ向けられた発言: 保存して返します\n"
-        "- それ以外の通常発言: 保存しません\n"
-        f"- 今の呼び名: {names}"
-    )
-
 
 class YunoBot(commands.Bot):
     def __init__(self, settings: Settings, database: Database, **kwargs: Any):
@@ -113,13 +95,6 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     bot.tree.add_command(create_attention_group(admin))
     bot.tree.add_command(create_interest_group(admin))
     bot.tree.add_command(create_listening_group(listening))
-
-    @bot.tree.command(name="status", description="ゆのがどこで聞いて、どこで返すかを確認します")
-    async def status(interaction: discord.Interaction) -> None:
-        listening_items = await listening.list_all()
-        await interaction.response.send_message(
-            status_text(listening_items, settings.yuno_call_names),
-            ephemeral=True,
-        )
+    bot.tree.add_command(create_status_command(listening, settings.yuno_call_names))
 
     return bot

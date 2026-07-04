@@ -4,10 +4,11 @@ Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計
 
 実装判断の基準は [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md) にあります。
 次にどう変化させるか、道具・権限・整理の方針は [`docs/next_direction.md`](docs/next_direction.md) にあります。
+実装をどう進めるか、作業ごとに何を整理するかは [`docs/implementation_practice.md`](docs/implementation_practice.md) にあります。
 
 現在は第3A補修と第3B管理段階です。軽い通常返信を保ったままMemoryMark、AttentionItem、CareReaderを接続し、同じ場のCoreをephemeral commandで管理できます。InterestTermは当面既存実装として残しますが、今後はAttentionにぶら下がるCue / Termへ寄せます。
 
-実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md) と [`docs/next_direction.md`](docs/next_direction.md) を読んでください。ゆのv2.0では、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」と、不要な概念を増やさず整理しながら進めることを優先します。
+実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md)、[`docs/next_direction.md`](docs/next_direction.md)、[`docs/implementation_practice.md`](docs/implementation_practice.md) を読んでください。ゆのv2.0では、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」と、不要な概念を増やさず整理しながら進めることを優先します。
 
 ```text
 directed: user保存 → recent 6件 → Speaker → Discord送信

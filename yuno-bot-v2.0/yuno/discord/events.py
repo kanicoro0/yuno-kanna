@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 
 import discord
@@ -7,6 +7,7 @@ from discord.ext import commands
 from yuno.discord.input import to_incoming_message
 from yuno.messages import SentMessage
 from yuno.pipeline import ConversationPipeline, PipelineResult
+from yuno.turns import PipelineTurn, TurnBuffer
 
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ConversationRuntime:
     pipeline: ConversationPipeline
+    turn_buffer: TurnBuffer = field(default_factory=TurnBuffer)
 
 
 def register_events(bot: commands.Bot, runtime: ConversationRuntime) -> None:
@@ -24,37 +26,65 @@ def register_events(bot: commands.Bot, runtime: ConversationRuntime) -> None:
 
     @bot.event
     async def on_message(message: discord.Message) -> None:
-        if bot.user is None:
-            return
-        incoming = to_incoming_message(message, bot.user)
-        try:
-            turn = await runtime.pipeline.intake(incoming)
-            if turn is None:
-                return
-            result = await runtime.pipeline.process_turn(turn)
-        except Exception:
-            logger.exception("Conversation pipeline failed before send")
-            return
-        if not result.should_send:
-            return
+        await handle_message(bot, message, runtime)
 
-        try:
-            sent = await send_result(message, result)
-        except discord.HTTPException:
-            logger.exception("Discord send failed")
-            return
 
-        await finalize_sent_message(
-            runtime.pipeline,
-            result,
-            SentMessage(
-                discord_message_id=str(sent.id),
-                author_id=str(bot.user.id),
-                author_name=bot.user.display_name,
-                content=sent.content,
-                created_at=sent.created_at.isoformat(),
-            ),
+async def handle_message(
+    bot: commands.Bot,
+    message: discord.Message,
+    runtime: ConversationRuntime,
+) -> None:
+    if bot.user is None:
+        return
+    incoming = to_incoming_message(message, bot.user)
+    try:
+        turn = await runtime.pipeline.intake(incoming)
+        if turn is None:
+            return
+        selected_turn = await runtime.turn_buffer.push(turn)
+        if selected_turn is None:
+            return
+        result = await process_turn_with_typing(
+            message, runtime.pipeline, selected_turn
         )
+    except Exception:
+        logger.exception("Conversation pipeline failed before send")
+        return
+    if not result.should_send:
+        return
+
+    try:
+        if selected_turn.should_reply:
+            sent = await send_result(message, result)
+        else:
+            async with message.channel.typing():
+                sent = await send_result(message, result)
+    except discord.HTTPException:
+        logger.exception("Discord send failed")
+        return
+
+    await finalize_sent_message(
+        runtime.pipeline,
+        result,
+        SentMessage(
+            discord_message_id=str(sent.id),
+            author_id=str(bot.user.id),
+            author_name=bot.user.display_name,
+            content=sent.content,
+            created_at=sent.created_at.isoformat(),
+        ),
+    )
+
+
+async def process_turn_with_typing(
+    source: discord.Message,
+    pipeline: ConversationPipeline,
+    turn: PipelineTurn,
+) -> PipelineResult:
+    if not turn.should_reply:
+        return await pipeline.process_turn(turn)
+    async with source.channel.typing():
+        return await pipeline.process_turn(turn)
 
 
 async def finalize_sent_message(

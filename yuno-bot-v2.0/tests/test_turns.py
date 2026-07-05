@@ -149,7 +149,23 @@ class TurnManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.manager.phase_for(1), TurnPhase.IDLE)
 
-    async def test_new_turn_during_generation_waits_for_current_turn(self) -> None:
+    async def test_compatible_turn_during_generation_supersedes_active(self) -> None:
+        first = await self.manager.select(make_turn(10, "first"))
+
+        async with self.manager.processing(first):
+            initial = self.manager.current_generation(1)
+            selected = await self.manager.select(make_turn(11, "second"))
+            latest = self.manager.current_generation(1)
+
+            self.assertIsNone(selected)
+            self.assertFalse(self.manager.is_current(initial))
+            self.assertTrue(self.manager.is_current(latest))
+            self.assertEqual(latest.turn.content, "first\nsecond")
+            self.assertEqual(latest.turn.source_user_message_ids, (10, 11))
+
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.IDLE)
+
+    async def test_different_author_during_generation_waits_for_current(self) -> None:
         first = await self.manager.select(make_turn(10, "first"))
         first_entered = asyncio.Event()
         release_first = asyncio.Event()
@@ -169,7 +185,9 @@ class TurnManagerTests(unittest.IsolatedAsyncioTestCase):
 
         async def process_second() -> None:
             nonlocal active, maximum_active
-            selected = await self.manager.select(make_turn(11, "second"))
+            selected = await self.manager.select(
+                make_turn(11, "second", author_id="8")
+            )
             async with self.manager.processing(selected):
                 active += 1
                 maximum_active = max(maximum_active, active)
@@ -189,6 +207,32 @@ class TurnManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(maximum_active, 1)
         self.assertTrue(second_entered.is_set())
+        self.assertEqual(self.manager.phase_for(1), TurnPhase.IDLE)
+
+    async def test_incompatible_reply_target_is_not_absorbed(self) -> None:
+        first = await self.manager.select(
+            make_turn(10, "first", reply_target="a")
+        )
+
+        async with self.manager.processing(first):
+            initial = self.manager.current_generation(1)
+            second = await self.manager.select(
+                make_turn(11, "second", reply_target="b")
+            )
+
+            self.assertEqual(second.source_user_message_ids, (11,))
+            self.assertTrue(self.manager.is_current(initial))
+            self.assertEqual(
+                self.manager.current_generation(1).turn.source_user_message_ids,
+                (10,),
+            )
+
+        async with self.manager.processing(second):
+            self.assertEqual(
+                self.manager.current_generation(1).turn.source_user_message_ids,
+                (11,),
+            )
+
         self.assertEqual(self.manager.phase_for(1), TurnPhase.IDLE)
 
     async def test_generation_failure_returns_stream_to_idle(self) -> None:

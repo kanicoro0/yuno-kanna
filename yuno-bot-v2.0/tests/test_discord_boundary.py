@@ -239,3 +239,106 @@ class DiscordBoundaryTests(unittest.IsolatedAsyncioTestCase):
             pipeline, result, SentMessage("2", "99", "ゆの", "返事", "now")
         )
         self.assertFalse(pipeline.observed)
+
+    async def test_compatible_message_supersedes_in_flight_reply(self) -> None:
+        generation_started = asyncio.Event()
+        release_generation = asyncio.Event()
+
+        class Pipeline:
+            def __init__(self):
+                self.stored = []
+                self.generated = []
+                self.saved = []
+
+            async def intake(self, incoming):
+                self.stored.append(incoming.discord_message_id)
+                directed = incoming.discord_message_id == "100"
+                return PipelineTurn(
+                    stream_id=1,
+                    author_id=incoming.author_id,
+                    content=incoming.raw_content,
+                    source_user_message_ids=(
+                        10 if directed else 11,
+                    ),
+                    should_reply=directed,
+                    route_reason="mention" if directed else "listening_only",
+                    reply_mode="discord_reply" if directed else "none",
+                    reply_to_discord_message_id=(
+                        incoming.discord_message_id if directed else None
+                    ),
+                )
+
+            async def process_turn(self, turn):
+                self.generated.append(turn)
+                if len(turn.source_user_message_ids) == 1:
+                    generation_started.set()
+                    await release_generation.wait()
+                    text = "古い返事"
+                else:
+                    text = "まとめた返事"
+                return PipelineResult(
+                    True,
+                    text,
+                    turn.reply_mode,
+                    turn.stream_id,
+                    turn.reply_to_discord_message_id,
+                )
+
+            async def record_sent_assistant(self, result, sent):
+                self.saved.append((result.reply_text, sent.content))
+
+            async def observe_after_send(self, ticket):
+                return None
+
+        class Reactions:
+            async def add_for_marks(self, source, marks):
+                return None
+
+        class Sent:
+            def __init__(self, content):
+                self.id = 900
+                self.content = content
+                self.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        class RuntimeMessage(FakeMessage):
+            def __init__(self, message_id, content, channel):
+                super().__init__()
+                self.id = message_id
+                self.content = content
+                self.channel = channel
+                self.reference = None
+
+            async def reply(self, content, **kwargs):
+                self.reply_calls.append((content, kwargs))
+                return Sent(content)
+
+        pipeline = Pipeline()
+        runtime = ConversationRuntime(
+            pipeline,
+            TurnManager(TurnBuffer(0)),
+            Reactions(),
+        )
+        bot = SimpleNamespace(user=SimpleNamespace(id=99, display_name="ゆの"))
+        channel = FakeChannel()
+        first = RuntimeMessage(100, "ゆの", channel)
+        second = RuntimeMessage(101, "どこにいる？", channel)
+
+        first_task = asyncio.create_task(handle_message(bot, first, runtime))
+        await generation_started.wait()
+        await handle_message(bot, second, runtime)
+        release_generation.set()
+        await first_task
+
+        self.assertEqual(pipeline.stored, ["100", "101"])
+        self.assertEqual(
+            [turn.content for turn in pipeline.generated],
+            ["ゆの", "ゆの\nどこにいる？"],
+        )
+        self.assertEqual(
+            pipeline.generated[-1].source_user_message_ids,
+            (10, 11),
+        )
+        self.assertEqual([call[0] for call in first.reply_calls], ["まとめた返事"])
+        self.assertEqual(second.reply_calls, [])
+        self.assertEqual(pipeline.saved, [("まとめた返事", "まとめた返事")])
+        self.assertNotIn("view", first.reply_calls[0][1])

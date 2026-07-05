@@ -60,7 +60,7 @@ class CareMarkCommandServiceTests(unittest.IsolatedAsyncioTestCase):
 
         text = render_care_marks((mark,))
 
-        self.assertIn(mark.public_id, text)
+        self.assertNotIn(mark.public_id, text)
         self.assertIn('短い本文', text)
         self.assertNotIn('score', text.casefold())
         self.assertNotIn('weight', text.casefold())

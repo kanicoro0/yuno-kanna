@@ -25,6 +25,7 @@ class CareApplication:
     touched_care_mark_ids: Tuple[str, ...] = ()
     upserted_read_cue_ids: Tuple[int, ...] = ()
     include_care_mark_ids: Tuple[str, ...] = ()
+    affected_care_marks: Tuple[CareMark, ...] = ()
 
 
 class CareService:
@@ -96,13 +97,16 @@ class CareService:
         candidate_targets: Dict[str, Optional[CareMark]] = {}
         created = []
         touched = []
+        affected: List[CareMark] = []
 
         for public_id in result.touch_care_mark_ids:
             mark = by_public.get(public_id)
             if mark is None or public_id in touched:
                 continue
-            if await self.care_marks.touch(public_id):
+            touched_mark = await self.care_marks.touch(public_id)
+            if touched_mark:
                 touched.append(public_id)
+                _remember_affected(affected, touched_mark)
 
         for candidate in result.care_mark_candidates[:5]:
             if not _valid_candidate_status(candidate.kind, candidate.status):
@@ -128,8 +132,12 @@ class CareService:
             ), None)
             if matching is not None:
                 if matching.public_id not in touched:
-                    if await self.care_marks.touch(matching.public_id):
+                    touched_mark = await self.care_marks.touch(
+                        matching.public_id
+                    )
+                    if touched_mark:
                         touched.append(matching.public_id)
+                        _remember_affected(affected, touched_mark)
                 _remember_target(candidate_targets, normalized, matching)
                 continue
             try:
@@ -145,6 +153,7 @@ class CareService:
             marks.append(mark)
             by_public[mark.public_id] = mark
             created.append(mark.public_id)
+            _remember_affected(affected, mark)
             _remember_target(candidate_targets, normalized, mark)
 
         cue_ids = []
@@ -177,7 +186,8 @@ class CareService:
             )
         )
         return CareApplication(
-            tuple(created), tuple(touched), tuple(cue_ids), included
+            tuple(created), tuple(touched), tuple(cue_ids), included,
+            tuple(affected),
         )
 
 
@@ -227,6 +237,11 @@ def _remember_target(
         targets[normalized_text] = mark
     elif targets[normalized_text] != mark:
         targets[normalized_text] = None
+
+
+def _remember_affected(marks: List[CareMark], mark: CareMark) -> None:
+    if all(existing.public_id != mark.public_id for existing in marks):
+        marks.append(mark)
 
 
 def _grams(value: str) -> set:

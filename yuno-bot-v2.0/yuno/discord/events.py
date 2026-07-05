@@ -1,9 +1,12 @@
 from dataclasses import dataclass, field
 import logging
+from typing import Optional
 
 import discord
 from discord.ext import commands
 
+from yuno.care.service import CareApplication
+from yuno.discord.care_reactions import CareReactionSurface
 from yuno.discord.input import to_incoming_message
 from yuno.messages import SentMessage
 from yuno.pipeline import ConversationPipeline, PipelineResult
@@ -17,6 +20,9 @@ logger = logging.getLogger(__name__)
 class ConversationRuntime:
     pipeline: ConversationPipeline
     turn_manager: TurnManager = field(default_factory=TurnManager)
+    care_reactions: CareReactionSurface = field(
+        default_factory=CareReactionSurface
+    )
 
 
 def register_events(bot: commands.Bot, runtime: ConversationRuntime) -> None:
@@ -56,6 +62,9 @@ async def handle_message(
         except Exception:
             logger.exception("Conversation generation failed")
             return
+        await runtime.care_reactions.add_for_marks(
+            message, result.care_mark_changes
+        )
         if not result.should_send:
             return
 
@@ -70,7 +79,7 @@ async def handle_message(
             logger.exception("Discord send failed")
             return
 
-        await finalize_sent_message(
+        application = await finalize_sent_message(
             runtime.pipeline,
             result,
             SentMessage(
@@ -81,6 +90,10 @@ async def handle_message(
                 created_at=sent.created_at.isoformat(),
             ),
         )
+        if application is not None:
+            await runtime.care_reactions.add_for_marks(
+                message, application.affected_care_marks
+            )
 
 
 async def process_turn_with_typing(
@@ -98,17 +111,18 @@ async def finalize_sent_message(
     pipeline: ConversationPipeline,
     result: PipelineResult,
     sent: SentMessage,
-) -> None:
+) -> Optional[CareApplication]:
     try:
         await pipeline.record_sent_assistant(result, sent)
     except Exception:
         logger.exception("Discord send succeeded but assistant log commit failed")
-        return
+        return None
 
     try:
-        await pipeline.observe_after_send(result.observation_ticket)
+        return await pipeline.observe_after_send(result.observation_ticket)
     except Exception:
         logger.exception("Assistant log saved but post-send observation failed")
+        return None
 
 
 async def send_result(

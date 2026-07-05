@@ -27,11 +27,11 @@ class DesignGuardTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, speaker)
 
-    def test_status_describes_care_reader_listening_behavior(self) -> None:
+    def test_status_uses_a_small_user_facing_surface(self) -> None:
         text = status_text((ListeningChannel("10", "1", "db"),), ("ゆの",))
-        self.assertIn("通常発言は保存", text)
-        self.assertIn("CareReader", text)
-        self.assertIn("必要な時だけ返答", text)
+        self.assertIn("いまの聞こえ方", text)
+        self.assertIn("呼ばれたら返す", text)
+        self.assertNotIn("CareReader", text)
 
     def test_prompts_do_not_claim_unprovided_capabilities(self) -> None:
         self.assertIn("与えられていないものを見たふり", SYSTEM_PROMPT)

@@ -99,6 +99,8 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     mark_commands = CareMarkCommandService(repository, care_marks)
     bot.tree.add_command(create_memories_group(mark_commands, permissions))
     bot.tree.add_command(create_listening_group(listening))
-    bot.tree.add_command(create_status_command(listening, settings.yuno_call_names))
+    bot.tree.add_command(create_status_command(
+        listening, settings.yuno_call_names, permissions
+    ))
 
     return bot

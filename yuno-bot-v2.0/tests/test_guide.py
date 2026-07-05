@@ -30,7 +30,8 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
             '戻す',
         ):
             self.assertIn(visible, GUIDE_TEXT)
-        self.assertIn('ふつうの返事には、ボタンはつかない', GUIDE_TEXT)
+        self.assertIn('コマンドか右クリックから開いてね', GUIDE_TEXT)
+        self.assertNotIn('ボタンはつかない', GUIDE_TEXT)
 
     def test_guide_text_hides_internal_names(self):
         for internal in (

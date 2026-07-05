@@ -1,11 +1,13 @@
-# 020: Message touch buttons
+# 020: Message action panel
 
 ## Goal
 
-Add a small message-level button surface for Yuno replies and nearby messages.
+Add a small message-related action surface without attaching buttons to ordinary Yuno replies.
 
-This is the closest UI layer to v1-style operation.
-Instead of asking the user to open a management command, Yuno can place a few small actions near the message that matters.
+Yuno's normal replies should stay light.
+Buttons should live in explicit panels, command responses, or targeted message actions, not on every spoken reply.
+
+The goal is to reduce slash-command typing while keeping the channel surface quiet.
 
 ## Working directory
 
@@ -14,21 +16,23 @@ Run this task from `yuno-bot-v2.0/`.
 ## Read first
 
 - `docs/codex_queue/017_discord_view_foundation.md`
+- `docs/codex_queue/018_status_panel_view.md`
+- `docs/codex_queue/019_memory_mark_buttons.md`
 - `docs/codex_queue/016_reaction_surface.md`
-- `yuno/discord/events.py`
-- `yuno/pipeline.py`
+- `yuno/commands/`
 - `yuno/care/`
 - `yuno/care_marks/`
 
 ## Allowed scope
 
-- message send path
-- optional View attached to selected Yuno replies
+- command panels
+- targeted message action entry points, if Discord support is straightforward
 - small callbacks that call existing service methods
 - tests
 
 ## Do not touch
 
+- ordinary Yuno reply send path, unless only to ensure no buttons are attached
 - Speaker prompt
 - CareReader prompt
 - routing rules
@@ -38,27 +42,34 @@ Run this task from `yuno-bot-v2.0/`.
 
 ## Surface target
 
-Buttons should be sparse.
-Do not attach buttons to every message by default if it makes the channel noisy.
+Do not attach a View to normal Yuno replies by default.
+
+Prefer explicit UI surfaces:
+
+```text
+/status panel
+/memories list panel
+message context action, if added later
+```
 
 Possible labels:
 
 ```text
 残す
 あとで見る
-もういい
+閉じる
 隠す
+戻す
 ```
 
-The exact labels can change, but they should remain short and not look like an admin console.
+The labels should remain short and not look like an admin console.
 
-The button action should be understandable from the message itself.
-Avoid requiring the user to know a mark id, kind, or status enum.
+The user should not need to know a mark id, kind, or status enum for common actions.
 
 ## Work to do
 
-1. Decide the first narrow condition where a Yuno reply should carry buttons.
-2. Add a View only in that condition.
+1. Decide whether this task should extend `/memories` panels or add a targeted message action entry point.
+2. Keep ordinary Yuno replies free of buttons.
 3. Wire buttons to existing CareMark / ReadCue service paths where possible.
 4. Keep failure safe and ephemeral.
 5. Avoid duplicating reaction behavior.
@@ -66,24 +77,24 @@ Avoid requiring the user to know a mark id, kind, or status enum.
 
 ## Suggested first condition
 
-Start with replies generated from a turn that touched or created a visible mark.
+Start from an explicit panel, not from a Yuno reply.
 
-That gives a concrete reason to show:
+A safe first version may extend the memory mark panel with actions such as:
 
 ```text
-残す
 閉じる
 隠す
+戻す
 ```
 
-If the turn has no mark-related context, do not show buttons yet.
+If a targeted message action is added, it should open a small ephemeral panel for that selected message rather than modifying Yuno's spoken reply surface.
 
 ## Tests
 
 Add tests for:
 
-- no buttons are attached when there is no eligible mark context
-- eligible mark context can render a small button set
+- ordinary Yuno replies do not receive buttons by default
+- explicit panels can render a small button set
 - callbacks use existing service paths
 - stale button use gives a short safe message
 - button failures do not roll back sent messages or stored conversation logs
@@ -100,9 +111,9 @@ python scripts/check_yuno.py
 
 Report:
 
-- first condition chosen
+- panel or targeted action chosen
 - buttons added
 - service paths used
-- cases intentionally left without buttons
+- ordinary reply surface left untouched
 - tests run
 - checks not run and why

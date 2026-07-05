@@ -37,13 +37,16 @@ class YunoBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.database.open()
-        for guild_id in self.settings.clear_guild_command_ids:
-            guild = discord.Object(id=guild_id)
-            self.tree.clear_commands(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"Cleared guild slash commands: {guild_id}")
+        await self._clear_guild_scoped_commands()
         await self.tree.sync()
         print("Slash commands synced globally")
+
+    async def _clear_guild_scoped_commands(self) -> None:
+        async for guild in self.fetch_guilds(limit=None):
+            target = discord.Object(id=guild.id)
+            self.tree.clear_commands(guild=target)
+            await self.tree.sync(guild=target)
+            print(f"Cleared guild slash commands: {guild.id}")
 
     async def close(self) -> None:
         await self.database.close()

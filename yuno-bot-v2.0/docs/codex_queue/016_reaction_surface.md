@@ -6,7 +6,7 @@ Add a small Discord reaction surface for CareMark after the core CareMark / Read
 
 Reactions are surface. The database is the source of truth.
 
-Do not make emoji into a rigid taxonomy. Yuno may choose an emoji loosely from the CareMark kind/text/status.
+Do not make emoji into a rigid taxonomy. Yuno may choose a reaction loosely from the CareMark kind/text/status and the local feeling of the source message.
 
 ## Working directory
 
@@ -52,22 +52,19 @@ Keep free reactions conceptually separate from CareMark reactions. Do not try to
 
 ## Work to do
 
-1. Add a small reaction picker from CareMark kind/text/status.
+1. Add a small reaction picker from CareMark kind/text/status and the source message when available.
 2. Add reactions only when a source Discord message is available and the bot can react.
 3. Failure to react must not fail CareMark creation.
-4. Avoid the eyes emoji for attention-like marks.
-5. Prefer a small loose pool such as:
-   - memory-like: 📌 💎 🧭 🛠️
-   - attention-like: 🔖 🧵 🫧 🪶
-6. Add tests for picker behavior and failure isolation.
+4. Keep reaction choice loose, fitting, and non-authoritative rather than a fixed category table.
+5. Add tests for picker behavior and failure isolation.
 
 ## Tests
 
 Add tests for:
 
-- memory-like mark gets an allowed memory emoji
-- attention-like mark gets an allowed attention emoji
+- visible CareMark can receive a fitting Yuno-like reaction when appropriate
 - hidden/closed marks do not create new visible reactions unless explicitly intended
+- reaction picker is loose and not a hard taxonomy
 - reaction failure is logged or ignored without rolling back DB work
 
 ## Checks

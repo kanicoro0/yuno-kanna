@@ -11,15 +11,18 @@ def make_turn(
     stream_id: int = 1,
     author_id: str = "7",
     reply_target=None,
+    should_reply: bool = True,
+    route_reason: str = "dm",
+    reply_mode: str = "plain",
 ) -> PipelineTurn:
     return PipelineTurn(
         stream_id=stream_id,
         author_id=author_id,
         content=content,
         source_user_message_ids=(message_id,),
-        should_reply=True,
-        route_reason="dm",
-        reply_mode="plain",
+        should_reply=should_reply,
+        route_reason=route_reason,
+        reply_mode=reply_mode,
         reply_to_discord_message_id=reply_target,
     )
 
@@ -63,6 +66,39 @@ class TurnBufferTests(unittest.IsolatedAsyncioTestCase):
         selected = first or second
         self.assertEqual(selected.content, "first\nsecond")
         self.assertEqual(selected.source_user_message_ids, (10, 11))
+        self.assertEqual(sum(item is not None for item in (first, second)), 1)
+
+    async def test_directed_turn_absorbs_same_author_listening_followup(self) -> None:
+        directed = make_turn(
+            10,
+            "consider this",
+            reply_target="discord-1",
+            should_reply=True,
+            route_reason="mention",
+            reply_mode="discord_reply",
+        )
+        followup = make_turn(
+            11,
+            "additional detail",
+            should_reply=False,
+            route_reason="listening_only",
+            reply_mode="none",
+        )
+
+        first, second = await asyncio.gather(
+            self.buffer.push(directed),
+            self.buffer.push(followup),
+        )
+
+        selected = first or second
+        self.assertEqual(selected.content, "consider this\nadditional detail")
+        self.assertEqual(selected.source_user_message_ids, (10, 11))
+        self.assertTrue(selected.should_reply)
+        self.assertEqual(selected.route_reason, "mention")
+        self.assertEqual(selected.reply_mode, "discord_reply")
+        self.assertEqual(
+            selected.reply_to_discord_message_id, "discord-1"
+        )
         self.assertEqual(sum(item is not None for item in (first, second)), 1)
 
     async def test_different_authors_are_not_combined(self) -> None:

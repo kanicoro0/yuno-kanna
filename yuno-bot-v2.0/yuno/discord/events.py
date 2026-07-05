@@ -55,45 +55,58 @@ async def handle_message(
         return
 
     async with runtime.turn_manager.processing(selected_turn):
-        try:
-            result = await process_turn_with_typing(
-                message, runtime.pipeline, selected_turn
+        while True:
+            generation = runtime.turn_manager.current_generation(
+                selected_turn.stream_id
             )
-        except Exception:
-            logger.exception("Conversation generation failed")
-            return
-        await runtime.care_reactions.add_for_marks(
-            message, result.care_mark_changes
-        )
-        if not result.should_send:
-            return
+            try:
+                result = await process_turn_with_typing(
+                    message, runtime.pipeline, generation.turn
+                )
+            except Exception:
+                logger.exception("Conversation generation failed")
+                return
+            if not runtime.turn_manager.is_current(generation):
+                continue
 
-        runtime.turn_manager.mark_sending(selected_turn.stream_id)
-        try:
-            if selected_turn.should_reply:
-                sent = await send_result(message, result)
-            else:
-                async with message.channel.typing():
-                    sent = await send_result(message, result)
-        except discord.HTTPException:
-            logger.exception("Discord send failed")
-            return
-
-        application = await finalize_sent_message(
-            runtime.pipeline,
-            result,
-            SentMessage(
-                discord_message_id=str(sent.id),
-                author_id=str(bot.user.id),
-                author_name=bot.user.display_name,
-                content=sent.content,
-                created_at=sent.created_at.isoformat(),
-            ),
-        )
-        if application is not None:
             await runtime.care_reactions.add_for_marks(
-                message, application.affected_care_marks
+                message, result.care_mark_changes
             )
+            if not runtime.turn_manager.is_current(generation):
+                continue
+            if not result.should_send:
+                return
+
+            if not runtime.turn_manager.mark_sending(
+                selected_turn.stream_id, generation.generation
+            ):
+                continue
+            try:
+                if generation.turn.should_reply:
+                    sent = await send_result(message, result)
+                else:
+                    async with message.channel.typing():
+                        sent = await send_result(message, result)
+            except discord.HTTPException:
+                logger.exception("Discord send failed")
+                return
+
+            application = await finalize_sent_message(
+                runtime.pipeline,
+                result,
+                SentMessage(
+                    discord_message_id=str(sent.id),
+                    author_id=str(bot.user.id),
+                    author_name=bot.user.display_name,
+                    content=sent.content,
+                    created_at=sent.created_at.isoformat(),
+                ),
+            )
+            if application is not None:
+                await runtime.care_reactions.add_for_marks(
+                    message, application.affected_care_marks
+                )
+            return
 
 
 async def process_turn_with_typing(

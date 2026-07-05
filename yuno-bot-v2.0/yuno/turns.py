@@ -161,6 +161,14 @@ class _StreamRuntime:
     buffering_count: int = 0
     ready_count: int = 0
     processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    active_turn: Optional[PipelineTurn] = None
+    generation: int = 0
+
+
+@dataclass(frozen=True)
+class TurnGeneration:
+    turn: PipelineTurn
+    generation: int
 
 
 class TurnManager:
@@ -176,6 +184,14 @@ class TurnManager:
 
     async def select(self, turn: PipelineTurn) -> Optional[PipelineTurn]:
         runtime = self._runtime(turn.stream_id)
+        if (
+            runtime.phase == TurnPhase.GENERATING
+            and runtime.active_turn is not None
+            and runtime.active_turn.can_merge(turn)
+        ):
+            runtime.active_turn = runtime.active_turn.merged_with(turn)
+            runtime.generation += 1
+            return None
         runtime.buffering_count += 1
         if runtime.phase == TurnPhase.IDLE:
             runtime.phase = TurnPhase.BUFFERING
@@ -197,21 +213,43 @@ class TurnManager:
             await runtime.processing_lock.acquire()
             acquired = True
             runtime.ready_count -= 1
+            runtime.active_turn = turn
+            runtime.generation += 1
             runtime.phase = TurnPhase.GENERATING
             yield
         finally:
             if acquired:
+                runtime.active_turn = None
                 self._settle(runtime, processing_finished=True)
                 runtime.processing_lock.release()
             else:
                 runtime.ready_count -= 1
                 self._settle(runtime)
 
-    def mark_sending(self, stream_id: int) -> None:
+    def current_generation(self, stream_id: int) -> TurnGeneration:
+        runtime = self._runtime(stream_id)
+        if runtime.phase != TurnPhase.GENERATING or runtime.active_turn is None:
+            raise RuntimeError("generation requires an active stream turn")
+        return TurnGeneration(runtime.active_turn, runtime.generation)
+
+    def is_current(self, selected: TurnGeneration) -> bool:
+        runtime = self._runtime(selected.turn.stream_id)
+        return (
+            runtime.phase == TurnPhase.GENERATING
+            and runtime.active_turn is not None
+            and runtime.generation == selected.generation
+        )
+
+    def mark_sending(
+        self, stream_id: int, generation: Optional[int] = None
+    ) -> bool:
         runtime = self._runtime(stream_id)
         if not runtime.processing_lock.locked():
             raise RuntimeError("sending requires an active stream turn")
+        if generation is not None and runtime.generation != generation:
+            return False
         runtime.phase = TurnPhase.SENDING
+        return True
 
     def _runtime(self, stream_id: int) -> _StreamRuntime:
         return self._streams.setdefault(stream_id, _StreamRuntime())

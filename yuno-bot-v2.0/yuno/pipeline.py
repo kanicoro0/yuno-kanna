@@ -111,6 +111,7 @@ class ConversationPipeline:
     async def process_turn(self, turn: PipelineTurn) -> PipelineResult:
         """Run existing CareReader/Speaker behavior for an already stored turn."""
         care_result = CareReadResult()
+        include_care_mark_ids = []
         pre_care_completed = False
         if (
             turn.route_reason == "listening_only"
@@ -134,10 +135,13 @@ class ConversationPipeline:
                     state,
                 )
                 care_result = await self.care_reader.read(request)
-                await self.care_service.apply(
+                application = await self.care_service.apply(
                     turn.stream_id,
                     turn.care_source_user_message_id,
                     care_result,
+                )
+                include_care_mark_ids = list(
+                    application.include_care_mark_ids
                 )
                 pre_care_completed = True
                 logger.debug(
@@ -169,18 +173,15 @@ class ConversationPipeline:
         if not should_speak:
             return PipelineResult(False, "", "none", turn.stream_id, None)
 
-        memory_ids = []
-        attention_ids = []
+        care_mark_ids = include_care_mark_ids
         if turn.should_reply and self.reference_selector:
             selection = await self.reference_selector.select(
                 turn.stream_id, turn.content
             )
-            memory_ids = list(selection.memory_ids)
-            attention_ids = list(selection.attention_ids)
+            care_mark_ids = list(selection.care_mark_ids)
         context = await self.context_builder.build(
             turn.stream_id,
-            memory_ids,
-            attention_ids,
+            care_mark_ids,
         )
         reply = await self.speaker.speak(context)
         reply_mode = turn.reply_mode if turn.should_reply else "plain"

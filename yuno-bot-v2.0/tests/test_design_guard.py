@@ -61,13 +61,13 @@ class SpeakerReferenceBoundaryTests(unittest.IsolatedAsyncioTestCase):
         context = SpeakerContext(
             history=({"role": "user", "content": "A: いまの話"},),
             references=(
-                SpeakerReference("memory", "mem_0001", "参照する断片", "conversation"),
+                SpeakerReference("memory", "care_0001", "参照する断片", "conversation"),
             ),
         )
         await Speaker(client).speak(context)
         payload = str(client.messages)
         self.assertIn("参照する断片", payload)
-        self.assertNotIn("mem_0001", payload)
+        self.assertNotIn("care_0001", payload)
         self.assertNotIn("public_id", payload)
         self.assertNotIn("\"kind\"", payload)
         self.assertNotIn("\"source\"", payload)

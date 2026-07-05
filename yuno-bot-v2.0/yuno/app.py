@@ -10,6 +10,7 @@ from yuno.care_marks.repository import CareMarkRepository
 from yuno.care_marks.service import CareMarkService
 from yuno.commands.admin_service import CareMarkCommandService
 from yuno.commands.core import create_memories_group
+from yuno.commands.guide import create_guide_command
 from yuno.commands.message_actions import create_selected_message_command
 from yuno.commands.listening import create_listening_group
 from yuno.commands.status import create_status_command
@@ -99,6 +100,7 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     register_events(bot, ConversationRuntime(pipeline))
     mark_commands = CareMarkCommandService(repository, care_marks)
     bot.tree.add_command(create_memories_group(mark_commands, permissions))
+    bot.tree.add_command(create_guide_command())
     bot.tree.add_command(create_selected_message_command(
         mark_commands, permissions
     ))

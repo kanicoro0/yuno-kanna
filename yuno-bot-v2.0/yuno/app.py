@@ -28,6 +28,7 @@ from yuno.read_cues.repository import ReadCueRepository
 from yuno.read_cues.service import ReadCueService
 from yuno.speaking.speaker import Speaker
 
+
 class YunoBot(commands.Bot):
     def __init__(self, settings: Settings, database: Database, **kwargs: Any):
         super().__init__(**kwargs)
@@ -36,8 +37,16 @@ class YunoBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.database.open()
+        await self._clear_guild_scoped_commands()
         await self.tree.sync()
         print("Slash commands synced globally")
+
+    async def _clear_guild_scoped_commands(self) -> None:
+        async for guild in self.fetch_guilds(limit=None):
+            target = discord.Object(id=guild.id)
+            self.tree.clear_commands(guild=target)
+            await self.tree.sync(guild=target)
+            print(f"Cleared guild slash commands: {guild.id}")
 
     async def close(self) -> None:
         await self.database.close()

@@ -52,6 +52,19 @@ class ReadCueService:
             statuses = selected
         return await self.repository.list_for_mark(care_mark_id, statuses, limit)
 
+    async def list_for_stream(
+        self,
+        stream_id: int,
+        statuses: Optional[Iterable[str]] = None,
+        limit: int = 40,
+    ) -> List[ReadCue]:
+        if statuses is not None:
+            selected = tuple(statuses)
+            for status in selected:
+                self._validate_status(status)
+            statuses = selected
+        return await self.repository.list_for_stream(stream_id, statuses, limit)
+
     async def set_status(
         self, read_cue_id: int, status: str
     ) -> Optional[ReadCue]:

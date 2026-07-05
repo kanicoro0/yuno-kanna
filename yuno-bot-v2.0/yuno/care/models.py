@@ -1,46 +1,42 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 
 @dataclass(frozen=True)
-class MemoryCandidate:
-    content: str
+class CareMarkCandidate:
     kind: str
     status: str
-    confidence: float
-
-
-@dataclass(frozen=True)
-class AttentionCandidate:
     text: str
-    rank: float
+    confidence: float = 0.5
+    sensitive: bool = False
+    about_other_person: bool = False
 
 
 @dataclass(frozen=True)
-class InterestUpdate:
+class ReadCueUpdate:
     term: str
     weight: float
+    care_mark_public_id: Optional[str] = None
+    candidate_text: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class CareReadRequest:
     current_message: str
     recent_messages: Tuple[Dict[str, str], ...]
-    memory_marks: Tuple[Dict[str, Any], ...]
-    attention_items: Tuple[Dict[str, Any], ...]
-    interest_terms: Tuple[Dict[str, Any], ...]
+    care_marks: Tuple[Dict[str, Any], ...]
+    read_cues: Tuple[Dict[str, Any], ...]
     addressing_strength: float
-    interest_salience: float
+    cue_salience: float
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "current_message": self.current_message,
-            "recent_messages": list(self.recent_messages),
-            "memory_marks": list(self.memory_marks),
-            "attention_items": list(self.attention_items),
-            "interest_terms": list(self.interest_terms),
-            "addressing_strength": self.addressing_strength,
-            "interest_salience": self.interest_salience,
+            'current_message': self.current_message,
+            'recent_messages': list(self.recent_messages),
+            'care_marks': list(self.care_marks),
+            'read_cues': list(self.read_cues),
+            'addressing_strength': self.addressing_strength,
+            'cue_salience': self.cue_salience,
         }
 
 
@@ -48,9 +44,7 @@ class CareReadRequest:
 class CareReadResult:
     wants_to_speak: bool = False
     should_speak: bool = False
-    memory_candidates: Tuple[MemoryCandidate, ...] = ()
-    attention_candidates: Tuple[AttentionCandidate, ...] = ()
-    touch_attention_ids: Tuple[str, ...] = ()
-    interest_updates: Tuple[InterestUpdate, ...] = ()
-    include_memory_ids: Tuple[str, ...] = ()
-    include_attention_ids: Tuple[str, ...] = ()
+    care_mark_candidates: Tuple[CareMarkCandidate, ...] = ()
+    read_cue_updates: Tuple[ReadCueUpdate, ...] = ()
+    touch_care_mark_ids: Tuple[str, ...] = ()
+    include_care_mark_ids: Tuple[str, ...] = ()

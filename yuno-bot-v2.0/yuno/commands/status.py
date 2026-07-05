@@ -15,22 +15,22 @@ def status_text(
     ) or "なし"
     names = "、".join(call_names)
     return (
-        "ゆのが聞いている範囲\n"
-        "- DM: 保存して返します\n"
-        "- mention: 保存してreplyで返します\n"
-        "- ゆのへのreply: 保存してreplyで返します\n"
-        f"- 聞き耳の場所: {channels}\n"
-        "  通常発言は保存します。CareMarkの手がかりや開いた話に触れた時だけCareReaderが読み、必要な時だけ返答します\n"
-        "- 聞き耳の場所でゆのへ向けられた発言: 保存して返します\n"
-        "- それ以外の通常発言: 保存しません\n"
-        f"- 今の呼び名: {names}"
+        "いまの聞こえ方\n"
+        "- DM: 残して返す\n"
+        "- mention: 残してreplyで返す\n"
+        "- ゆのへのreply: 残してreplyで返す\n"
+        f"- 聞き耳: {channels}\n"
+        "  ふつうの発言は残す。返すのは、拾う理由がある時だけ\n"
+        "- 聞き耳でゆのへ向いた発言: 残して返す\n"
+        "- それ以外: 残さない\n"
+        f"- 呼び名: {names}"
     )
 
 
 def create_status_command(
     listening: ListeningChannelService, call_names: Tuple[str, ...]
 ) -> app_commands.Command:
-    @app_commands.command(name="status", description="ゆのがどこで聞いて、どこで返すかを確認します")
+    @app_commands.command(name="status", description="いまの聞き方を見る")
     async def status(interaction: discord.Interaction) -> None:
         listening_items = await listening.list_all()
         await interaction.response.send_message(

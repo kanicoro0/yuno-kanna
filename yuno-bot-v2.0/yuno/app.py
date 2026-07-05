@@ -4,16 +4,12 @@ from typing import Any, Optional
 import discord
 from discord.ext import commands
 
-from yuno.attention.repository import AttentionRepository
-from yuno.attention.service import AttentionService
 from yuno.care.reader import CareReader
 from yuno.care.service import CareService
 from yuno.care_marks.repository import CareMarkRepository
 from yuno.care_marks.service import CareMarkService
-from yuno.commands.admin_service import CoreAdminService
-from yuno.commands.core import (
-    create_attention_group, create_interest_group, create_memory_group,
-)
+from yuno.commands.admin_service import CareMarkCommandService
+from yuno.commands.core import create_memories_group
 from yuno.commands.listening import create_listening_group
 from yuno.commands.status import create_status_command
 from yuno.config import Settings, load_settings
@@ -24,12 +20,9 @@ from yuno.discord.routing import MessageRouter
 from yuno.discord.events import ConversationRuntime, register_events
 from yuno.infra.database import Database
 from yuno.infra.openai_client import OpenAITextClient
-from yuno.interest.repository import InterestRepository
-from yuno.interest.service import InterestService
 from yuno.listening.repository import ListeningChannelRepository
 from yuno.listening.service import ListeningChannelService
-from yuno.memory.repository import MemoryMarkRepository
-from yuno.memory.service import MemoryMarkService
+from yuno.permissions import PermissionService
 from yuno.pipeline import ConversationPipeline
 from yuno.read_cues.repository import ReadCueRepository
 from yuno.read_cues.service import ReadCueService
@@ -67,11 +60,9 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     intents.message_content = True
     database = Database(settings.database_file)
     repository = ConversationRepository(database)
-    memory = MemoryMarkService(MemoryMarkRepository(database))
-    attention = AttentionService(AttentionRepository(database))
-    interest = InterestService(InterestRepository(database))
     care_marks = CareMarkService(CareMarkRepository(database))
     read_cues = ReadCueService(ReadCueRepository(database))
+    permissions = PermissionService(settings.owner_user_ids)
     listening = ListeningChannelService(
         ListeningChannelRepository(database), settings.listening_channel_ids
     )
@@ -96,10 +87,8 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
         application_id=settings.discord_client_id,
     )
     register_events(bot, ConversationRuntime(pipeline))
-    admin = CoreAdminService(repository, memory, attention, interest)
-    bot.tree.add_command(create_memory_group(admin))
-    bot.tree.add_command(create_attention_group(admin))
-    bot.tree.add_command(create_interest_group(admin))
+    mark_commands = CareMarkCommandService(repository, care_marks)
+    bot.tree.add_command(create_memories_group(mark_commands, permissions))
     bot.tree.add_command(create_listening_group(listening))
     bot.tree.add_command(create_status_command(listening, settings.yuno_call_names))
 

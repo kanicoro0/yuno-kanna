@@ -1,5 +1,7 @@
 # Attention cue migration plan
 
+> 実装状況: queues 011–014でCareMark / ReadCueへ移行し、独立した`interest_terms`と`/interest`は廃止されました。以下は移行時の判断記録であり、現在のruntime説明ではありません。
+
 この文書は、独立している `InterestTerm` を、Attentionを見つけるためのcue termへ段階的に寄せる計画です。
 
 この変更の目的は名前の置換ではありません。cueを新しい記憶庫にせず、Attentionの発見を助ける従属的な索引へ戻すことです。移行中もConversationLog、MemoryMark、Attentionを本体として扱います。

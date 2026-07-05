@@ -189,13 +189,13 @@ slash commandを機能ごとに増やしすぎません。
 - /memories
 - /tools
 
-既存の `/memory` `/attention` `/interest` `/listening` は、当面はlegacyまたはdebug入口として残してよいです。
+旧 `/memory` `/attention` `/interest` はCareMark移行後に登録を終了しました。現在の管理入口は `/memories` と `/listening` です。
 
 対応:
 
 - /status: 現在の稼働状態、listening、sleep、DB、OpenAI、tool状態を見る
 - /settings: global / server / channel の設定を見る・変える
-- /memories: MemoryMark、Attention、Cueを扱う
+- /memories: memory / attention CareMarkを扱う。ReadCueは独立表示しない
 - /tools: ログ、health、backup、service状態など、任された仕事を扱う
 
 ## 実装順

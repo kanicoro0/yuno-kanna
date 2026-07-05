@@ -6,7 +6,7 @@ Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計
 次にどう変化させるか、道具・権限・整理の方針は [`docs/next_direction.md`](docs/next_direction.md) にあります。
 実装をどう進めるか、作業ごとに何を整理するかは [`docs/implementation_practice.md`](docs/implementation_practice.md) にあります。
 
-現在は第3A補修と第3B管理段階です。軽い通常返信を保ったままMemoryMark、AttentionItem、CareReaderを接続し、同じ場のCoreをephemeral commandで管理できます。InterestTermは当面既存実装として残しますが、今後はAttentionにぶら下がるCue / Termへ寄せます。
+現在はCareMark / ReadCue移行後の構成です。会話につく印はCareMarkへ統合され、ReadCueはその印へ戻るための選択用索引として扱います。
 
 実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md)、[`docs/next_direction.md`](docs/next_direction.md)、[`docs/implementation_practice.md`](docs/implementation_practice.md) を読んでください。ゆのv2.0では、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」と、不要な概念を増やさず整理しながら進めることを優先します。
 
@@ -18,15 +18,15 @@ listening通常発言: user保存 → pre-filter → CareReader
 → wants_to_speak && should_speak の時だけSpeaker → Discord送信 → assistant保存
 ```
 
-MemoryMarkは独立した記憶庫ではなく、ConversationLogにつく印です。`pending` は失くさない候補、`active` は通常参照可能、`hidden` は通常contextから外した状態です。
+CareMarkは独立した記憶庫ではなく、ConversationLogにつく印です。memory-likeな印は`draft / active / hidden`、attention-likeな印は`open / closed / hidden`を使います。
 
-AttentionItemは、まだ閉じていない話題や問いです。人格状態、気分、口調のmodeではありません。Cue / TermはAttentionに反応するための語であり、返信スイッチや返信確率ではありません。
+ReadCueはCareMarkを選ぶための弱い手がかりです。独立した記憶や関心ではなく、返信スイッチや返信確率でもありません。
 
-CareReaderは同じstreamを静かに読み、印・Attention・CueをJSONで返します。返答本文や口調指示は書きません。directed会話では送信前に挟まず、送信成功後に観察します。listening通常発言では割り込み判断も担います。
+CareReaderは同じstreamを静かに読み、CareMark候補とReadCue更新をJSONで返します。返答本文や口調指示は書きません。directed会話では送信前に挟まず、送信成功後に観察します。listening通常発言では割り込み判断も担います。
 
-Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive MemoryMarkとopen Attentionから合計3件までを選び、本文だけを渡します。Cue / Term、ID、状態、routing名、内部理由、salienceは渡しません。
+Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive memory CareMarkとopen attention CareMarkから合計3件までを選び、本文だけを渡します。ReadCue、ID、状態、routing名、内部理由、scoreは渡しません。
 
-管理commandは現状 `/memory`、`/attention`、`/interest`、`/listening` です。表示と操作は実行したDMまたはchannelのstreamだけに限定され、すべてephemeralです。今後の表の入口は `/status`、`/settings`、`/memories`、`/tools` に寄せ、既存commandはlegacy/debug扱いへ移します。
+管理commandは現状 `/memories` と `/listening` です。`/memory`、`/attention`、`/interest` は旧table廃止に伴って登録を終了しました。表示と操作は実行したDMまたはchannelのstreamだけに限定され、すべてephemeralです。
 
 ## 会話ログの範囲
 
@@ -59,15 +59,15 @@ SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは�
 
 ```text
 /status
-/memory list|pending|activate|hide|restore|add
-/attention list|close|hide|reopen|add
-/interest list|add|hide|sleep|wake
+/memories list|add|status
 /listening list|add|remove|clear
 ```
 
 `/listening` は `.env` 初期値とDB設定を統合します。`.env` 由来はcommandで解除できず、DB由来の追加・解除は再起動なしでroutingへ反映されます。変更操作にはManage Channels権限が必要です。
 
-今後は次の入口へ整理します。
+`/memories` はownerまたはサーバー管理者だけが使用でき、実行したstreamのCareMarkだけを扱います。ReadCueを独立管理するcommandはありません。
+
+将来追加する場合も、入口は次へ寄せます。
 
 ```text
 /status

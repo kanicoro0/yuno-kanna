@@ -63,6 +63,7 @@ class CareMarkCommandService:
         kind: str,
         text: str,
         status: Optional[str] = None,
+        source_message_id: Optional[int] = None,
     ) -> CareMark:
         self._validate_kind(kind)
         selected_status = status or (
@@ -81,6 +82,31 @@ class CareMarkCommandService:
             kind,
             selected_status,
             text,
+            source_message_id=source_message_id,
+        )
+
+    async def add_mark_from_message(
+        self,
+        channel_id: str,
+        discord_message_id: str,
+        kind: str,
+    ) -> Optional[CareMark]:
+        stream = await self.conversations.get_stream_by_channel_id(channel_id)
+        message = await self.conversations.find_by_discord_message_id(
+            discord_message_id
+        )
+        if (
+            stream is None
+            or message is None
+            or message.stream_id != stream.id
+        ):
+            return None
+        return await self.add_mark(
+            channel_id,
+            stream.discord_guild_id,
+            kind,
+            message.content,
+            source_message_id=message.id,
         )
 
     async def set_status(

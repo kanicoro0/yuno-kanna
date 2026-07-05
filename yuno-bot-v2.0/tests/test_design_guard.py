@@ -34,7 +34,7 @@ class DesignGuardTests(unittest.TestCase):
         self.assertNotIn("CareReader", text)
 
     def test_prompts_do_not_claim_unprovided_capabilities(self) -> None:
-        self.assertIn("与えられていないものを見たふり", SYSTEM_PROMPT)
+        self.assertIn("与えられていない情報を足さない", SYSTEM_PROMPT)
         for word in ("履歴", "references", "memory mark", "attention item"):
             self.assertNotIn(word, SYSTEM_PROMPT.casefold())
         for word in ("画像", "音声", "外部リンク"):

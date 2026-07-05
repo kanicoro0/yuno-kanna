@@ -5,7 +5,8 @@
 Add a small action surface for a selected Discord message without attaching buttons to ordinary Yuno replies.
 
 Yuno's normal replies should stay light.
-Buttons should live in explicit panels, command responses, or a targeted message context command, not on every spoken reply.
+Message operations should primarily start from right-click message context actions.
+Command and button panels may still be used to inspect or edit existing marks.
 
 The goal is to reduce slash-command typing while keeping the channel surface quiet.
 
@@ -48,8 +49,16 @@ Run this task from `yuno-bot-v2.0/`.
 
 Do not attach a View to normal Yuno replies by default.
 
-Use a global message context command as the entry point if Discord support is straightforward.
+Use a global message context command as the main entry point for message operations if Discord support is straightforward.
 It should open a small ephemeral panel for the selected message.
+
+Keep the roles separate:
+
+```text
+right click = touch a selected message
+slash command = entry point, status check, whole-bot settings
+button panel = continue editing the thing already opened
+```
 
 Prefer explicit UI surfaces:
 
@@ -83,6 +92,7 @@ The user should not need to know a mark id, kind, or status enum for common acti
 6. Avoid duplicating reaction behavior.
 7. Do not create hidden long-term state just because a button was shown.
 8. Do not add guild-scoped commands for this task.
+9. Leave mark inspection and mark editing available through command/button panels where they already fit better.
 
 ## Suggested first condition
 

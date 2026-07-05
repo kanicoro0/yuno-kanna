@@ -80,6 +80,7 @@ class DiscordBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source.reply_calls, [])
         self.assertEqual(source.channel.calls[0][0], "返事")
         self.assertIn("allowed_mentions", source.channel.calls[0][1])
+        self.assertNotIn("view", source.channel.calls[0][1])
 
     async def test_discord_reply_disables_mentions(self) -> None:
         source = FakeMessage()
@@ -89,6 +90,7 @@ class DiscordBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source.channel.calls, [])
         self.assertFalse(source.reply_calls[0][1]["mention_author"])
         self.assertIn("allowed_mentions", source.reply_calls[0][1])
+        self.assertNotIn("view", source.reply_calls[0][1])
 
     async def test_ignored_intake_does_not_start_typing(self) -> None:
         class Pipeline:

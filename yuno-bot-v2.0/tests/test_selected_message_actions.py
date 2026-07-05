@@ -4,6 +4,7 @@ import unittest
 import discord
 
 from yuno.commands.message_actions import (
+    CLOSE_LABEL,
     CONTEXT_COMMAND_NAME,
     LATER_LABEL,
     MISSING_TARGET_TEXT,
@@ -25,7 +26,9 @@ class FakeChannel:
     async def fetch_message(self, message_id):
         self.fetches.append(message_id)
         if not self.available:
-            raise discord.NotFound(SimpleNamespace(status=404, reason='gone'), 'gone')
+            raise discord.NotFound(
+                SimpleNamespace(status=404, reason='gone'), 'gone'
+            )
         return SimpleNamespace(id=message_id)
 
 
@@ -40,12 +43,30 @@ class FakeService:
     def __init__(self):
         self.calls = []
         self.missing = False
+        self.attention = []
 
-    async def add_mark_from_message(self, channel_id, message_id, kind):
-        self.calls.append((channel_id, message_id, kind))
+    async def marks_from_message(self, channel_id, message_id, kind):
         if self.missing:
             return None
-        return SimpleNamespace(kind=kind)
+        return list(self.attention) if kind == 'attention' else []
+
+    async def reuse_mark_from_message(self, channel_id, message_id, kind):
+        self.calls.append(('reuse', channel_id, message_id, kind))
+        if self.missing:
+            return None
+        if kind == 'attention' and not any(
+            mark.status == 'open' for mark in self.attention
+        ):
+            self.attention.insert(0, SimpleNamespace(status='open'))
+        return SimpleNamespace(outcome='created')
+
+    async def close_attention_from_message(self, channel_id, message_id):
+        self.calls.append(('close', channel_id, message_id))
+        for mark in self.attention:
+            if mark.status == 'open':
+                mark.status = 'closed'
+                return SimpleNamespace(outcome='closed')
+        return None
 
 
 class FakeResponse:
@@ -140,16 +161,16 @@ class SelectedMessageActionTests(unittest.IsolatedAsyncioTestCase):
         service = FakeService()
         target = FakeMessage(message_id=222, channel=FakeChannel(33))
         view = SelectedMessageView(
-            service,
-            PermissionService(),
-            target,
-            opened_by_user_id=7,
+            service, PermissionService(), target, opened_by_user_id=7
         )
+        await view.prepare()
         click = FakeInteraction(administrator=True)
 
         await button(view, SAVE_LABEL).callback(click)
 
-        self.assertEqual(service.calls, [('33', '222', 'memory')])
+        self.assertEqual(
+            service.calls, [('reuse', '33', '222', 'memory')]
+        )
         self.assertEqual(target.channel.fetches, [222])
         self.assertEqual(click.response.sent, [])
         self.assertIn('残したよ', click.response.edits[0]['content'])
@@ -158,25 +179,58 @@ class SelectedMessageActionTests(unittest.IsolatedAsyncioTestCase):
         service = FakeService()
         target = FakeMessage()
         view = SelectedMessageView(
-            service,
-            PermissionService(),
-            target,
-            opened_by_user_id=7,
+            service, PermissionService(), target, opened_by_user_id=7
         )
+        await view.prepare()
         click = FakeInteraction(administrator=True)
 
         await button(view, LATER_LABEL).callback(click)
 
-        self.assertEqual(service.calls, [('10', '100', 'attention')])
+        self.assertEqual(
+            service.calls, [('reuse', '10', '100', 'attention')]
+        )
+        self.assertIn(
+            CLOSE_LABEL,
+            [item.label for item in click.response.edits[0]['view'].children],
+        )
+
+    async def test_close_is_visible_only_for_open_attention(self):
+        service = FakeService()
+        view = SelectedMessageView(
+            service, PermissionService(), FakeMessage(), opened_by_user_id=7
+        )
+
+        await view.prepare()
+        self.assertNotIn(CLOSE_LABEL, [item.label for item in view.children])
+
+        service.attention = [SimpleNamespace(status='open')]
+        await view.prepare()
+        self.assertIn(CLOSE_LABEL, [item.label for item in view.children])
+
+    async def test_close_uses_selected_message_service_path(self):
+        service = FakeService()
+        service.attention = [SimpleNamespace(status='open')]
+        target = FakeMessage(message_id=222, channel=FakeChannel(33))
+        view = SelectedMessageView(
+            service, PermissionService(), target, opened_by_user_id=7
+        )
+        await view.prepare()
+        click = FakeInteraction(administrator=True)
+
+        await button(view, CLOSE_LABEL).callback(click)
+
+        self.assertEqual(service.calls, [('close', '33', '222')])
+        self.assertNotIn(
+            CLOSE_LABEL,
+            [item.label for item in click.response.edits[0]['view'].children],
+        )
 
     async def test_direct_unauthorized_button_use_does_not_mutate(self):
         service = FakeService()
         view = SelectedMessageView(
-            service,
-            PermissionService(),
-            FakeMessage(),
-            opened_by_user_id=7,
+            service, PermissionService(), FakeMessage(), opened_by_user_id=7
         )
+        await view.prepare()
         click = FakeInteraction(administrator=False)
 
         await button(view, SAVE_LABEL).callback(click)
@@ -187,13 +241,11 @@ class SelectedMessageActionTests(unittest.IsolatedAsyncioTestCase):
     async def test_deleted_target_fails_safely(self):
         service = FakeService()
         target = FakeMessage()
-        target.channel.available = False
         view = SelectedMessageView(
-            service,
-            PermissionService(),
-            target,
-            opened_by_user_id=7,
+            service, PermissionService(), target, opened_by_user_id=7
         )
+        await view.prepare()
+        target.channel.available = False
         click = FakeInteraction(administrator=True)
 
         await button(view, SAVE_LABEL).callback(click)
@@ -203,13 +255,11 @@ class SelectedMessageActionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unstored_target_fails_safely(self):
         service = FakeService()
-        service.missing = True
         view = SelectedMessageView(
-            service,
-            PermissionService(),
-            FakeMessage(),
-            opened_by_user_id=7,
+            service, PermissionService(), FakeMessage(), opened_by_user_id=7
         )
+        await view.prepare()
+        service.missing = True
         click = FakeInteraction(administrator=True)
 
         await button(view, SAVE_LABEL).callback(click)
@@ -219,11 +269,9 @@ class SelectedMessageActionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stale_panel_rejects_interaction_safely(self):
         view = SelectedMessageView(
-            FakeService(),
-            PermissionService(),
-            FakeMessage(),
-            opened_by_user_id=7,
+            FakeService(), PermissionService(), FakeMessage(), opened_by_user_id=7
         )
+        await view.prepare()
         await view.on_timeout()
         click = FakeInteraction(administrator=True)
 

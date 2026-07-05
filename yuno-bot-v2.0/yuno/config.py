@@ -24,17 +24,13 @@ def _optional_int(name: str) -> Optional[int]:
         raise ValueError(f"{name} must be an integer") from error
 
 
-def _id_set(name: str, value: str) -> FrozenSet[int]:
+def _channel_ids(value: str) -> FrozenSet[int]:
     if not value.strip():
         return frozenset()
     try:
         return frozenset(int(item.strip()) for item in value.split(",") if item.strip())
     except ValueError as error:
-        raise ValueError(f"{name} must contain comma-separated integers") from error
-
-
-def _channel_ids(value: str) -> FrozenSet[int]:
-    return _id_set("LISTENING_CHANNEL_IDS", value)
+        raise ValueError("LISTENING_CHANNEL_IDS must contain comma-separated integers") from error
 
 
 def _user_ids(value: str) -> FrozenSet[str]:
@@ -59,7 +55,6 @@ class Settings:
     yuno_call_names: Tuple[str, ...]
     log_level: str
     owner_user_ids: FrozenSet[str] = frozenset()
-    clear_guild_command_ids: FrozenSet[int] = frozenset()
 
 
 def load_settings() -> Settings:
@@ -76,8 +71,4 @@ def load_settings() -> Settings:
         yuno_call_names=_call_names(os.getenv("YUNO_CALL_NAMES", "")),
         log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         owner_user_ids=_user_ids(os.getenv("OWNER_USER_IDS", "")),
-        clear_guild_command_ids=_id_set(
-            "CLEAR_GUILD_COMMAND_IDS",
-            os.getenv("CLEAR_GUILD_COMMAND_IDS", ""),
-        ),
     )

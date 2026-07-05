@@ -28,7 +28,7 @@ class ConversationRuntime:
 def register_events(bot: commands.Bot, runtime: ConversationRuntime) -> None:
     @bot.event
     async def on_ready() -> None:
-        print(f"Yuno v2.0 ready: {bot.user}")
+        print(f"Yuno ready: {bot.user}")
 
     @bot.event
     async def on_message(message: discord.Message) -> None:

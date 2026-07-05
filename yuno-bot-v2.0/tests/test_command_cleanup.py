@@ -20,6 +20,7 @@ class CareMarkCommandServiceTests(unittest.IsolatedAsyncioTestCase):
         self.database = Database(Path(self.temp_dir.name) / 'commands.sqlite3')
         await self.database.open()
         conversations = ConversationRepository(self.database)
+        self.conversations = conversations
         marks = CareMarkService(CareMarkRepository(self.database))
         self.service = CareMarkCommandService(conversations, marks)
 
@@ -65,6 +66,48 @@ class CareMarkCommandServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('score', text.casefold())
         self.assertNotIn('weight', text.casefold())
         self.assertNotIn('cue', text.casefold())
+
+    async def test_selected_message_path_keeps_source_identity(self) -> None:
+        stream = await self.conversations.get_or_create_stream(
+            'channel', '20', '1'
+        )
+        message = await self.conversations.append(
+            stream.id,
+            'discord-message-20',
+            'user',
+            '7',
+            'A',
+            '選んだ本文',
+        )
+
+        result = await self.service.add_mark_from_message(
+            '20', 'discord-message-20', 'memory'
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.source_message_id, message.id)
+        self.assertEqual(result.text, '選んだ本文')
+        self.assertEqual((result.kind, result.status), ('memory', 'draft'))
+
+    async def test_selected_message_path_rejects_another_stream(self) -> None:
+        stream = await self.conversations.get_or_create_stream(
+            'channel', '21', '1'
+        )
+        await self.conversations.append(
+            stream.id,
+            'discord-message-21',
+            'user',
+            '7',
+            'A',
+            '別の場所',
+        )
+        await self.conversations.get_or_create_stream('channel', '22', '1')
+
+        result = await self.service.add_mark_from_message(
+            '22', 'discord-message-21', 'attention'
+        )
+
+        self.assertIsNone(result)
 
 
 class CommandCleanupGuardTests(unittest.TestCase):

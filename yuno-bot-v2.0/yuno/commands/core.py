@@ -23,10 +23,10 @@ def create_memories_group(
 ) -> app_commands.Group:
     group = app_commands.Group(
         name='memories',
-        description='この場のCareMarkを確認・管理します',
+        description='この場に残した印を見る',
     )
 
-    @group.command(name='list', description='この場のCareMarkを表示します')
+    @group.command(name='list', description='この場の印を表示')
     async def memories_list(
         interaction: discord.Interaction,
         kind: str = 'all',
@@ -36,12 +36,12 @@ def create_memories_group(
         if not await _require_admin(interaction, permissions):
             return
         if kind not in {*CARE_MARK_KINDS, 'all'}:
-            await _reply(interaction, 'kindは memory / attention / all から選んでね')
+            await _reply(interaction, 'kind: memory / attention / all')
             return
         if status not in {*CARE_MARK_STATUS_NAMES, 'visible', 'all'}:
             await _reply(
                 interaction,
-                'statusは draft / active / open / closed / hidden / visible / all から選んでね',
+                'status: draft / active / open / closed / hidden / visible / all',
             )
             return
         marks = await service.list_marks(
@@ -53,7 +53,7 @@ def create_memories_group(
         )
         await _reply(interaction, render_care_marks(marks))
 
-    @group.command(name='add', description='この場へCareMarkを追加します')
+    @group.command(name='add', description='この場に印を追加')
     async def memories_add(
         interaction: discord.Interaction,
         kind: str,
@@ -71,14 +71,14 @@ def create_memories_group(
                 status,
             )
         except ValueError:
-            await _reply(interaction, 'kindかstatusがCareMarkの規則と合わないみたい')
+            await _reply(interaction, 'kindかstatusが合わない')
             return
         await _reply(
             interaction,
-            f'{mark.public_id} を {mark.kind}/{mark.status} で追加したよ',
+            f'{mark.public_id} [{mark.kind}/{mark.status}] を追加',
         )
 
-    @group.command(name='status', description='CareMarkの状態を変更します')
+    @group.command(name='status', description='印の状態を変更')
     async def memories_status(
         interaction: discord.Interaction,
         public_id: str,
@@ -93,13 +93,13 @@ def create_memories_group(
                 status,
             )
         except ValueError:
-            await _reply(interaction, 'そのkindでは使えないstatusみたい')
+            await _reply(interaction, 'そのkindでは使えないstatus')
             return
         await _reply(
             interaction,
-            f'{public_id} を {status} にしたよ'
+            f'{public_id} -> {status}'
             if mark else
-            'この場では見つからないみたい',
+            'この場では見つからない',
         )
 
     return group
@@ -109,7 +109,7 @@ def render_care_marks(marks: Iterable[CareMark]) -> str:
     return '\n'.join(
         f'{mark.public_id} [{mark.kind}/{mark.status}] {_preview(mark.text)}'
         for mark in marks
-    ) or 'この場には該当するCareMarkはないみたい'
+    ) or '該当する印はない'
 
 
 async def _require_admin(
@@ -135,7 +135,7 @@ async def _require_admin(
     if not allowed:
         await _reply(
             interaction,
-            'この印を管理するにはownerかサーバー管理者の権限が必要です',
+            'この印を触れるのはownerかサーバー管理者だけ',
         )
     return allowed
 

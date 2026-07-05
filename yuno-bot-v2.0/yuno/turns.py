@@ -60,14 +60,22 @@ class PipelineTurn:
         return self.source_user_message_ids[-1]
 
     def can_merge(self, newer: "PipelineTurn") -> bool:
+        same_reply_behavior = (
+            self.should_reply == newer.should_reply
+            and self.route_reason == newer.route_reason
+            and self.reply_mode == newer.reply_mode
+        )
+        directed_followup = self.should_reply and not newer.should_reply
+        reply_target_compatible = (
+            newer.reply_to_discord_message_id is None
+            or self.reply_to_discord_message_id
+            == newer.reply_to_discord_message_id
+        )
         return (
             self.stream_id == newer.stream_id
             and self.author_id == newer.author_id
-            and self.reply_to_discord_message_id
-            == newer.reply_to_discord_message_id
-            and self.should_reply == newer.should_reply
-            and self.route_reason == newer.route_reason
-            and self.reply_mode == newer.reply_mode
+            and reply_target_compatible
+            and (same_reply_behavior or directed_followup)
         )
 
     def merged_with(self, newer: "PipelineTurn") -> "PipelineTurn":
@@ -101,16 +109,17 @@ class TurnBuffer:
         if debounce_seconds < 0:
             raise ValueError("debounce_seconds must not be negative")
         self.debounce_seconds = debounce_seconds
-        self._pending: Dict[Tuple[object, ...], _PendingTurn] = {}
+        self._pending: Dict[int, _PendingTurn] = {}
         self._lock = asyncio.Lock()
         self._generation = 0
 
     async def push(self, turn: PipelineTurn) -> Optional[PipelineTurn]:
-        key = self._key(turn)
         async with self._lock:
             self._generation += 1
             generation = self._generation
-            current = self._pending.get(key)
+            key, current = self._latest_compatible(turn)
+            if key is None:
+                key = generation
             combined = current.turn.merged_with(turn) if current else turn
             self._pending[key] = _PendingTurn(combined, generation)
 
@@ -130,16 +139,13 @@ class TurnBuffer:
             self._pending.pop(key, None)
             return current.turn
 
-    @staticmethod
-    def _key(turn: PipelineTurn) -> Tuple[object, ...]:
-        return (
-            turn.stream_id,
-            turn.author_id,
-            turn.reply_to_discord_message_id,
-            turn.should_reply,
-            turn.route_reason,
-            turn.reply_mode,
-        )
+    def _latest_compatible(
+        self, turn: PipelineTurn
+    ) -> Tuple[Optional[int], Optional[_PendingTurn]]:
+        for key, pending in reversed(tuple(self._pending.items())):
+            if pending.turn.can_merge(turn):
+                return key, pending
+        return None, None
 
 
 class TurnPhase(str, Enum):

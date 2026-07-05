@@ -42,6 +42,18 @@ class CareMarkService:
             stream_id, kinds, statuses, limit
         )
 
+    async def list_for_source(
+        self,
+        stream_id: int,
+        source_message_id: int,
+        kind: str,
+    ) -> List[CareMark]:
+        if kind not in CARE_MARK_STATUSES:
+            raise ValueError('invalid care mark kind')
+        return await self.repository.list_for_source(
+            stream_id, source_message_id, kind
+        )
+
     async def update(
         self,
         public_id: str,

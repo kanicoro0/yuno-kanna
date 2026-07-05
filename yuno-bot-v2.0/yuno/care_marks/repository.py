@@ -85,6 +85,20 @@ class CareMarkRepository:
         )).fetchall()
         return [self._model(row) for row in rows]
 
+    async def list_for_source(
+        self,
+        stream_id: int,
+        source_message_id: int,
+        kind: str,
+    ) -> List[CareMark]:
+        rows = await (await self.database.connection.execute(
+            '''SELECT * FROM care_marks
+               WHERE stream_id = ? AND source_message_id = ? AND kind = ?
+               ORDER BY id DESC''',
+            (stream_id, source_message_id, kind),
+        )).fetchall()
+        return [self._model(row) for row in rows]
+
     async def update(
         self, care_mark_id: int, *, status: str, text: str
     ) -> Optional[CareMark]:

@@ -4,7 +4,13 @@ from typing import Optional
 
 from yuno.care.models import CareReadResult
 from yuno.care.reader import CareReader
-from yuno.care.service import CareService, cue_salience, overlaps_attention
+from yuno.care.service import (
+    CareApplication,
+    CareService,
+    cue_salience,
+    overlaps_attention,
+)
+from yuno.care_marks.models import CareMark
 from yuno.conversation.context import ContextBuilder
 from yuno.conversation.reference_selector import ReferenceSelector
 from yuno.conversation.repository import ConversationRepository
@@ -25,6 +31,7 @@ class PipelineResult:
     stream_id: Optional[int]
     reply_to_discord_message_id: Optional[str]
     observation_ticket: Optional["ObservationTicket"] = None
+    care_mark_changes: tuple[CareMark, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +120,7 @@ class ConversationPipeline:
         care_result = CareReadResult()
         include_care_mark_ids = []
         pre_care_completed = False
+        care_mark_changes: tuple[CareMark, ...] = ()
         if (
             turn.route_reason == "listening_only"
             and self.care_reader
@@ -143,6 +151,7 @@ class ConversationPipeline:
                 include_care_mark_ids = list(
                     application.include_care_mark_ids
                 )
+                care_mark_changes = application.affected_care_marks
                 pre_care_completed = True
                 logger.debug(
                     "care_reader result stream_id=%s memory=%d attention=%d cues=%d",
@@ -171,7 +180,14 @@ class ConversationPipeline:
         )
         should_speak = turn.should_reply or listening_should_speak
         if not should_speak:
-            return PipelineResult(False, "", "none", turn.stream_id, None)
+            return PipelineResult(
+                False,
+                "",
+                "none",
+                turn.stream_id,
+                None,
+                care_mark_changes=care_mark_changes,
+            )
 
         care_mark_ids = include_care_mark_ids
         if turn.should_reply and self.reference_selector:
@@ -198,7 +214,13 @@ class ConversationPipeline:
             pre_care_completed=pre_care_completed,
         )
         return PipelineResult(
-            True, reply, reply_mode, turn.stream_id, reply_to, ticket
+            True,
+            reply,
+            reply_mode,
+            turn.stream_id,
+            reply_to,
+            ticket,
+            care_mark_changes,
         )
 
     async def record_sent_assistant(
@@ -221,14 +243,14 @@ class ConversationPipeline:
 
     async def observe_after_send(
         self, ticket: Optional[ObservationTicket]
-    ) -> None:
+    ) -> Optional[CareApplication]:
         if (
             ticket is None
             or ticket.pre_care_completed
             or not self.care_reader
             or not self.care_service
         ):
-            return
+            return None
         state = await self.care_service.current_state(ticket.stream_id)
         salience = cue_salience(ticket.user_content, state.read_cues)
         request = await self.care_service.build_request(
@@ -239,7 +261,7 @@ class ConversationPipeline:
             state,
         )
         result = await self.care_reader.read(request)
-        await self.care_service.apply(
+        application = await self.care_service.apply(
             ticket.stream_id, ticket.care_source_user_message_id, result
         )
         logger.debug(
@@ -255,3 +277,4 @@ class ConversationPipeline:
             ),
             len(result.read_cue_updates),
         )
+        return application

@@ -59,6 +59,7 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
             application.created_care_mark_ids[0]
         )
         self.assertEqual((mark.kind, mark.status), ('memory', 'draft'))
+        self.assertEqual(application.affected_care_marks, (mark,))
 
     async def test_similar_open_attention_is_touched_not_duplicated(self) -> None:
         existing = await self.marks.create(
@@ -75,6 +76,10 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(application.created_care_mark_ids, ())
         self.assertEqual(application.touched_care_mark_ids, (existing.public_id,))
+        self.assertEqual(
+            tuple(mark.public_id for mark in application.affected_care_marks),
+            (existing.public_id,),
+        )
         marks = await self.marks.list_for_stream(
             self.stream.id, ('attention',), ('open',)
         )

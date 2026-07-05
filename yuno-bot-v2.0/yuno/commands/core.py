@@ -34,6 +34,22 @@ _STATUS_TEXT = {
     'hidden': '隠している',
 }
 
+_KIND_CHOICES = [
+    app_commands.Choice(name='ぜんぶ', value='all'),
+    app_commands.Choice(name='残したもの', value='memory'),
+    app_commands.Choice(name='あとで見るもの', value='attention'),
+]
+
+_STATUS_CHOICES = [
+    app_commands.Choice(name='いま見るもの', value='visible'),
+    app_commands.Choice(name='ぜんぶ', value='all'),
+    app_commands.Choice(name='覚えている', value='active'),
+    app_commands.Choice(name='まだ開いている', value='open'),
+    app_commands.Choice(name='閉じている', value='closed'),
+    app_commands.Choice(name='隠している', value='hidden'),
+    app_commands.Choice(name='まだ置いてある', value='draft'),
+]
+
 
 @dataclass(frozen=True)
 class MarkAction:
@@ -152,7 +168,13 @@ def create_memories_group(
         description='この場に残した印を見る',
     )
 
-    @group.command(name='list', description='この場の印を表示')
+    @group.command(name='list', description='この場所に残したものを見る')
+    @app_commands.describe(
+        kind='見るものの種類',
+        status='いまの状態で絞る',
+        limit='表示する件数（1〜20）',
+    )
+    @app_commands.choices(kind=_KIND_CHOICES, status=_STATUS_CHOICES)
     async def memories_list(
         interaction: discord.Interaction,
         kind: str = 'all',
@@ -162,13 +184,10 @@ def create_memories_group(
         if not await _require_admin(interaction, permissions):
             return
         if kind not in {*CARE_MARK_KINDS, 'all'}:
-            await _reply(interaction, 'kind: memory / attention / all')
+            await _reply(interaction, '種類は表示される選択肢から選んでね')
             return
         if status not in {*CARE_MARK_STATUS_NAMES, 'visible', 'all'}:
-            await _reply(
-                interaction,
-                'status: draft / active / open / closed / hidden / visible / all',
-            )
+            await _reply(interaction, '状態は表示される選択肢から選んでね')
             return
         view = MemoriesView(
             service,

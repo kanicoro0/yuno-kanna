@@ -13,7 +13,8 @@ def create_listening_group(service: ListeningChannelService) -> app_commands.Gro
     async def listening_list(interaction: discord.Interaction) -> None:
         items = await service.list_all()
         text = "\n".join(
-            f"<#{item.discord_channel_id}> 由来: {item.source}" for item in items
+            f"<#{item.discord_channel_id}> {_source_label(item.source)}"
+            for item in items
         ) or "聞いている場所はまだない"
         await _reply(interaction, text)
 
@@ -53,11 +54,11 @@ def create_listening_group(service: ListeningChannelService) -> app_commands.Gro
             return
         result = await service.remove(str(target.id))
         if result.reason == "env_protected":
-            text = ".env由来なのでコマンドでは解除できない"
+            text = "最初から入っている場所は、コマンドでは外せない"
         elif result.changed:
             text = "解除した"
         else:
-            text = "DB由来の聞き場所ではない"
+            text = "後から追加した場所ではないよ"
         await _reply(interaction, text)
 
     @group.command(name="clear", description="このサーバーで後から追加した設定を解除")
@@ -68,7 +69,7 @@ def create_listening_group(service: ListeningChannelService) -> app_commands.Gro
             await _reply(interaction, "サーバーで使って")
             return
         count = await service.clear(str(interaction.guild_id))
-        await _reply(interaction, f"DB由来の設定を{count}件解除")
+        await _reply(interaction, f"後から追加した場所を{count}件外した")
 
     return group
 
@@ -82,6 +83,14 @@ async def _can_change(interaction: discord.Interaction) -> bool:
         await _reply(interaction, "チャンネル管理権限が必要")
         return False
     return True
+
+
+def _source_label(source: str) -> str:
+    return (
+        "最初から入っている場所"
+        if source == "env"
+        else "後から追加した場所"
+    )
 
 
 async def _reply(interaction: discord.Interaction, text: str) -> None:

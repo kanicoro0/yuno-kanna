@@ -147,6 +147,46 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
             action_for_mark(mark('care_0004', 'memory', 'draft'))
         )
 
+    def test_list_options_have_user_facing_help_and_choices(self):
+        group = create_memories_group(FakeService(), PermissionService())
+        command = group.get_command('list')
+        parameters = {item.name: item for item in command.parameters}
+
+        self.assertEqual(parameters['kind'].description, '見るものの種類')
+        self.assertEqual(
+            [choice.name for choice in parameters['kind'].choices],
+            ['ぜんぶ', '残したもの', 'あとで見るもの'],
+        )
+        self.assertEqual(parameters['status'].description, 'いまの状態で絞る')
+        self.assertIn(
+            'いま見るもの',
+            [choice.name for choice in parameters['status'].choices],
+        )
+        self.assertEqual(
+            parameters['limit'].description,
+            '表示する件数（1〜20）',
+        )
+
+    async def test_invalid_list_filters_give_short_user_facing_guidance(self):
+        service = FakeService()
+        group = create_memories_group(service, PermissionService())
+        command = group.get_command('list')
+
+        invalid_kind = FakeInteraction(administrator=True)
+        await command.callback(invalid_kind, 'unknown', 'visible', 10)
+        self.assertEqual(
+            invalid_kind.response.sent[0][0],
+            '種類は表示される選択肢から選んでね',
+        )
+
+        invalid_status = FakeInteraction(administrator=True)
+        await command.callback(invalid_status, 'all', 'unknown', 10)
+        self.assertEqual(
+            invalid_status.response.sent[0][0],
+            '状態は表示される選択肢から選んでね',
+        )
+        self.assertEqual(service.calls, [])
+
     async def test_list_returns_ephemeral_panel_with_mark_buttons(self):
         service = FakeService((
             mark('care_0001', 'memory', 'active'),

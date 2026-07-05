@@ -18,6 +18,7 @@ from yuno.commands.listening import create_listening_group
 from yuno.commands.status import create_status_command
 from yuno.config import Settings, load_settings
 from yuno.conversation.context import ContextBuilder
+from yuno.conversation.reference_selector import ReferenceSelector
 from yuno.conversation.repository import ConversationRepository
 from yuno.discord.routing import MessageRouter
 from yuno.discord.events import ConversationRuntime, register_events
@@ -80,10 +81,11 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     pipeline = ConversationPipeline(
         MessageRouter(settings, repository, listening),
         repository,
-        ContextBuilder(repository),
+        ContextBuilder(repository, care_marks),
         speaker,
         CareReader(client),
         care_service,
+        ReferenceSelector(care_marks, read_cues),
     )
     bot = YunoBot(
         settings,

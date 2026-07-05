@@ -1,72 +1,85 @@
 from dataclasses import dataclass
 import re
 import unicodedata
-from typing import List, Tuple
+from typing import Dict, Tuple
 
-from yuno.attention.service import AttentionService
-from yuno.interest.service import InterestService
-from yuno.memory.service import MemoryMarkService
+from yuno.care_marks.models import CareMark
+from yuno.care_marks.service import CareMarkService
+from yuno.conversation.context import REFERENCE_LIMIT
+from yuno.read_cues.service import ReadCueService
 
 
 @dataclass(frozen=True)
 class ReferenceSelection:
-    memory_ids: Tuple[str, ...] = ()
-    attention_ids: Tuple[str, ...] = ()
+    care_mark_ids: Tuple[str, ...] = ()
 
 
 class ReferenceSelector:
-    """Select at most a few visible fragments; it never decides whether to reply."""
+    '''Select a few visible CareMarks; it never decides whether to reply.'''
 
     def __init__(
         self,
-        memory: MemoryMarkService,
-        attention: AttentionService,
-        interest: InterestService,
+        care_marks: CareMarkService,
+        read_cues: ReadCueService,
     ):
-        self.memory = memory
-        self.attention = attention
-        self.interest = interest
+        self.care_marks = care_marks
+        self.read_cues = read_cues
 
-    async def select(self, stream_id: int, current_message: str) -> ReferenceSelection:
-        message_parts = _parts(current_message)
-        interests = await self.interest.list_for_care(stream_id, 8)
-        cues = {
-            _compact(item.term)
-            for item in interests
-            if _compact(item.term) and _compact(item.term) in _compact(current_message)
-        }
-        if not message_parts and not cues:
+    async def select(
+        self, stream_id: int, current_message: str
+    ) -> ReferenceSelection:
+        candidates = await self.care_marks.list_for_stream(
+            stream_id,
+            statuses=('active', 'open'),
+            limit=20,
+        )
+        marks = [
+            mark for mark in candidates
+            if (
+                mark.kind == 'memory' and mark.status == 'active'
+                or mark.kind == 'attention' and mark.status == 'open'
+            )
+        ]
+        if not marks:
             return ReferenceSelection()
-        scored: List[tuple[float, str, str]] = []
-        for mark in await self.memory.repository.list_for_stream(
-            stream_id, ("active",), 8
+        by_id: Dict[int, CareMark] = {mark.id: mark for mark in marks}
+        scores: Dict[int, float] = {}
+        compact_message = _compact(current_message)
+
+        for cue in await self.read_cues.list_for_stream(
+            stream_id, statuses=('active',), limit=40
         ):
-            score = _match_score(message_parts, cues, mark.content)
-            if score:
-                scored.append((score + mark.confidence * 0.01, "memory", mark.public_id))
-        for item in await self.attention.repository.list_open_for_stream(stream_id, 8):
-            score = _match_score(message_parts, cues, item.text)
-            if score:
-                scored.append((score + item.rank * 0.01, "attention", item.public_id))
+            normalized_cue = _compact(cue.term)
+            if (
+                cue.care_mark_id in by_id
+                and normalized_cue
+                and normalized_cue in compact_message
+            ):
+                scores[cue.care_mark_id] = (
+                    scores.get(cue.care_mark_id, 0.0)
+                    + 3.0
+                    + cue.weight
+                )
 
-        scored.sort(reverse=True)
-        memory_ids = []
-        attention_ids = []
-        for _, kind, public_id in scored[:3]:
-            (memory_ids if kind == "memory" else attention_ids).append(public_id)
-        return ReferenceSelection(tuple(memory_ids), tuple(attention_ids))
+        message_parts = _parts(current_message)
+        for mark in marks:
+            overlap = len(message_parts & _parts(mark.text))
+            if overlap >= 3:
+                scores[mark.id] = scores.get(mark.id, 0.0) + float(overlap)
+
+        ranked = sorted(
+            (
+                (score, by_id[mark_id].public_id)
+                for mark_id, score in scores.items()
+            ),
+            key=lambda item: (-item[0], item[1]),
+        )
+        return ReferenceSelection(tuple(
+            public_id for _, public_id in ranked[:REFERENCE_LIMIT]
+        ))
 
 
-def _match_score(message_parts: set[str], cues: set[str], candidate: str) -> float:
-    normalized = _compact(candidate)
-    overlap = len(message_parts & _parts(candidate))
-    cue_hits = sum(1 for cue in cues if cue in normalized)
-    if not cue_hits and overlap < 3:
-        return 0.0
-    return float(overlap + cue_hits * 3)
-
-
-def _parts(value: str) -> set[str]:
+def _parts(value: str) -> set:
     compact = _compact(value)
     parts = set()
     for size in (2, 3):
@@ -78,5 +91,5 @@ def _parts(value: str) -> set[str]:
 
 
 def _compact(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    return re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
+    normalized = unicodedata.normalize('NFKC', value).casefold()
+    return re.sub(r'[\W_]+', '', normalized, flags=re.UNICODE)

@@ -9,6 +9,7 @@ from yuno.care.maintenance import (
     MAX_MAINTENANCE_MARKS,
     MAX_MAINTENANCE_MESSAGES,
 )
+from yuno.care.maintenance_reader import LLMCareMaintenanceReader
 from yuno.care_marks.repository import CareMarkRepository
 from yuno.care_marks.service import CareMarkService
 from yuno.conversation.repository import ConversationRepository
@@ -185,7 +186,16 @@ class CareMaintenanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((unchanged.status, unchanged.text), ('open', 'まだ見る話'))
 
     async def test_normal_mark_and_message_work_does_not_run_maintenance(self) -> None:
-        reader = FakeMaintenanceReader({'actions': []})
+        class Client:
+            def __init__(self):
+                self.calls = []
+
+            async def complete_json(self, messages):
+                self.calls.append(messages)
+                return {'actions': []}
+
+        client = Client()
+        reader = LLMCareMaintenanceReader(client)
         CareMaintenanceService(self.conversations, self.marks, reader)
 
         mark = await self.marks.create(
@@ -196,7 +206,7 @@ class CareMaintenanceTests(unittest.IsolatedAsyncioTestCase):
             self.stream.id, 'message-2', 'user', '7', 'A', '普通の会話'
         )
 
-        self.assertEqual(reader.requests, [])
+        self.assertEqual(client.calls, [])
 
 
 if __name__ == '__main__':

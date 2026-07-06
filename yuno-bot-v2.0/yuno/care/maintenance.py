@@ -56,6 +56,12 @@ class CareMaintenanceProposal:
     actions: Tuple[CareMaintenanceAction, ...] = ()
 
 
+@dataclass(frozen=True)
+class CareMaintenanceApplyResult:
+    applied: bool
+    reason: str
+
+
 class CareMaintenanceReader(Protocol):
     async def propose(self, request: CareMaintenanceRequest) -> object:
         ...
@@ -108,6 +114,32 @@ class CareMaintenanceService:
         )
         raw = await self.reader.propose(request)
         return parse_maintenance_proposal(stream_id, raw, marks)
+
+    async def apply_selected(
+        self,
+        stream_id: int,
+        action: CareMaintenanceAction,
+    ) -> CareMaintenanceApplyResult:
+        if action.action != 'close_attention':
+            return CareMaintenanceApplyResult(False, 'unsupported')
+        if len(action.target_public_ids) != 1:
+            return CareMaintenanceApplyResult(False, 'stale')
+        mark = await self.care_marks.get_by_public_id(
+            action.target_public_ids[0]
+        )
+        if (
+            mark is None
+            or mark.stream_id != stream_id
+            or mark.kind != 'attention'
+            or mark.status != 'open'
+        ):
+            return CareMaintenanceApplyResult(False, 'stale')
+        updated = await self.care_marks.update(
+            mark.public_id, status='closed'
+        )
+        if updated is None or updated.status != 'closed':
+            return CareMaintenanceApplyResult(False, 'stale')
+        return CareMaintenanceApplyResult(True, 'closed')
 
 
 def parse_maintenance_proposal(

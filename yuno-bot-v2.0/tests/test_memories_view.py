@@ -3,6 +3,7 @@ import unittest
 
 from yuno.care.maintenance import (
     CareMaintenanceAction,
+    CareMaintenanceApplyResult,
     CareMaintenanceProposal,
 )
 from yuno.care_marks.models import CareMark
@@ -11,7 +12,9 @@ from yuno.commands.core import (
     HIDE_LABEL,
     MISSING_MARK_TEXT,
     RESTORE_LABEL,
+    TIDY_STALE_TEXT,
     MemoriesView,
+    TidyView,
     action_for_mark,
     create_memories_group,
     render_care_marks,
@@ -71,13 +74,21 @@ class FakeService:
 
 
 class FakeMaintenance:
-    def __init__(self, proposal):
+    def __init__(self, proposal, apply_result=None):
         self.proposal = proposal
         self.calls = []
+        self.apply_calls = []
+        self.apply_result = apply_result or CareMaintenanceApplyResult(
+            True, 'closed'
+        )
 
     async def propose_for_stream(self, stream_id):
         self.calls.append(stream_id)
         return self.proposal
+
+    async def apply_selected(self, stream_id, action):
+        self.apply_calls.append((stream_id, action))
+        return self.apply_result
 
 
 class FakeResponse:
@@ -180,11 +191,15 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertNotIn(internal, text)
 
-    async def test_tidy_returns_ephemeral_proposals_without_mutation_buttons(self):
+    async def test_tidy_shows_only_supported_explicit_apply_buttons(self):
         marks = [mark('care_0001', 'attention', 'open', '軽い質問')]
         service = FakeService(marks)
         proposal = CareMaintenanceProposal(1, (
             CareMaintenanceAction('close_attention', ('care_0001',)),
+            CareMaintenanceAction(
+                'merge_attention', ('care_0001', 'care_0002'),
+                proposed_text='まとめる案',
+            ),
         ))
         maintenance = FakeMaintenance(proposal)
         group = create_memories_group(
@@ -196,13 +211,87 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
 
         text, kwargs = interaction.response.sent[0]
         self.assertTrue(kwargs['ephemeral'])
-        self.assertNotIn('view', kwargs)
+        self.assertIsInstance(kwargs['view'], TidyView)
+        self.assertEqual(
+            [item.label for item in kwargs['view'].children],
+            ['1 閉じる'],
+        )
         self.assertIn('閉じてもよさそう', text)
         self.assertIn('軽い質問', text)
         self.assertNotIn('care_0001', text)
         self.assertEqual(maintenance.calls, [1])
+        self.assertEqual(maintenance.apply_calls, [])
         self.assertNotIn('set_status', [call[0] for call in service.calls])
         self.assertEqual(service.marks, marks)
+
+    async def test_selected_close_applies_only_one_and_disables_panel(self):
+        first = CareMaintenanceAction(
+            'close_attention', ('care_0001',)
+        )
+        second = CareMaintenanceAction(
+            'close_attention', ('care_0002',)
+        )
+        proposal = CareMaintenanceProposal(1, (first, second))
+        maintenance = FakeMaintenance(proposal)
+        view = TidyView(
+            maintenance,
+            PermissionService(),
+            proposal,
+            opened_by_user_id=7,
+        )
+        interaction = FakeInteraction(administrator=True)
+
+        await button(view, '1 閉じる').callback(interaction)
+
+        self.assertEqual(maintenance.apply_calls, [(1, first)])
+        self.assertEqual(len(interaction.response.edits), 1)
+        self.assertIn('閉じたよ', interaction.response.edits[0]['content'])
+        self.assertEqual(interaction.response.edits[0]['view'].children, [])
+        self.assertTrue(view.is_stale)
+
+    async def test_non_admin_cannot_apply_tidy_action(self):
+        action = CareMaintenanceAction(
+            'close_attention', ('care_0001',)
+        )
+        proposal = CareMaintenanceProposal(1, (action,))
+        maintenance = FakeMaintenance(proposal)
+        view = TidyView(
+            maintenance,
+            PermissionService(),
+            proposal,
+            opened_by_user_id=7,
+        )
+        interaction = FakeInteraction(administrator=False)
+
+        await button(view, '閉じる').callback(interaction)
+
+        self.assertEqual(maintenance.apply_calls, [])
+        self.assertEqual(interaction.response.sent[0][0], DENIED_TEXT)
+
+    async def test_stale_tidy_action_is_rejected_and_panel_disabled(self):
+        action = CareMaintenanceAction(
+            'close_attention', ('care_0001',)
+        )
+        proposal = CareMaintenanceProposal(1, (action,))
+        maintenance = FakeMaintenance(
+            proposal, CareMaintenanceApplyResult(False, 'stale')
+        )
+        view = TidyView(
+            maintenance,
+            PermissionService(),
+            proposal,
+            opened_by_user_id=7,
+        )
+        interaction = FakeInteraction(administrator=True)
+
+        await button(view, '閉じる').callback(interaction)
+
+        self.assertEqual(maintenance.apply_calls, [(1, action)])
+        self.assertIn(
+            TIDY_STALE_TEXT, interaction.response.edits[0]['content']
+        )
+        self.assertEqual(interaction.response.edits[0]['view'].children, [])
+        self.assertTrue(view.is_stale)
 
     async def test_non_admin_tidy_cannot_see_or_generate_proposals(self):
         service = FakeService()

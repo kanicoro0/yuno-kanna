@@ -30,6 +30,7 @@ HIDE_LABEL = '隠す'
 CLOSE_LABEL = '閉じる'
 RESTORE_LABEL = '戻す'
 MISSING_MARK_TEXT = 'もう見つからないよ'
+TIDY_STALE_TEXT = 'もう状態が変わってるみたい'
 
 _STATUS_TEXT = {
     'draft': 'まだ置いてある',
@@ -179,6 +180,68 @@ class MemoriesView(YunoView):
         await interaction.response.edit_message(content=text, view=self)
 
 
+class TidyView(YunoView):
+    def __init__(
+        self,
+        maintenance: CareMaintenanceService,
+        permissions: PermissionService,
+        proposal: CareMaintenanceProposal,
+        *,
+        opened_by_user_id: int,
+    ):
+        super().__init__(
+            opened_by_user_id=opened_by_user_id,
+            permissions=permissions,
+            required_permission=PermissionLevel.GUILD_ADMIN,
+        )
+        self.maintenance = maintenance
+        self.permissions = permissions
+        self.proposal = proposal
+        self._shown_actions = tuple(proposal.actions)
+        self._set_buttons()
+
+    def _set_buttons(self) -> None:
+        self.clear_items()
+        for index, action in enumerate(self._shown_actions, start=1):
+            if action.action != 'close_attention':
+                continue
+
+            async def apply(
+                interaction: discord.Interaction,
+                selected: CareMaintenanceAction = action,
+            ) -> None:
+                await self._apply(interaction, selected)
+
+            self.add_yuno_button(
+                label=f'{index} 閉じる',
+                custom_id=f'yuno:tidy:close:{index}',
+                handler=apply,
+            )
+
+    async def _apply(
+        self,
+        interaction: discord.Interaction,
+        action: CareMaintenanceAction,
+    ) -> None:
+        if not await require_permission(
+            interaction, self.permissions, PermissionLevel.GUILD_ADMIN
+        ):
+            return
+        if self.is_stale or action not in self._shown_actions:
+            await respond_ephemeral(interaction, TIDY_STALE_TEXT)
+            return
+        result = await self.maintenance.apply_selected(
+            self.proposal.stream_id, action
+        )
+        self._stale = True
+        self.clear_items()
+        if result.applied:
+            text = '閉じたよ\n\n整理案は、もう一度開くと更新されるよ'
+        else:
+            text = f'{TIDY_STALE_TEXT}\n\n整理案をもう一度開いてね'
+        await interaction.response.edit_message(content=text, view=self)
+
+
 def create_memories_group(
     service: CareMarkCommandService,
     permissions: PermissionService,
@@ -252,9 +315,25 @@ def create_memories_group(
         marks = await service.list_marks(
             _channel(interaction), _guild(interaction), 'all', 'all', 20
         )
-        await _reply(
-            interaction, render_maintenance_proposal(proposal, marks)
+        text = render_maintenance_proposal(proposal, marks)
+        view = TidyView(
+            maintenance,
+            permissions,
+            proposal,
+            opened_by_user_id=interaction.user.id,
         )
+        if not view.children:
+            await _reply(interaction, text)
+            return
+        await interaction.response.send_message(
+            text, ephemeral=True, view=view
+        )
+        original_response = getattr(interaction, 'original_response', None)
+        if callable(original_response):
+            try:
+                view.bind_message(await original_response())
+            except discord.HTTPException:
+                pass
 
     @group.command(name='add', description='この場に印を追加')
     async def memories_add(

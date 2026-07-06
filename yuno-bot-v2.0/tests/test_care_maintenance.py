@@ -105,6 +105,73 @@ class CareMaintenanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after[memory.public_id].text, '青色が好き')
         self.assertEqual(after[close_target.public_id].status, 'open')
 
+    async def test_apply_selected_closes_only_selected_open_attention(self) -> None:
+        selected = await self.marks.create(
+            self.stream.id, 'attention', 'open', '閉じるもの'
+        )
+        unrelated = await self.marks.create(
+            self.stream.id, 'attention', 'open', '残すもの'
+        )
+        service = CareMaintenanceService(
+            self.conversations,
+            self.marks,
+            FakeMaintenanceReader({'actions': []}),
+        )
+        action = CareMaintenanceAction(
+            'close_attention', (selected.public_id,)
+        )
+
+        result = await service.apply_selected(self.stream.id, action)
+
+        self.assertTrue(result.applied)
+        self.assertEqual(
+            (await self.marks.get_by_public_id(selected.public_id)).status,
+            'closed',
+        )
+        self.assertEqual(
+            (await self.marks.get_by_public_id(unrelated.public_id)).status,
+            'open',
+        )
+
+    async def test_apply_selected_rejects_stale_or_unsupported_action(self) -> None:
+        closed = await self.marks.create(
+            self.stream.id, 'attention', 'closed', 'もう閉じている'
+        )
+        active_memory = await self.marks.create(
+            self.stream.id, 'memory', 'active', '書き換えない'
+        )
+        service = CareMaintenanceService(
+            self.conversations,
+            self.marks,
+            FakeMaintenanceReader({'actions': []}),
+        )
+
+        stale = await service.apply_selected(
+            self.stream.id,
+            CareMaintenanceAction('close_attention', (closed.public_id,)),
+        )
+        unsupported = await service.apply_selected(
+            self.stream.id,
+            CareMaintenanceAction(
+                'rewrite_mark_text',
+                (active_memory.public_id,),
+                proposed_text='変えない',
+            ),
+        )
+
+        self.assertFalse(stale.applied)
+        self.assertEqual(stale.reason, 'stale')
+        self.assertFalse(unsupported.applied)
+        self.assertEqual(unsupported.reason, 'unsupported')
+        self.assertEqual(
+            (await self.marks.get_by_public_id(closed.public_id)).status,
+            'closed',
+        )
+        unchanged = await self.marks.get_by_public_id(active_memory.public_id)
+        self.assertEqual((unchanged.status, unchanged.text), (
+            'active', '書き換えない'
+        ))
+
     async def test_request_context_is_bounded(self) -> None:
         latest = None
         for index in range(25):

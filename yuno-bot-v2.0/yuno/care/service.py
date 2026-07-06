@@ -28,6 +28,24 @@ class CareApplication:
     affected_care_marks: Tuple[CareMark, ...] = ()
 
 
+@dataclass(frozen=True)
+class CareTriggerDecision:
+    run: bool
+    reason: str
+    cue_salience: float = 0.0
+
+
+_CARE_TRIGGER_TERMS = (
+    ('explicit_memory', ('覚えて', '忘れないで', 'メモ', '記憶')),
+    ('attention_language', ('あとで', '後で見る')),
+    ('name_preference', ('呼んで', '呼び名', '名前')),
+    ('preference', ('好き', '嫌い', '苦手', '好み')),
+    ('schedule_or_task', ('予定', '締切', 'やること', '忘れそう')),
+)
+_STRONG_CUE_SALIENCE = 0.5
+_STRONG_ATTENTION_OVERLAP = 0.6
+
+
 class CareService:
     def __init__(
         self,
@@ -209,15 +227,38 @@ def cue_salience(content: str, cues: Iterable[ReadCue]) -> float:
     return min(0.7, max(matched, default=0.0))
 
 
+def immediate_care_decision(
+    content: str, state: CareState
+) -> CareTriggerDecision:
+    normalized = normalize_for_match(content)
+    for reason, terms in _CARE_TRIGGER_TERMS:
+        if any(normalize_for_match(term) in normalized for term in terms):
+            return CareTriggerDecision(True, reason)
+
+    salience = cue_salience(content, state.read_cues)
+    if salience >= _STRONG_CUE_SALIENCE:
+        return CareTriggerDecision(True, 'strong_cue', salience)
+    if attention_overlap(content, state.care_marks) >= _STRONG_ATTENTION_OVERLAP:
+        return CareTriggerDecision(True, 'open_attention', salience)
+    return CareTriggerDecision(False, 'low_signal', salience)
+
+
 def overlaps_attention(content: str, marks: Iterable[CareMark]) -> bool:
+    return attention_overlap(content, marks) >= _STRONG_ATTENTION_OVERLAP
+
+
+def attention_overlap(content: str, marks: Iterable[CareMark]) -> float:
     message_grams = _grams(content)
     if not message_grams:
-        return False
-    return any(
-        bool(message_grams & _grams(mark.text))
+        return 0.0
+    scores = (
+        len(message_grams & mark_grams) / len(mark_grams)
         for mark in marks
         if mark.kind == 'attention' and mark.status == 'open'
+        for mark_grams in (_grams(mark.text),)
+        if mark_grams
     )
+    return max(scores, default=0.0)
 
 
 def _valid_candidate_status(kind: str, status: str) -> bool:

@@ -7,8 +7,7 @@ from yuno.care.reader import CareReader
 from yuno.care.service import (
     CareApplication,
     CareService,
-    cue_salience,
-    overlaps_attention,
+    immediate_care_decision,
 )
 from yuno.care_marks.models import CareMark
 from yuno.conversation.context import ContextBuilder
@@ -127,19 +126,18 @@ class ConversationPipeline:
             and self.care_service
         ):
             state = await self.care_service.current_state(turn.stream_id)
-            salience = cue_salience(turn.content, state.read_cues)
-            should_read = salience > 0 or overlaps_attention(
-                turn.content, state.care_marks
-            )
-            if should_read:
+            decision = immediate_care_decision(turn.content, state)
+            if decision.run:
                 logger.debug(
-                    "care_reader called before send stream_id=%s", turn.stream_id
+                    "care_reader called before send stream_id=%s reason=%s",
+                    turn.stream_id,
+                    decision.reason,
                 )
                 request = await self.care_service.build_request(
                     turn.stream_id,
                     turn.content,
                     0.0,
-                    salience,
+                    decision.cue_salience,
                     state,
                 )
                 care_result = await self.care_reader.read(request)
@@ -167,7 +165,11 @@ class ConversationPipeline:
                     len(care_result.read_cue_updates),
                 )
             else:
-                logger.debug("care_reader skipped stream_id=%s", turn.stream_id)
+                logger.debug(
+                    "care_reader skipped stream_id=%s reason=%s",
+                    turn.stream_id,
+                    decision.reason,
+                )
 
         listening_should_speak = (
             turn.route_reason == "listening_only"
@@ -252,12 +254,24 @@ class ConversationPipeline:
         ):
             return None
         state = await self.care_service.current_state(ticket.stream_id)
-        salience = cue_salience(ticket.user_content, state.read_cues)
+        decision = immediate_care_decision(ticket.user_content, state)
+        if not decision.run:
+            logger.debug(
+                "care_reader skipped after send stream_id=%s reason=%s",
+                ticket.stream_id,
+                decision.reason,
+            )
+            return None
+        logger.debug(
+            "care_reader called after send stream_id=%s reason=%s",
+            ticket.stream_id,
+            decision.reason,
+        )
         request = await self.care_service.build_request(
             ticket.stream_id,
             ticket.user_content,
             1.0,
-            salience,
+            decision.cue_salience,
             state,
         )
         result = await self.care_reader.read(request)

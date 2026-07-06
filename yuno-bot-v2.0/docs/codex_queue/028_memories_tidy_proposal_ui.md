@@ -4,7 +4,7 @@
 
 Expose care mark maintenance proposals through a small Discord UI without automatically applying them.
 
-Queue 026 introduces a proposal-oriented care mark maintenance layer. This task should make those proposals visible from Discord, while keeping application/manual mutation for a later queue.
+Queue 026 introduces a proposal-oriented care mark maintenance layer. Queue 027 adds the concrete LLM reader that can generate proposals. This task should make those proposals visible from Discord, while keeping application/manual mutation for a later queue.
 
 Core rule:
 
@@ -22,7 +22,9 @@ Run this task from `yuno-bot-v2.0/`.
 Keep context small. Read only these first:
 
 - `docs/codex_queue/026_periodic_care_mark_maintenance.md`
+- `docs/codex_queue/027_llm_care_maintenance_reader.md`
 - the maintenance service/model introduced by 026
+- the maintenance reader introduced by 027, if present
 - `yuno/commands/core.py`
 - `yuno/discord/ui.py`
 - relevant memories/command UI tests only

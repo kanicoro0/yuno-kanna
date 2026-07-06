@@ -46,6 +46,11 @@ _KIND_CHOICES = [
     app_commands.Choice(name='あとで見るもの', value='attention'),
 ]
 
+_MARK_KIND_CHOICES = [
+    app_commands.Choice(name='残したもの', value='memory'),
+    app_commands.Choice(name='あとで見るもの', value='attention'),
+]
+
 _STATUS_CHOICES = [
     app_commands.Choice(name='いま見るもの', value='visible'),
     app_commands.Choice(name='ぜんぶ', value='all'),
@@ -55,6 +60,19 @@ _STATUS_CHOICES = [
     app_commands.Choice(name='隠している', value='hidden'),
     app_commands.Choice(name='まだ置いてある', value='draft'),
 ]
+
+_MARK_STATUS_CHOICES = [
+    app_commands.Choice(name='まだ置いてある', value='draft'),
+    app_commands.Choice(name='覚えている', value='active'),
+    app_commands.Choice(name='まだ開いている', value='open'),
+    app_commands.Choice(name='閉じている', value='closed'),
+    app_commands.Choice(name='隠している', value='hidden'),
+]
+
+_MARK_STATUS_HELP = (
+    '残したものは「まだ置いてある/覚えている/隠している」、'
+    'あとで見るものは「まだ開いている/閉じている/隠している」が使えるよ'
+)
 
 _MAINTENANCE_LABELS = {
     'keep': 'そのままでよさそう',
@@ -336,6 +354,12 @@ def create_memories_group(
                 pass
 
     @group.command(name='add', description='この場に印を追加')
+    @app_commands.describe(
+        kind='残したものか、あとで見るもの',
+        text='残す内容（500文字まで）',
+        status='省略すると種類に合う初期状態になる',
+    )
+    @app_commands.choices(kind=_MARK_KIND_CHOICES, status=_MARK_STATUS_CHOICES)
     async def memories_add(
         interaction: discord.Interaction,
         kind: str,
@@ -353,14 +377,23 @@ def create_memories_group(
                 status,
             )
         except ValueError:
-            await _reply(interaction, 'kindかstatusが合わない')
+            await _reply(interaction, _MARK_STATUS_HELP)
             return
         await _reply(
             interaction,
-            f'{mark.public_id} [{mark.kind}/{mark.status}] を追加',
+            (
+                f'`{mark.public_id}` を追加\n'
+                f'{_kind_label(mark.kind)} / {_status_label(mark.status)}\n'
+                f'{_preview(mark.text)}'
+            ),
         )
 
     @group.command(name='status', description='印の状態を変更')
+    @app_commands.describe(
+        public_id='/memories list に出ているID',
+        status='変更後の状態',
+    )
+    @app_commands.choices(status=_MARK_STATUS_CHOICES)
     async def memories_status(
         interaction: discord.Interaction,
         public_id: str,
@@ -375,13 +408,15 @@ def create_memories_group(
                 status,
             )
         except ValueError:
-            await _reply(interaction, 'そのkindでは使えないstatus')
+            await _reply(interaction, _MARK_STATUS_HELP)
             return
         await _reply(
             interaction,
-            f'{public_id} -> {status}'
-            if mark else
-            'この場では見つからない',
+            (
+                f'`{public_id}` を {_status_label(status)} にした'
+                if mark else
+                'この場では見つからない'
+            ),
         )
 
     return group
@@ -389,7 +424,7 @@ def create_memories_group(
 
 def render_care_marks(marks: Iterable[CareMark]) -> str:
     return '\n'.join(
-        f'{index}. {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
+        f'{index}. `{mark.public_id}` {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
         f'   {_preview(mark.text)}'
         for index, mark in enumerate(marks, start=1)
     ) or 'ここにはまだない'
@@ -463,6 +498,17 @@ def _safe_proposal_text(value: str) -> str:
     if any(word in lowered for word in _INTERNAL_PROPOSAL_WORDS):
         return ''
     return text
+
+
+def _kind_label(kind: str) -> str:
+    return {
+        'memory': '残したもの',
+        'attention': 'あとで見るもの',
+    }.get(kind, kind)
+
+
+def _status_label(status: str) -> str:
+    return _STATUS_TEXT.get(status, status)
 
 
 async def _require_admin(

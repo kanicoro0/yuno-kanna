@@ -4,6 +4,11 @@ from typing import Iterable, Optional
 import discord
 from discord import app_commands
 
+from yuno.care.maintenance import (
+    CareMaintenanceAction,
+    CareMaintenanceProposal,
+    CareMaintenanceService,
+)
 from yuno.care_marks.models import CareMark
 from yuno.commands.admin_service import (
     CARE_MARK_KINDS,
@@ -49,6 +54,21 @@ _STATUS_CHOICES = [
     app_commands.Choice(name='隠している', value='hidden'),
     app_commands.Choice(name='まだ置いてある', value='draft'),
 ]
+
+_MAINTENANCE_LABELS = {
+    'keep': 'そのままでよさそう',
+    'close_attention': '閉じてもよさそう',
+    'merge_attention': 'まとめられそう',
+    'rewrite_mark_text': '短くしてもよさそう',
+    'promote_draft_memory': '残してもよさそう',
+    'hide_or_ignore_noisy_mark': 'いったん外してもよさそう',
+}
+
+_INTERNAL_PROPOSAL_WORDS = (
+    'caremark', 'readcue', 'care_', 'public_id', 'source_message_id',
+    'memory', 'attention', 'draft', 'active', 'open', 'closed', 'hidden',
+    'service', 'llm', 'db',
+)
 
 
 @dataclass(frozen=True)
@@ -162,6 +182,7 @@ class MemoriesView(YunoView):
 def create_memories_group(
     service: CareMarkCommandService,
     permissions: PermissionService,
+    maintenance: Optional[CareMaintenanceService] = None,
 ) -> app_commands.Group:
     group = app_commands.Group(
         name='memories',
@@ -211,6 +232,29 @@ def create_memories_group(
                 view.bind_message(await original_response())
             except discord.HTTPException:
                 pass
+
+    @group.command(name='tidy', description='この場所に残したものの整理案を見る')
+    async def memories_tidy(interaction: discord.Interaction) -> None:
+        if not await _require_admin(interaction, permissions):
+            return
+        if maintenance is None:
+            await _reply(interaction, '整理案はまだ開けないよ')
+            return
+        stream = await service.stream(
+            _channel(interaction), _guild(interaction)
+        )
+        if stream is None:
+            await _reply(interaction, render_maintenance_proposal(
+                CareMaintenanceProposal(0)
+            ))
+            return
+        proposal = await maintenance.propose_for_stream(stream.id)
+        marks = await service.list_marks(
+            _channel(interaction), _guild(interaction), 'all', 'all', 20
+        )
+        await _reply(
+            interaction, render_maintenance_proposal(proposal, marks)
+        )
 
     @group.command(name='add', description='この場に印を追加')
     async def memories_add(
@@ -270,6 +314,76 @@ def render_care_marks(marks: Iterable[CareMark]) -> str:
         f'   {_preview(mark.text)}'
         for index, mark in enumerate(marks, start=1)
     ) or 'ここにはまだない'
+
+
+def render_maintenance_proposal(
+    proposal: CareMaintenanceProposal,
+    marks: Iterable[CareMark] = (),
+) -> str:
+    if not proposal.actions:
+        return '整理案\nいまは特にないよ'
+    rows = []
+    by_public = {mark.public_id: mark for mark in marks}
+    for index, action in enumerate(proposal.actions, start=1):
+        label = _MAINTENANCE_LABELS.get(action.action)
+        if label is None:
+            continue
+        detail = _maintenance_detail(action, by_public)
+        rows.append(f'{index}. {label}\n   {detail}')
+    return '整理案\n' + ('\n\n'.join(rows) or 'いまは特にないよ')
+
+
+def _maintenance_detail(
+    action: CareMaintenanceAction,
+    by_public: dict,
+) -> str:
+    target_texts = tuple(
+        text
+        for public_id in action.target_public_ids
+        for mark in (by_public.get(public_id),)
+        if mark is not None
+        for text in (_safe_proposal_text(mark.text),)
+        if text
+    )
+    if action.action == 'merge_attention':
+        if target_texts:
+            examples = '、'.join(f'「{text}」' for text in target_texts[:2])
+            return f'{examples}など、似たものが{len(action.target_public_ids)}件'
+        return f'似たものが{len(action.target_public_ids)}件あるみたい'
+    if action.action == 'rewrite_mark_text' and action.proposed_text:
+        proposed = _safe_proposal_text(action.proposed_text)
+        if proposed:
+            if target_texts:
+                return f'「{target_texts[0]}」→「{proposed}」'
+            return f'「{proposed}」'
+    if target_texts:
+        return {
+            'keep': f'「{target_texts[0]}」は今のまま残せそう',
+            'close_attention': (
+                f'「{target_texts[0]}」はひと区切りついているかもしれない'
+            ),
+            'promote_draft_memory': (
+                f'「{target_texts[0]}」は残しておく候補になりそう'
+            ),
+            'hide_or_ignore_noisy_mark': (
+                f'「{target_texts[0]}」はいったん表から外してもよさそう'
+            ),
+        }.get(action.action, '少し見直せそう')
+    return {
+        'keep': '今のまま残せそう',
+        'close_attention': 'ひと区切りついているかもしれない',
+        'rewrite_mark_text': '言い方を少し整えられそう',
+        'promote_draft_memory': '残しておく候補になりそう',
+        'hide_or_ignore_noisy_mark': 'いったん表から外してもよさそう',
+    }.get(action.action, '少し見直せそう')
+
+
+def _safe_proposal_text(value: str) -> str:
+    text = _preview(value)
+    lowered = text.casefold()
+    if any(word in lowered for word in _INTERNAL_PROPOSAL_WORDS):
+        return ''
+    return text
 
 
 async def _require_admin(

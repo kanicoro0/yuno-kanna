@@ -9,14 +9,7 @@ from yuno.listening.models import ListeningChannel, ListeningChange
 
 
 class FakeService:
-    def __init__(
-        self,
-        *,
-        items=(),
-        add_result=None,
-        remove_result=None,
-        clear_count=0,
-    ):
+    def __init__(self, *, items=(), add_result=None, remove_result=None, clear_count=0):
         self.items = list(items)
         self.add_result = add_result or ListeningChange(True, "db", "added")
         self.remove_result = remove_result
@@ -57,9 +50,7 @@ class FakeResponse:
 class FakeInteraction:
     def __init__(self, *, guild_id=1, channel_ids=(10, 11)):
         self.guild_id = guild_id
-        self.user = SimpleNamespace(
-            guild_permissions=SimpleNamespace(manage_channels=True)
-        )
+        self.user = SimpleNamespace(guild_permissions=SimpleNamespace(manage_channels=True))
         self.response = FakeResponse()
 
         if guild_id is None:
@@ -122,9 +113,7 @@ class ListeningCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(add_interaction.response.sent[0][0], "このチャンネルを聞くようにした")
         self.assertEqual(add_service.add_calls, [("10", "1")])
 
-        existing_service = FakeService(
-            add_result=ListeningChange(False, "db", "already_listening")
-        )
+        existing_service = FakeService(add_result=ListeningChange(False, "db", "already_listening"))
         existing = create_listening_group(existing_service).get_command("add")
         existing_interaction = FakeInteraction()
 
@@ -132,9 +121,7 @@ class ListeningCommandTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(existing_interaction.response.sent[0][0], "このチャンネルはもう聞いている")
 
-        missing_service = FakeService(
-            remove_result=ListeningChange(False, None, "not_found")
-        )
+        missing_service = FakeService(remove_result=ListeningChange(False, None, "not_found"))
         remove = create_listening_group(missing_service).get_command("remove")
         remove_interaction = FakeInteraction()
 
@@ -143,9 +130,7 @@ class ListeningCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(remove_interaction.response.sent[0][0], "このチャンネルは聞いていないよ")
 
     async def test_protected_remove_and_clear_hide_storage_terms(self):
-        protected_service = FakeService(
-            remove_result=ListeningChange(False, "env", "env_protected")
-        )
+        protected_service = FakeService(remove_result=ListeningChange(False, "env", "env_protected"))
         group = create_listening_group(protected_service)
         remove = group.get_command("remove")
         remove_interaction = FakeInteraction()
@@ -153,8 +138,8 @@ class ListeningCommandTests(unittest.IsolatedAsyncioTestCase):
         await remove.callback(remove_interaction, None)
 
         remove_text = remove_interaction.response.sent[0][0]
-        self.assertIn("固定設定", remove_text)
-        self.assertIn("コマンドでは外せない", remove_text)
+        self.assertIn("外せない", remove_text)
+        self.assertNotIn("固定設定", remove_text)
         self.assertNotIn(".env", remove_text)
 
         clear_service = FakeService(clear_count=2)

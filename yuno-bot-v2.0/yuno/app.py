@@ -20,6 +20,10 @@ from yuno.config import Settings, load_settings
 from yuno.conversation.context import ContextBuilder
 from yuno.conversation.reference_selector import ReferenceSelector
 from yuno.conversation.repository import ConversationRepository
+from yuno.discord.care_reactions import (
+    CareReactionSurface,
+    CareReactionTargetResolver,
+)
 from yuno.discord.routing import MessageRouter
 from yuno.discord.events import ConversationRuntime, register_events
 from yuno.infra.database import Database
@@ -82,6 +86,9 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     client = OpenAITextClient(settings.openai_api_key, settings.openai_model)
     speaker = Speaker(client)
     care_service = CareService(repository, care_marks, read_cues)
+    maintenance = CareMaintenanceService(
+        repository, care_marks, LLMCareMaintenanceReader(client)
+    )
     pipeline = ConversationPipeline(
         MessageRouter(settings, repository, listening),
         repository,
@@ -90,6 +97,7 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
         CareReader(client),
         care_service,
         ReferenceSelector(care_marks, read_cues),
+        maintenance,
     )
     bot = YunoBot(
         settings,
@@ -99,11 +107,13 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
         help_command=None,
         application_id=settings.discord_client_id,
     )
-    register_events(bot, ConversationRuntime(pipeline))
+    register_events(bot, ConversationRuntime(
+        pipeline,
+        care_reactions=CareReactionSurface(
+            CareReactionTargetResolver(repository)
+        ),
+    ))
     mark_commands = CareMarkCommandService(repository, care_marks)
-    maintenance = CareMaintenanceService(
-        repository, care_marks, LLMCareMaintenanceReader(client)
-    )
     bot.tree.add_command(create_memories_group(
         mark_commands, permissions, maintenance
     ))

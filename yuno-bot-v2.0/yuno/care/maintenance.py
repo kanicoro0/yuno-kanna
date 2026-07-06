@@ -9,6 +9,7 @@ from yuno.conversation.repository import ConversationRepository
 MAX_MAINTENANCE_MARKS = 20
 MAX_MAINTENANCE_MESSAGES = 12
 MAX_MAINTENANCE_ACTIONS = 12
+MAX_AUTOMATIC_CLOSES = 3
 
 MAINTENANCE_ACTIONS = frozenset({
     'keep',
@@ -140,6 +141,31 @@ class CareMaintenanceService:
         if updated is None or updated.status != 'closed':
             return CareMaintenanceApplyResult(False, 'stale')
         return CareMaintenanceApplyResult(True, 'closed')
+
+    async def auto_close_after_activity(
+        self,
+        stream_id: int,
+        *,
+        protected_public_ids: Sequence[str] = (),
+    ) -> Tuple[str, ...]:
+        proposal = await self.propose_for_stream(stream_id)
+        protected = frozenset(protected_public_ids)
+        closed = []
+        for action in proposal.actions:
+            if len(closed) >= MAX_AUTOMATIC_CLOSES:
+                break
+            if (
+                action.action != 'close_attention'
+                or any(
+                    public_id in protected
+                    for public_id in action.target_public_ids
+                )
+            ):
+                continue
+            result = await self.apply_selected(stream_id, action)
+            if result.applied:
+                closed.extend(action.target_public_ids)
+        return tuple(closed)
 
 
 def parse_maintenance_proposal(

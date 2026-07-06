@@ -119,6 +119,14 @@ class ConversationRepository:
         )).fetchone()
         return self._message(row) if row is not None else None
 
+    async def get_message(
+        self, message_id: int
+    ) -> Optional[ConversationMessage]:
+        row = await (await self.database.connection.execute(
+            "SELECT * FROM messages WHERE id = ?", (message_id,)
+        )).fetchone()
+        return self._message(row) if row is not None else None
+
     async def is_assistant_message(self, discord_message_id: Optional[str]) -> bool:
         message = await self.find_by_discord_message_id(discord_message_id)
         return message is not None and message.role == "assistant"

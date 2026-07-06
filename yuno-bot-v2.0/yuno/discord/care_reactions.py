@@ -5,6 +5,7 @@ from typing import Iterable, Optional
 import discord
 
 from yuno.care_marks.models import CareMark
+from yuno.conversation.repository import ConversationRepository
 
 
 logger = logging.getLogger(__name__)
@@ -32,16 +33,38 @@ def pick_care_mark_reaction(
 
 
 class CareReactionSurface:
+    def __init__(self, resolver: Optional['CareReactionTargetResolver'] = None):
+        self.resolver = resolver
+
     async def add_for_marks(
         self,
         source: discord.Message,
         marks: Iterable[CareMark],
     ) -> None:
-        add_reaction = getattr(source, 'add_reaction', None)
+        selected = tuple(sorted(
+            (
+                mark for mark in marks
+                if mark.kind == 'memory' and mark.status == 'active'
+                or mark.kind == 'attention' and mark.status == 'open'
+            ),
+            key=lambda mark: mark.id,
+        ))
+        if not selected:
+            return
+        target = source
+        if self.resolver is not None:
+            try:
+                target = await self.resolver.resolve(source, selected)
+            except Exception:
+                logger.exception(
+                    'Care reaction target resolution failed; using source'
+                )
+                target = source
+        add_reaction = getattr(target, 'add_reaction', None)
         if not callable(add_reaction):
             return
-        for mark in reversed(tuple(marks)):
-            emoji = pick_care_mark_reaction(mark, source.content)
+        for mark in reversed(selected):
+            emoji = pick_care_mark_reaction(mark, target.content)
             if emoji is None:
                 continue
             try:
@@ -51,3 +74,42 @@ class CareReactionSurface:
                     'CareMark persisted but Discord reaction failed'
                 )
             return
+
+
+class CareReactionTargetResolver:
+    def __init__(self, conversations: ConversationRepository):
+        self.conversations = conversations
+
+    async def resolve(
+        self,
+        fallback: discord.Message,
+        marks: Iterable[CareMark],
+    ) -> discord.Message:
+        selected = max(
+            (
+                mark for mark in marks
+                if mark.source_message_id is not None
+            ),
+            key=lambda mark: mark.id,
+            default=None,
+        )
+        if selected is None:
+            return fallback
+        record = await self.conversations.get_message(
+            selected.source_message_id
+        )
+        if record is None or record.stream_id != selected.stream_id:
+            return fallback
+        if str(getattr(fallback, 'id', '')) == record.discord_message_id:
+            return fallback
+        fetch_message = getattr(fallback.channel, 'fetch_message', None)
+        if not callable(fetch_message):
+            return fallback
+        try:
+            return await fetch_message(int(record.discord_message_id))
+        except Exception:
+            logger.debug(
+                'Care reaction target unavailable; using source',
+                exc_info=True,
+            )
+            return fallback

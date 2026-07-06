@@ -5,15 +5,18 @@ import unittest
 from yuno.care.maintenance import (
     CareMaintenanceAction,
     CareMaintenanceService,
+    MAX_AUTOMATIC_CLOSES,
     MAX_MAINTENANCE_ACTIONS,
     MAX_MAINTENANCE_MARKS,
     MAX_MAINTENANCE_MESSAGES,
 )
 from yuno.care.maintenance_reader import LLMCareMaintenanceReader
+from yuno.care.service import CareApplication
 from yuno.care_marks.repository import CareMarkRepository
 from yuno.care_marks.service import CareMarkService
 from yuno.conversation.repository import ConversationRepository
 from yuno.infra.database import Database
+from yuno.pipeline import ConversationPipeline
 
 
 class FakeMaintenanceReader:
@@ -171,6 +174,112 @@ class CareMaintenanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((unchanged.status, unchanged.text), (
             'active', '書き換えない'
         ))
+
+    async def test_auto_maintenance_closes_only_safe_old_attention(self) -> None:
+        old = await self.marks.create(
+            self.stream.id, 'attention', 'open', '解決した軽い用件'
+        )
+        unrelated = await self.marks.create(
+            self.stream.id, 'attention', 'open', 'まだ続く話'
+        )
+        newly_created = await self.marks.create(
+            self.stream.id, 'attention', 'open', '今できた印'
+        )
+        reader = FakeMaintenanceReader({'actions': [
+            {
+                'action': 'close_attention',
+                'target_public_ids': [old.public_id],
+            },
+            {
+                'action': 'merge_attention',
+                'target_public_ids': [old.public_id, unrelated.public_id],
+                'proposed_text': 'まとめる案',
+            },
+            {
+                'action': 'close_attention',
+                'target_public_ids': [newly_created.public_id],
+            },
+        ]})
+        service = CareMaintenanceService(
+            self.conversations, self.marks, reader
+        )
+
+        closed = await service.auto_close_after_activity(
+            self.stream.id,
+            protected_public_ids=(newly_created.public_id,),
+        )
+
+        self.assertEqual(closed, (old.public_id,))
+        self.assertEqual(len(reader.requests), 1)
+        self.assertEqual(
+            (await self.marks.get_by_public_id(old.public_id)).status,
+            'closed',
+        )
+        self.assertEqual(
+            (await self.marks.get_by_public_id(unrelated.public_id)).status,
+            'open',
+        )
+        self.assertEqual(
+            (await self.marks.get_by_public_id(newly_created.public_id)).status,
+            'open',
+        )
+        for target in (old, unrelated, newly_created):
+            self.assertIsNotNone(
+                await self.marks.get_by_public_id(target.public_id)
+            )
+
+    async def test_auto_maintenance_caps_close_mutations(self) -> None:
+        targets = [
+            await self.marks.create(
+                self.stream.id, 'attention', 'open', f'完了した用件 {index}'
+            )
+            for index in range(MAX_AUTOMATIC_CLOSES + 1)
+        ]
+        reader = FakeMaintenanceReader({'actions': [
+            {
+                'action': 'close_attention',
+                'target_public_ids': [target.public_id],
+            }
+            for target in targets
+        ]})
+        service = CareMaintenanceService(
+            self.conversations, self.marks, reader
+        )
+
+        closed = await service.auto_close_after_activity(self.stream.id)
+
+        self.assertEqual(len(closed), MAX_AUTOMATIC_CLOSES)
+        statuses = [
+            (await self.marks.get_by_public_id(target.public_id)).status
+            for target in targets
+        ]
+        self.assertEqual(statuses.count('closed'), MAX_AUTOMATIC_CLOSES)
+        self.assertEqual(statuses.count('open'), 1)
+
+    async def test_pipeline_maintenance_requires_new_care_mark_activity(self) -> None:
+        class AutomaticMaintenance:
+            def __init__(self):
+                self.calls = []
+
+            async def auto_close_after_activity(self, stream_id, **kwargs):
+                self.calls.append((stream_id, kwargs))
+
+        maintenance = AutomaticMaintenance()
+        pipeline = ConversationPipeline(
+            None, None, None, None, maintenance_service=maintenance
+        )
+
+        await pipeline._auto_maintain(1, CareApplication())
+        await pipeline._auto_maintain(1, CareApplication(
+            created_care_mark_ids=('care_0001',),
+        ))
+
+        self.assertEqual(len(maintenance.calls), 1)
+        self.assertEqual(maintenance.calls[0][0], 1)
+        self.assertEqual(
+            maintenance.calls[0][1]['protected_public_ids'],
+            ('care_0001',),
+        )
 
     async def test_request_context_is_bounded(self) -> None:
         latest = None

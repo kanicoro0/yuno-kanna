@@ -3,6 +3,7 @@ import logging
 from typing import Optional
 
 from yuno.care.models import CareReadResult
+from yuno.care.maintenance import CareMaintenanceService
 from yuno.care.reader import CareReader
 from yuno.care.service import (
     CareApplication,
@@ -64,6 +65,7 @@ class ConversationPipeline:
         care_reader: Optional[CareReader] = None,
         care_service: Optional[CareService] = None,
         reference_selector: Optional[ReferenceSelector] = None,
+        maintenance_service: Optional[CareMaintenanceService] = None,
     ):
         self.router = router
         self.repository = repository
@@ -72,6 +74,7 @@ class ConversationPipeline:
         self.care_reader = care_reader
         self.care_service = care_service
         self.reference_selector = reference_selector
+        self.maintenance_service = maintenance_service
 
     async def process(self, message: IncomingMessage) -> PipelineResult:
         """Compatibility path: one eligible stored message becomes one turn."""
@@ -146,6 +149,7 @@ class ConversationPipeline:
                     turn.care_source_user_message_id,
                     care_result,
                 )
+                await self._auto_maintain(turn.stream_id, application)
                 include_care_mark_ids = list(
                     application.include_care_mark_ids
                 )
@@ -278,6 +282,7 @@ class ConversationPipeline:
         application = await self.care_service.apply(
             ticket.stream_id, ticket.care_source_user_message_id, result
         )
+        await self._auto_maintain(ticket.stream_id, application)
         logger.debug(
             "care_reader observed after send stream_id=%s memory=%d attention=%d cues=%d",
             ticket.stream_id,
@@ -292,3 +297,29 @@ class ConversationPipeline:
             len(result.read_cue_updates),
         )
         return application
+
+    async def _auto_maintain(
+        self,
+        stream_id: int,
+        application: CareApplication,
+    ) -> None:
+        if (
+            self.maintenance_service is None
+            or not application.created_care_mark_ids
+        ):
+            return
+        try:
+            await self.maintenance_service.auto_close_after_activity(
+                stream_id,
+                protected_public_ids=tuple(dict.fromkeys((
+                    *application.created_care_mark_ids,
+                    *(
+                        mark.public_id
+                        for mark in application.affected_care_marks
+                    ),
+                ))),
+            )
+        except Exception:
+            logger.exception(
+                'Automatic care maintenance failed stream_id=%s', stream_id
+            )

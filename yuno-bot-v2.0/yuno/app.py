@@ -4,6 +4,8 @@ from typing import Any, Optional
 import discord
 from discord.ext import commands
 
+from yuno.care.maintenance import CareMaintenanceService
+from yuno.care.maintenance_reader import LLMCareMaintenanceReader
 from yuno.care.reader import CareReader
 from yuno.care.service import CareService
 from yuno.care_marks.repository import CareMarkRepository
@@ -99,7 +101,12 @@ def create_bot(settings: Optional[Settings] = None) -> YunoBot:
     )
     register_events(bot, ConversationRuntime(pipeline))
     mark_commands = CareMarkCommandService(repository, care_marks)
-    bot.tree.add_command(create_memories_group(mark_commands, permissions))
+    maintenance = CareMaintenanceService(
+        repository, care_marks, LLMCareMaintenanceReader(client)
+    )
+    bot.tree.add_command(create_memories_group(
+        mark_commands, permissions, maintenance
+    ))
     bot.tree.add_command(create_guide_command())
     bot.tree.add_command(create_selected_message_command(
         mark_commands, permissions

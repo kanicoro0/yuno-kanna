@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 import unittest
 
+from yuno.care.maintenance import (
+    CareMaintenanceAction,
+    CareMaintenanceProposal,
+)
 from yuno.care_marks.models import CareMark
 from yuno.commands.core import (
     CLOSE_LABEL,
@@ -11,6 +15,7 @@ from yuno.commands.core import (
     action_for_mark,
     create_memories_group,
     render_care_marks,
+    render_maintenance_proposal,
 )
 from yuno.discord.ui import DENIED_TEXT, STALE_TEXT
 from yuno.permissions import PermissionService
@@ -36,6 +41,10 @@ class FakeService:
         self.calls = []
         self.missing = False
 
+    async def stream(self, channel_id, guild_id, create=False):
+        self.calls.append(('stream', channel_id, guild_id, create))
+        return SimpleNamespace(id=1)
+
     async def list_marks(self, channel_id, guild_id, kind, status, limit):
         self.calls.append(('list_marks', channel_id, guild_id, kind, status, limit))
         selected = list(self.marks)
@@ -59,6 +68,16 @@ class FakeService:
                 self.marks[index] = updated
                 return updated
         return None
+
+
+class FakeMaintenance:
+    def __init__(self, proposal):
+        self.proposal = proposal
+        self.calls = []
+
+    async def propose_for_stream(self, stream_id):
+        self.calls.append(stream_id)
+        return self.proposal
 
 
 class FakeResponse:
@@ -123,6 +142,81 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
             'open', 'care_0001',
         ):
             self.assertNotIn(internal, text)
+
+    def test_tidy_is_registered_under_memories_group(self):
+        group = create_memories_group(FakeService(), PermissionService())
+
+        self.assertIsNotNone(group.get_command('tidy'))
+
+    def test_tidy_renderer_uses_only_user_facing_wording(self):
+        proposal = CareMaintenanceProposal(1, (
+            CareMaintenanceAction(
+                'close_attention', ('care_0001',), reason='resolved'
+            ),
+            CareMaintenanceAction(
+                'merge_attention', ('care_0002', 'care_0003')
+            ),
+            CareMaintenanceAction(
+                'rewrite_mark_text',
+                ('care_0004',),
+                proposed_text='星の話を続ける',
+            ),
+            CareMaintenanceAction('keep', ('care_0005',)),
+        ))
+
+        text = render_maintenance_proposal(proposal)
+
+        for visible in (
+            '整理案',
+            '閉じてもよさそう',
+            'まとめられそう',
+            '短くしてもよさそう',
+            'そのままでよさそう',
+        ):
+            self.assertIn(visible, text)
+        for internal in (
+            'CareMark', 'ReadCue', 'care_0001', 'public_id', 'source_id',
+            'memory', 'attention', 'active', 'open', 'service', 'LLM',
+        ):
+            self.assertNotIn(internal, text)
+
+    async def test_tidy_returns_ephemeral_proposals_without_mutation_buttons(self):
+        marks = [mark('care_0001', 'attention', 'open', '軽い質問')]
+        service = FakeService(marks)
+        proposal = CareMaintenanceProposal(1, (
+            CareMaintenanceAction('close_attention', ('care_0001',)),
+        ))
+        maintenance = FakeMaintenance(proposal)
+        group = create_memories_group(
+            service, PermissionService(), maintenance
+        )
+        interaction = FakeInteraction(administrator=True)
+
+        await group.get_command('tidy').callback(interaction)
+
+        text, kwargs = interaction.response.sent[0]
+        self.assertTrue(kwargs['ephemeral'])
+        self.assertNotIn('view', kwargs)
+        self.assertIn('閉じてもよさそう', text)
+        self.assertIn('軽い質問', text)
+        self.assertNotIn('care_0001', text)
+        self.assertEqual(maintenance.calls, [1])
+        self.assertNotIn('set_status', [call[0] for call in service.calls])
+        self.assertEqual(service.marks, marks)
+
+    async def test_non_admin_tidy_cannot_see_or_generate_proposals(self):
+        service = FakeService()
+        maintenance = FakeMaintenance(CareMaintenanceProposal(1))
+        group = create_memories_group(
+            service, PermissionService(), maintenance
+        )
+        interaction = FakeInteraction(administrator=False)
+
+        await group.get_command('tidy').callback(interaction)
+
+        self.assertEqual(interaction.response.sent[0][0], DENIED_TEXT)
+        self.assertEqual(service.calls, [])
+        self.assertEqual(maintenance.calls, [])
 
     def test_button_action_mapping_is_stable(self):
         self.assertEqual(

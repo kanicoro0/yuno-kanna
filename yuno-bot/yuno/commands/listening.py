@@ -17,7 +17,8 @@ def create_listening_group(service: ListeningChannelService) -> app_commands.Gro
             return
         items = await service.list_for_guild(str(interaction.guild_id))
         visible_items = [
-            item for item in items if _channel_exists_in_guild(interaction, item)
+            item for item in items
+            if _channel_is_visible_in_current_guild(interaction, item)
         ]
         text = "\n".join(
             f"<#{item.discord_channel_id}>"
@@ -65,7 +66,7 @@ def create_listening_group(service: ListeningChannelService) -> app_commands.Gro
             return
         result = await service.remove(str(target.id))
         if result.reason == "env_protected":
-            text = "固定設定なので、コマンドでは外せない"
+            text = "このチャンネルはここからは外せない"
         elif result.changed:
             text = "このチャンネルを聞くのをやめた"
         else:
@@ -97,7 +98,7 @@ async def _can_change(interaction: discord.Interaction) -> bool:
     return True
 
 
-def _channel_exists_in_guild(
+def _channel_is_visible_in_current_guild(
     interaction: discord.Interaction,
     item: ListeningChannel,
 ) -> bool:

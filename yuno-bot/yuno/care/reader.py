@@ -20,6 +20,7 @@ ReadCueはCareMarkへ戻るための索引です。ReadCueそのものを返答�
 利用できる入力はテキストだけです。画像、添付、音声、外部リンク本文を読んだ前提で候補を作りません。
 
 発話判断:
+- 判断できる時は必ずshould_speakをtrueまたはfalseで返します。
 - route_reasonがdm/mention/reply_to_yuno/name_callなら、基本はshould_speak=true。
 - route_reasonがlistening_only/name_seenなら、会話の自然な続き、明確な問いかけ、短い相槌が必要な時だけshould_speak=true。
 - 名前が含まれていても、名前そのものの話題・偶然の文字列・独り言ならshould_speak=false。
@@ -57,6 +58,7 @@ class CareReader:
 def parse_care_result(data: Any) -> CareReadResult:
     if not isinstance(data, dict):
         return CareReadResult()
+    decision_made = isinstance(data.get('should_speak'), bool)
     candidates = []
     for raw in _objects(data.get('care_mark_candidates'), 5):
         kind = str(raw.get('kind', ''))
@@ -96,6 +98,7 @@ def parse_care_result(data: Any) -> CareReadResult:
     if reply_reason not in _ALLOWED_REPLY_REASONS:
         reply_reason = ''
     return CareReadResult(
+        decision_made=decision_made,
         wants_to_speak=_flag(data.get('wants_to_speak')),
         should_speak=_flag(data.get('should_speak')),
         reply_reason=reply_reason,

@@ -95,6 +95,7 @@ class FakeResponse:
     def __init__(self):
         self.sent = []
         self.edits = []
+        self.deferred = []
         self.done = False
 
     def is_done(self):
@@ -102,6 +103,10 @@ class FakeResponse:
 
     async def send_message(self, content, **kwargs):
         self.sent.append((content, kwargs))
+        self.done = True
+
+    async def defer(self, **kwargs):
+        self.deferred.append(kwargs)
         self.done = True
 
     async def edit_message(self, **kwargs):
@@ -122,6 +127,7 @@ class FakeInteraction:
 
     async def edit_original_response(self, **kwargs):
         self.original_edits.append(kwargs)
+        return SimpleNamespace()
 
 
 def button(view, suffix):
@@ -209,8 +215,13 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
 
         await group.get_command('tidy').callback(interaction)
 
-        text, kwargs = interaction.response.sent[0]
-        self.assertTrue(kwargs['ephemeral'])
+        self.assertEqual(interaction.response.sent, [])
+        self.assertEqual(
+            interaction.response.deferred,
+            [{'ephemeral': True, 'thinking': True}],
+        )
+        kwargs = interaction.original_edits[0]
+        text = kwargs['content']
         self.assertIsInstance(kwargs['view'], TidyView)
         self.assertEqual(
             [item.label for item in kwargs['view'].children],
@@ -223,6 +234,31 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(maintenance.apply_calls, [])
         self.assertNotIn('set_status', [call[0] for call in service.calls])
         self.assertEqual(service.marks, marks)
+
+    async def test_tidy_edits_deferred_response_when_stream_is_missing(self):
+        class MissingStreamService(FakeService):
+            async def stream(self, channel_id, guild_id, create=False):
+                self.calls.append(('stream', channel_id, guild_id, create))
+                return None
+
+        service = MissingStreamService()
+        maintenance = FakeMaintenance(CareMaintenanceProposal(1))
+        group = create_memories_group(
+            service, PermissionService(), maintenance
+        )
+        interaction = FakeInteraction(administrator=True)
+
+        await group.get_command('tidy').callback(interaction)
+
+        self.assertEqual(interaction.response.sent, [])
+        self.assertEqual(
+            interaction.response.deferred,
+            [{'ephemeral': True, 'thinking': True}],
+        )
+        self.assertEqual(len(interaction.original_edits), 1)
+        self.assertIn('content', interaction.original_edits[0])
+        self.assertEqual(maintenance.calls, [])
+
 
     async def test_selected_close_applies_only_one_and_disables_panel(self):
         first = CareMaintenanceAction(

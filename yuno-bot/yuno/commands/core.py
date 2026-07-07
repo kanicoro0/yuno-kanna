@@ -321,13 +321,14 @@ def create_memories_group(
         if maintenance is None:
             await _reply(interaction, '整理案はまだ開けないよ')
             return
+        await interaction.response.defer(ephemeral=True, thinking=True)
         stream = await service.stream(
             _channel(interaction), _guild(interaction)
         )
         if stream is None:
-            await _reply(interaction, render_maintenance_proposal(
-                CareMaintenanceProposal(0)
-            ))
+            await interaction.edit_original_response(
+                content=render_maintenance_proposal(CareMaintenanceProposal(0))
+            )
             return
         proposal = await maintenance.propose_for_stream(stream.id)
         marks = await service.list_marks(
@@ -341,17 +342,12 @@ def create_memories_group(
             opened_by_user_id=interaction.user.id,
         )
         if not view.children:
-            await _reply(interaction, text)
+            await interaction.edit_original_response(content=text)
             return
-        await interaction.response.send_message(
-            text, ephemeral=True, view=view
+        message = await interaction.edit_original_response(
+            content=text, view=view
         )
-        original_response = getattr(interaction, 'original_response', None)
-        if callable(original_response):
-            try:
-                view.bind_message(await original_response())
-            except discord.HTTPException:
-                pass
+        view.bind_message(message)
 
     @group.command(name='add', description='この場に印を追加')
     @app_commands.describe(

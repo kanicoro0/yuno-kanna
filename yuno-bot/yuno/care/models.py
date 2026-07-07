@@ -46,6 +46,7 @@ class CareReadRequest:
 
 @dataclass(frozen=True)
 class CareReadResult:
+    decision_made: bool = False
     wants_to_speak: bool = False
     should_speak: bool = False
     reply_reason: str = ''

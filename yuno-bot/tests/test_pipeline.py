@@ -329,5 +329,41 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("current topic", rendered)
 
 
+    async def test_timing_logs_cover_care_and_speaker_without_content(self) -> None:
+        class CreatedCareService(FakeCareService):
+            async def apply(self, stream_id, source_message_id, result):
+                return CareApplication(created_care_mark_ids=("care_0001",))
+
+        class Maintenance:
+            async def auto_close_after_activity(self, stream_id, **kwargs):
+                return ()
+
+        pipeline = ConversationPipeline(
+            MessageRouter(self.settings, self.repository),
+            self.repository,
+            ContextBuilder(self.repository),
+            self.speaker,
+            care_reader=FakeCareReader(CareReadResult()),
+            care_service=CreatedCareService(),
+            maintenance_service=Maintenance(),
+        )
+
+        with self.assertLogs("yuno.pipeline", level="INFO") as captured:
+            result = await pipeline.process(self.incoming(
+                "timed",
+                "PRIVATE_TIMING_PAYLOAD",
+                mention=True,
+            ))
+
+        rendered = "\n".join(captured.output)
+        self.assertTrue(result.should_send)
+        self.assertIn("timing care_read", rendered)
+        self.assertIn("timing care_apply", rendered)
+        self.assertIn("timing auto_maintenance", rendered)
+        self.assertIn("timing speaker_generation", rendered)
+        self.assertIn("ms=", rendered)
+        self.assertNotIn("PRIVATE_TIMING_PAYLOAD", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

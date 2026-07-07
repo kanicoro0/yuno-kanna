@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import logging
+import time
 from typing import Optional
 
 import discord
@@ -43,11 +44,24 @@ async def handle_message(
     if bot.user is None:
         return
     incoming = to_incoming_message(message, bot.user)
+    started = time.monotonic()
     try:
         turn = await runtime.pipeline.intake(incoming)
+        logger.info(
+            "timing intake eligible=%s ms=%.1f",
+            turn is not None,
+            _elapsed_ms(started),
+        )
         if turn is None:
             return
+        started = time.monotonic()
         selected_turn = await runtime.turn_manager.select(turn)
+        logger.info(
+            "timing turn_selection stream_id=%s selected=%s ms=%.1f",
+            turn.stream_id,
+            selected_turn is not None,
+            _elapsed_ms(started),
+        )
         if selected_turn is None:
             return
     except Exception:
@@ -59,6 +73,7 @@ async def handle_message(
             generation = runtime.turn_manager.current_generation(
                 selected_turn.stream_id
             )
+            generation_started = time.monotonic()
             try:
                 result = await process_turn_with_typing(
                     message, runtime.pipeline, generation.turn
@@ -67,12 +82,26 @@ async def handle_message(
                 logger.exception("Conversation generation failed")
                 return
             if not runtime.turn_manager.is_current(generation):
+                logger.info(
+                    "timing stale_generation stream_id=%s generation=%s "
+                    "stage=generated action=discard_retry ms=%.1f",
+                    selected_turn.stream_id,
+                    generation.generation,
+                    _elapsed_ms(generation_started),
+                )
                 continue
 
             await runtime.care_reactions.add_for_marks(
                 message, result.care_mark_changes
             )
             if not runtime.turn_manager.is_current(generation):
+                logger.info(
+                    "timing stale_generation stream_id=%s generation=%s "
+                    "stage=pre_send action=discard_retry ms=%.1f",
+                    selected_turn.stream_id,
+                    generation.generation,
+                    _elapsed_ms(generation_started),
+                )
                 continue
             if not result.should_send:
                 return
@@ -81,6 +110,7 @@ async def handle_message(
                 selected_turn.stream_id, generation.generation
             ):
                 continue
+            send_started = time.monotonic()
             try:
                 if generation.turn.should_reply:
                     sent = await send_result(message, result)
@@ -90,6 +120,13 @@ async def handle_message(
             except discord.HTTPException:
                 logger.exception("Discord send failed")
                 return
+            finally:
+                logger.info(
+                    "timing discord_send stream_id=%s mode=%s ms=%.1f",
+                    selected_turn.stream_id,
+                    result.reply_mode,
+                    _elapsed_ms(send_started),
+                )
 
             application = await finalize_sent_message(
                 runtime.pipeline,
@@ -131,11 +168,18 @@ async def finalize_sent_message(
         logger.exception("Discord send succeeded but assistant log commit failed")
         return None
 
+    started = time.monotonic()
     try:
         return await pipeline.observe_after_send(result.observation_ticket)
     except Exception:
         logger.exception("Assistant log saved but post-send observation failed")
         return None
+    finally:
+        logger.info(
+            "timing post_send_observation stream_id=%s ms=%.1f",
+            result.stream_id,
+            _elapsed_ms(started),
+        )
 
 
 async def send_result(
@@ -154,3 +198,7 @@ async def send_result(
             allowed_mentions=discord.AllowedMentions.none(),
         )
     raise ValueError(f"unsupported reply mode: {result.reply_mode}")
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.monotonic() - started) * 1000

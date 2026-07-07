@@ -38,6 +38,11 @@ class Speaker:
         route_note = _ROUTE_NOTES.get(context.route_reason or "")
         if route_note:
             messages.append({"role": "system", "content": route_note})
+        if context.reply_reason or context.speaker_note:
+            messages.append({
+                "role": "system",
+                "content": _care_note(context),
+            })
         if context.references:
             messages.append({
                 "role": "system",
@@ -47,3 +52,12 @@ class Speaker:
             })
         messages.extend(context.history)
         return (await self.client.complete(messages)).strip()[:2000]
+
+
+def _care_note(context: SpeakerContext) -> str:
+    parts = []
+    if context.reply_reason:
+        parts.append(f"CareReader reply_reason: {context.reply_reason}")
+    if context.speaker_note:
+        parts.append(f"CareReader note: {context.speaker_note}")
+    return "\n".join(parts)

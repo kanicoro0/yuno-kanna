@@ -28,6 +28,8 @@ class CareReadRequest:
     read_cues: Tuple[Dict[str, Any], ...]
     addressing_strength: float
     cue_salience: float
+    route_reason: str = ''
+    reply_mode: str = 'none'
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -37,13 +39,18 @@ class CareReadRequest:
             'read_cues': list(self.read_cues),
             'addressing_strength': self.addressing_strength,
             'cue_salience': self.cue_salience,
+            'route_reason': self.route_reason,
+            'reply_mode': self.reply_mode,
         }
 
 
 @dataclass(frozen=True)
 class CareReadResult:
+    decision_made: bool = False
     wants_to_speak: bool = False
     should_speak: bool = False
+    reply_reason: str = ''
+    speaker_note: str = ''
     care_mark_candidates: Tuple[CareMarkCandidate, ...] = ()
     read_cue_updates: Tuple[ReadCueUpdate, ...] = ()
     touch_care_mark_ids: Tuple[str, ...] = ()

@@ -14,10 +14,27 @@ class CareReaderTests(unittest.TestCase):
             "read_cue_updates": [],
         })
 
+        self.assertTrue(result.decision_made)
         self.assertTrue(result.wants_to_speak)
         self.assertTrue(result.should_speak)
         self.assertEqual(result.reply_reason, "followup")
         self.assertEqual(result.speaker_note, "answer briefly")
+
+    def test_parse_false_should_speak_is_still_a_decision(self) -> None:
+        result = parse_care_result({
+            "should_speak": False,
+            "reply_reason": "none",
+        })
+
+        self.assertTrue(result.decision_made)
+        self.assertFalse(result.should_speak)
+
+    def test_parse_without_should_speak_has_no_decision(self) -> None:
+        result = parse_care_result({
+            "reply_reason": "followup",
+        })
+
+        self.assertFalse(result.decision_made)
 
     def test_parse_rejects_unknown_reply_reason(self) -> None:
         result = parse_care_result({

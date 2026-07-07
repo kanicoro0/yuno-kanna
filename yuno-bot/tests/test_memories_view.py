@@ -3,21 +3,19 @@ import unittest
 
 from yuno.care.maintenance import (
     CareMaintenanceAction,
+    CareMaintenanceApplyResult,
     CareMaintenanceProposal,
-    CareMaintenanceResult,
 )
 from yuno.care_marks.models import CareMark
 from yuno.commands.core import (
     CLOSE_LABEL,
-    DENIED_TEXT,
     HIDE_LABEL,
     MemoriesView,
-    RESTORE_LABEL,
-    TidyView,
     create_memories_group,
     render_care_marks,
     render_maintenance_proposal,
 )
+from yuno.discord.ui import DENIED_TEXT
 from yuno.permissions import PermissionService
 
 
@@ -116,7 +114,7 @@ class FakeMaintenance:
 
     async def apply_selected(self, stream_id, action):
         self.calls.append(('apply_selected', stream_id, action.action))
-        return CareMaintenanceResult(applied=True, affected_care_marks=())
+        return CareMaintenanceApplyResult(applied=True, reason='closed')
 
 
 def button(view, suffix):

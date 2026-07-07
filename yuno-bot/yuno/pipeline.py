@@ -21,6 +21,7 @@ from yuno.turns import PipelineTurn
 
 
 logger = logging.getLogger(__name__)
+OBSERVATION_ROUTE_REASONS = frozenset({"listening_only", "name_seen"})
 
 
 @dataclass(frozen=True)
@@ -124,7 +125,7 @@ class ConversationPipeline:
         pre_care_completed = False
         care_mark_changes: tuple[CareMark, ...] = ()
         if (
-            turn.route_reason == "listening_only"
+            turn.route_reason in OBSERVATION_ROUTE_REASONS
             and self.care_reader
             and self.care_service
         ):
@@ -204,6 +205,7 @@ class ConversationPipeline:
         context = await self.context_builder.build(
             turn.stream_id,
             care_mark_ids,
+            route_reason=turn.route_reason,
         )
         reply = await self.speaker.speak(context)
         reply_mode = turn.reply_mode if turn.should_reply else "plain"
@@ -261,16 +263,11 @@ class ConversationPipeline:
         decision = immediate_care_decision(ticket.user_content, state)
         if not decision.run:
             logger.debug(
-                "care_reader skipped after send stream_id=%s reason=%s",
+                "post-send care_reader skipped stream_id=%s reason=%s",
                 ticket.stream_id,
                 decision.reason,
             )
             return None
-        logger.debug(
-            "care_reader called after send stream_id=%s reason=%s",
-            ticket.stream_id,
-            decision.reason,
-        )
         request = await self.care_service.build_request(
             ticket.stream_id,
             ticket.user_content,
@@ -278,48 +275,41 @@ class ConversationPipeline:
             decision.cue_salience,
             state,
         )
-        result = await self.care_reader.read(request)
+        care_result = await self.care_reader.read(request)
         application = await self.care_service.apply(
-            ticket.stream_id, ticket.care_source_user_message_id, result
+            ticket.stream_id,
+            ticket.care_source_user_message_id,
+            care_result,
         )
         await self._auto_maintain(ticket.stream_id, application)
         logger.debug(
-            "care_reader observed after send stream_id=%s memory=%d attention=%d cues=%d",
+            "post-send care_reader result stream_id=%s memory=%d attention=%d cues=%d",
             ticket.stream_id,
             sum(
                 item.kind == 'memory'
-                for item in result.care_mark_candidates
+                for item in care_result.care_mark_candidates
             ),
             sum(
                 item.kind == 'attention'
-                for item in result.care_mark_candidates
+                for item in care_result.care_mark_candidates
             ),
-            len(result.read_cue_updates),
+            len(care_result.read_cue_updates),
         )
         return application
 
     async def _auto_maintain(
-        self,
-        stream_id: int,
-        application: CareApplication,
+        self, stream_id: int, application: CareApplication
     ) -> None:
-        if (
-            self.maintenance_service is None
-            or not application.created_care_mark_ids
-        ):
+        if self.maintenance_service is None:
+            return
+        if not application.created_care_marks:
             return
         try:
-            await self.maintenance_service.auto_close_after_activity(
+            await self.maintenance_service.auto_maintain_after_care(
                 stream_id,
-                protected_public_ids=tuple(dict.fromkeys((
-                    *application.created_care_mark_ids,
-                    *(
-                        mark.public_id
-                        for mark in application.affected_care_marks
-                    ),
-                ))),
+                protect_public_ids=(
+                    mark.public_id for mark in application.affected_care_marks
+                ),
             )
         except Exception:
-            logger.exception(
-                'Automatic care maintenance failed stream_id=%s', stream_id
-            )
+            logger.exception("automatic care maintenance failed")

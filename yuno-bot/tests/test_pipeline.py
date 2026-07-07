@@ -43,6 +43,8 @@ class FakeCareService:
         addressing_strength,
         cue_salience_value,
         state,
+        route_reason="",
+        reply_mode="none",
     ):
         return CareReadRequest(
             current_message=current_message,
@@ -51,6 +53,8 @@ class FakeCareService:
             read_cues=(),
             addressing_strength=addressing_strength,
             cue_salience=cue_salience_value,
+            route_reason=route_reason,
+            reply_mode=reply_mode,
         )
 
     async def apply(self, stream_id, source_message_id, result):
@@ -180,6 +184,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_care_reader_can_enable_plain_listening_reply(self) -> None:
         care_reader = FakeCareReader(CareReadResult(
+            decision_made=True,
             should_speak=True,
             reply_reason="followup",
             speaker_note="plain listening followup",
@@ -204,6 +209,51 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             self.speaker.contexts[-1].speaker_note,
             "plain listening followup",
         )
+
+    async def test_care_reader_can_silence_hard_route(self) -> None:
+        care_reader = FakeCareReader(CareReadResult(
+            decision_made=True,
+            should_speak=False,
+            reply_reason="none",
+        ))
+        pipeline = ConversationPipeline(
+            MessageRouter(self.settings, self.repository),
+            self.repository,
+            ContextBuilder(self.repository),
+            self.speaker,
+            care_reader=care_reader,
+            care_service=FakeCareService(),
+        )
+
+        result = await pipeline.process(
+            self.incoming("mention-silent", "<@99> no need", mention=True)
+        )
+
+        self.assertFalse(result.should_send)
+        self.assertIsNotNone(result.stream_id)
+        self.assertEqual(care_reader.requests[-1].route_reason, "mention")
+        self.assertEqual(care_reader.requests[-1].reply_mode, "discord_reply")
+        self.assertEqual(self.speaker.contexts, [])
+
+    async def test_router_reply_falls_back_when_care_reader_makes_no_decision(self) -> None:
+        care_reader = FakeCareReader(CareReadResult())
+        pipeline = ConversationPipeline(
+            MessageRouter(self.settings, self.repository),
+            self.repository,
+            ContextBuilder(self.repository),
+            self.speaker,
+            care_reader=care_reader,
+            care_service=FakeCareService(),
+        )
+
+        result = await pipeline.process(
+            self.incoming("mention-fallback", "<@99> fallback", mention=True)
+        )
+
+        self.assertTrue(result.should_send)
+        self.assertEqual(result.reply_mode, "discord_reply")
+        self.assertEqual(care_reader.requests[-1].route_reason, "mention")
+        self.assertEqual(len(self.speaker.contexts), 1)
 
     async def test_listening_message_is_saved_without_speaker(self) -> None:
         result = await self.pipeline.process(self.incoming("1", "nearby talk"))

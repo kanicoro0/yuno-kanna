@@ -301,14 +301,18 @@ class ConversationPipeline:
     ) -> None:
         if self.maintenance_service is None:
             return
-        if not application.created_care_marks:
+        if not application.created_care_mark_ids:
             return
         try:
-            await self.maintenance_service.auto_maintain_after_care(
+            await self.maintenance_service.auto_close_after_activity(
                 stream_id,
-                protect_public_ids=(
-                    mark.public_id for mark in application.affected_care_marks
-                ),
+                protected_public_ids=tuple(dict.fromkeys((
+                    *application.created_care_mark_ids,
+                    *(
+                        mark.public_id
+                        for mark in application.affected_care_marks
+                    ),
+                ))),
             )
         except Exception:
             logger.exception("automatic care maintenance failed")

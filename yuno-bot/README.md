@@ -1,4 +1,4 @@
-# yuno-bot-v2.0
+# yuno-bot
 
 Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計版です。
 
@@ -8,7 +8,7 @@ Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計
 
 現在はCareMark / ReadCue移行後の構成です。会話につく印はCareMarkへ統合され、ReadCueはその印へ戻るための選択用索引として扱います。
 
-実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md)、[`docs/next_direction.md`](docs/next_direction.md)、[`docs/implementation_practice.md`](docs/implementation_practice.md) を読んでください。ゆのv2.0では、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」と、不要な概念を増やさず整理しながら進めることを優先します。
+実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md)、[`docs/next_direction.md`](docs/next_direction.md)、[`docs/implementation_practice.md`](docs/implementation_practice.md) を読んでください。ゆのでは、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」と、不要な概念を増やさず整理しながら進めることを優先します。
 
 ```text
 directed: user保存 → recent 6件 → Speaker → Discord送信
@@ -43,7 +43,7 @@ Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中し�
 ## Setup
 
 ```powershell
-cd yuno-bot-v2.0
+cd yuno-bot
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -53,7 +53,7 @@ python main.py
 
 必須設定は `DISCORD_TOKEN`、`OPENAI_API_KEY`、`OPENAI_MODEL` です。OpenAI設定が空の場合は、ローカルの短いfallback応答を使います。
 
-SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは起動時のcurrent directoryではなく、必ず `yuno-bot-v2.0` を基準に解決されます。WAL、foreign keys、busy timeout、schema migrationを使用し、DB・WAL・SHM・`.env` はGit管理外です。
+SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは起動時のcurrent directoryではなく、必ず `yuno-bot` を基準に解決されます。WAL、foreign keys、busy timeout、schema migrationを使用し、DB・WAL・SHM・`.env` はGit管理外です。
 
 ## 管理command
 

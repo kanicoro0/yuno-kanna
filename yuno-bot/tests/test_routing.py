@@ -26,6 +26,9 @@ class FakeRepository:
     async def is_assistant_message(self, message_id):
         return message_id in self.assistant_ids
 
+    async def get_stream_by_channel_id(self, channel_id):
+        return None
+
 
 def incoming(
     content: str,
@@ -90,7 +93,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(missing_reply.reason, "ignored")
 
     async def test_direct_call_names_reply_plain_only_in_listening_channel(self) -> None:
-        for value in ("ゆの", "ゆの、聞いて", "ゆのちゃん", "ねえゆの", "ゆのおはよ", "yuno", "唯乃"):
+        for value in ("ゆの", "ゆの、聞いて", "ゆのちゃん", "ねえゆの", "ゆのおはよ", "ゆの起きてる？", "yuno", "唯乃"):
             with self.subTest(value=value):
                 route = await self.route(incoming(value), channel_ids={10})
                 self.assertEqual((route.reason, route.reply_mode), ("name_call", "plain"))
@@ -120,6 +123,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
 
     def test_call_name_strength_distinguishes_direct_and_weak_calls(self) -> None:
         self.assertEqual(call_name_strength("ゆの、おはよ", ("ゆの",)), "direct")
+        self.assertEqual(call_name_strength("ゆの起きてる？", ("ゆの",)), "direct")
         self.assertEqual(call_name_strength("しょうゆの作り方", ("ゆの",)), "weak")
         self.assertEqual(call_name_strength("ゆのかわいい", ("ゆの",)), "weak")
         self.assertIsNone(call_name_strength("近くの会話", ("ゆの",)))

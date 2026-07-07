@@ -38,30 +38,35 @@ class FakeResponse:
         self.sent = []
         self.edits = []
         self.deferred = []
+        self._done = False
+
+    def is_done(self):
+        return self._done
 
     async def send_message(self, content, **kwargs):
         self.sent.append((content, kwargs))
+        self._done = True
 
     async def edit_message(self, **kwargs):
         self.edits.append(kwargs)
+        self._done = True
 
     async def defer(self, **kwargs):
         self.deferred.append(kwargs)
+        self._done = True
 
 
 class FakeInteraction:
     def __init__(self, *, administrator=True):
-        self.user = SimpleNamespace(id=7)
+        self.user = SimpleNamespace(
+            id=7,
+            guild_permissions=SimpleNamespace(administrator=administrator),
+        )
         self.channel_id = 10
         self.guild_id = 1
         self.response = FakeResponse()
-        self._administrator = administrator
         self.edited_original = []
         self._original_response = SimpleNamespace()
-
-    @property
-    def permissions(self):
-        return SimpleNamespace(administrator=self._administrator)
 
     async def edit_original_response(self, **kwargs):
         self.edited_original.append(kwargs)
@@ -192,7 +197,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('care_0001', text)
         self.assertNotIn('active', text)
 
-    def test_action_for_memory_active_is_hide(self):
+    async def test_action_for_memory_active_is_hide(self):
         view = MemoriesView(
             FakeService(), PermissionService(), opened_by_user_id=7,
             channel_id='10', guild_id='1', kind='all', status='visible', limit=10,
@@ -290,7 +295,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_tidy_with_apply_button_closes_attention(self):
         action = CareMaintenanceAction('close_attention', ('care_0001',))
         maintenance = FakeMaintenance(CareMaintenanceProposal(1, (action,)))
-        service = FakeService((mark('care_0001', 'attention', 'open', '一区切り')))
+        service = FakeService((mark('care_0001', 'attention', 'open', '一区切り'),))
         group = create_memories_group(service, PermissionService(), maintenance)
         command = group.get_command('tidy')
         interaction = FakeInteraction(administrator=True)
@@ -306,7 +311,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
     async def test_tidy_button_rejects_non_admin(self):
         action = CareMaintenanceAction('close_attention', ('care_0001',))
         maintenance = FakeMaintenance(CareMaintenanceProposal(1, (action,)))
-        service = FakeService((mark('care_0001', 'attention', 'open', '一区切り')))
+        service = FakeService((mark('care_0001', 'attention', 'open', '一区切り'),))
         group = create_memories_group(service, PermissionService(), maintenance)
         command = group.get_command('tidy')
         interaction = FakeInteraction(administrator=True)

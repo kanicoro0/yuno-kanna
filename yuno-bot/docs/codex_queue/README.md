@@ -1,8 +1,8 @@
 # Codex work queue
 
-This directory is the low-friction queue for Codex work on `yuno-bot-v2.0`.
+This directory is the low-friction queue for Codex work on `yuno-bot`.
 
-Unless a task says otherwise, run Codex tasks from the `yuno-bot-v2.0/` working directory.
+Unless a task says otherwise, run Codex tasks from the `yuno-bot/` working directory.
 
 The goal is to make the human workload as small as possible:
 

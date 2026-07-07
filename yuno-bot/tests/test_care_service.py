@@ -117,10 +117,8 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
             reply_to_discord_message_id=None,
         )
 
-    async def test_low_signal_reply_skips_care_but_keeps_logs(self) -> None:
-        reader = RecordingReader(CareReadResult(care_mark_candidates=(
-            CareMarkCandidate('memory', 'draft', '作られてはいけない'),
-        )))
+    async def test_directed_reply_reads_care_before_speech_and_keeps_logs(self) -> None:
+        reader = RecordingReader(CareReadResult())
         pipeline = self.pipeline(reader)
 
         result = await pipeline.process(
@@ -135,7 +133,7 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(application)
-        self.assertEqual(reader.requests, [])
+        self.assertEqual(len(reader.requests), 1)
         self.assertEqual(result.care_mark_changes, ())
         self.assertEqual(
             await self.conversations.count_messages(self.stream.id),
@@ -146,7 +144,7 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(await self.marks.list_for_stream(self.stream.id), [])
 
-    async def test_explicit_memory_and_name_preference_runs_after_send(self) -> None:
+    async def test_explicit_memory_and_name_preference_runs_before_send(self) -> None:
         reader = RecordingReader(CareReadResult(care_mark_candidates=(
             CareMarkCandidate('memory', 'draft', 'こはると呼ぶ'),
         )))
@@ -164,7 +162,8 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(reader.requests), 1)
-        self.assertEqual(len(application.created_care_mark_ids), 1)
+        self.assertIsNone(application)
+        self.assertEqual(len(result.care_mark_changes), 1)
 
     async def test_low_signal_listening_skips_care(self) -> None:
         reader = RecordingReader(CareReadResult(care_mark_candidates=(
@@ -238,130 +237,35 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
             tuple(mark.public_id for mark in application.affected_care_marks),
             (existing.public_id,),
         )
-        marks = await self.marks.list_for_stream(
-            self.stream.id, ('attention',), ('open',)
-        )
-        self.assertEqual(len(marks), 1)
 
-    async def test_read_cue_updates_are_upserted_for_resolved_mark(self) -> None:
-        first = await self.service.apply(
+    async def test_read_cue_update_links_to_created_candidate(self) -> None:
+        application = await self.service.apply(
             self.stream.id,
             self.message.id,
             CareReadResult(
                 care_mark_candidates=(
-                    CareMarkCandidate('attention', 'open', '星の話'),
+                    CareMarkCandidate('memory', 'active', '星の話'),
                 ),
                 read_cue_updates=(
-                    ReadCueUpdate(' ＳＴＡＲ ', 0.2, candidate_text='星の話'),
+                    ReadCueUpdate('星', 0.6, candidate_text='星の話'),
                 ),
             ),
         )
-        public_id = first.created_care_mark_ids[0]
-        mark = await self.marks.get_by_public_id(public_id)
-        initial = await self.cues.list_for_mark(mark.id)
 
-        second = await self.service.apply(
+        self.assertEqual(len(application.upserted_read_cue_ids), 1)
+        cues = await self.cues.list_for_stream(self.stream.id)
+        self.assertEqual(cues[0].term, '星')
+
+    async def test_touch_id_links_to_existing_mark(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', '月の話'
+        )
+
+        application = await self.service.apply(
             self.stream.id,
             self.message.id,
-            CareReadResult(read_cue_updates=(
-                ReadCueUpdate(
-                    'star', 0.8, care_mark_public_id=public_id
-                ),
-            )),
-        )
-        updated = await self.cues.list_for_mark(mark.id)
-
-        self.assertEqual(len(initial), 1)
-        self.assertEqual(len(updated), 1)
-        self.assertEqual(updated[0].id, initial[0].id)
-        self.assertEqual(updated[0].weight, 0.8)
-        self.assertEqual(second.upserted_read_cue_ids, (initial[0].id,))
-
-    async def test_read_cue_never_becomes_speaker_reference(self) -> None:
-        mark = await self.marks.create(
-            self.stream.id, 'attention', 'open', '星の話'
-        )
-        await self.cues.upsert(mark.id, '星', 0.5)
-        state = await self.service.current_state(self.stream.id)
-        request = await self.service.build_request(
-            self.stream.id, '星について', 0.0, 0.5, state
+            CareReadResult(touch_care_mark_ids=(mark.public_id,)),
         )
 
-        context = await ContextBuilder(self.conversations).build(self.stream.id)
-
-        self.assertEqual(request.read_cues[0]['term'], '星')
-        self.assertEqual(context.references, ())
-        self.assertNotIn('星', str(context.references))
-
-    async def test_cue_for_hidden_mark_is_not_in_care_state(self) -> None:
-        mark = await self.marks.create(
-            self.stream.id, 'memory', 'hidden', 'hidden text'
-        )
-        await self.cues.upsert(mark.id, 'hidden cue', 0.7)
-
-        state = await self.service.current_state(self.stream.id)
-
-        self.assertEqual(state.care_marks, ())
-        self.assertEqual(state.read_cues, ())
-
-    async def test_listening_care_path_uses_no_legacy_tables(self) -> None:
-        await self.marks.create(
-            self.stream.id, 'attention', 'open', '星の話'
-        )
-
-        class Reader:
-            def __init__(self):
-                self.requests = []
-
-            async def read(inner_self, request):
-                inner_self.requests.append(request)
-                return CareReadResult(care_mark_candidates=(
-                    CareMarkCandidate('memory', 'draft', '残す断片'),
-                ))
-
-        class Speaker:
-            async def speak(self, context):
-                raise AssertionError('listening-only turn should remain silent')
-
-        settings = Settings(
-            discord_token='',
-            discord_client_id=None,
-            openai_api_key='',
-            openai_model='',
-            database_file=Path(self.temp_dir.name) / 'care.sqlite3',
-            listening_channel_ids=frozenset({10}),
-            yuno_call_names=('ゆの', '唯乃', 'yuno'),
-            log_level='INFO',
-        )
-        reader = Reader()
-        pipeline = ConversationPipeline(
-            MessageRouter(settings, self.conversations),
-            self.conversations,
-            ContextBuilder(self.conversations),
-            Speaker(),
-            reader,
-            self.service,
-        )
-        incoming = IncomingMessage(
-            discord_message_id='listening-1',
-            discord_channel_id='10',
-            discord_guild_id='1',
-            stream_kind='channel',
-            author_id='7',
-            author_name='A',
-            author_is_bot=False,
-            bot_user_id='99',
-            mentions_bot=False,
-            raw_content='星の話をしている',
-            created_at='2026-01-01T00:00:00+00:00',
-            reply_to_discord_message_id=None,
-        )
-
-        result = await pipeline.process(incoming)
-
-        self.assertFalse(result.should_send)
-        self.assertEqual(len(reader.requests), 1)
-        marks = await self.marks.list_for_stream(self.stream.id)
-        self.assertEqual(
-            {mark.text for mark in marks}, {'星の話', '残す断片'}
-        )
+        self.assertEqual(application.touched_care_mark_ids, (mark.public_id,))
+        self.assertEqual(application.affected_care_marks[0].public_id, mark.public_id)

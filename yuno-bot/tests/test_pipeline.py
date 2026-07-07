@@ -58,6 +58,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         author_is_bot: bool = False,
         guild_id="1",
         reply_to=None,
+        created_at="2026-01-01T00:00:00+00:00",
     ) -> IncomingMessage:
         return IncomingMessage(
             discord_message_id=message_id,
@@ -70,7 +71,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             bot_user_id="99",
             mentions_bot=mention,
             raw_content=content,
-            created_at="2026-01-01T00:00:00+00:00",
+            created_at=created_at,
             reply_to_discord_message_id=reply_to,
         )
 
@@ -121,6 +122,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         rendered = str(self.speaker.contexts[-1].history)
         self.assertTrue(result.should_send)
         self.assertEqual(result.reply_mode, "discord_reply")
+        self.assertEqual(self.speaker.contexts[-1].route_reason, "mention")
         self.assertIn("続けよう", rendered)
         self.assertNotIn("mention", rendered)
         self.assertNotIn("discord_reply", rendered)
@@ -141,6 +143,13 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_listening_message_is_saved_without_speaker(self) -> None:
         result = await self.pipeline.process(self.incoming("1", "近くの会話"))
+        self.assertFalse(result.should_send)
+        self.assertIsNotNone(result.stream_id)
+        self.assertEqual(await self.repository.count_messages(result.stream_id), 1)
+        self.assertEqual(self.speaker.contexts, [])
+
+    async def test_weak_name_message_is_saved_without_immediate_speaker(self) -> None:
+        result = await self.pipeline.process(self.incoming("weak", "しょうゆの作り方"))
         self.assertFalse(result.should_send)
         self.assertIsNotNone(result.stream_id)
         self.assertEqual(await self.repository.count_messages(result.stream_id), 1)
@@ -192,3 +201,20 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(history), 6)
         self.assertNotIn("近くの会話0", str(history))
         self.assertIn("いまの話", str(history))
+
+    async def test_directed_context_drops_messages_before_long_gap(self) -> None:
+        await self.pipeline.process(self.incoming(
+            "old", "3時の話", created_at="2026-01-01T03:00:00+00:00"
+        ))
+        await self.pipeline.process(self.incoming(
+            "new", "<@99> 12時の話", mention=True,
+            created_at="2026-01-01T12:07:00+00:00",
+        ))
+        rendered = str(self.speaker.contexts[-1].history)
+
+        self.assertNotIn("3時の話", rendered)
+        self.assertIn("12時の話", rendered)
+
+
+if __name__ == "__main__":
+    unittest.main()

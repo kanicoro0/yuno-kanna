@@ -131,9 +131,12 @@ class CommandCleanupGuardTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_pull_request_ci_runs_standard_check(self) -> None:
+    def test_pull_request_ci_runs_split_checks(self) -> None:
         workflow = (
             REPOSITORY_ROOT / '.github' / 'workflows' / 'yuno-check.yml'
         ).read_text(encoding='utf-8')
         self.assertIn('pull_request:', workflow)
-        self.assertIn('python scripts/check_yuno.py', workflow)
+        self.assertIn('working-directory: yuno-bot', workflow)
+        self.assertIn('python -m compileall main.py yuno tests', workflow)
+        self.assertIn('python -m unittest discover -s tests', workflow)
+        self.assertIn('from yuno.app import create_bot', workflow)

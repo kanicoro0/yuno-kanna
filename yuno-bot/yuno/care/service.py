@@ -27,6 +27,10 @@ class CareApplication:
     include_care_mark_ids: Tuple[str, ...] = ()
     affected_care_marks: Tuple[CareMark, ...] = ()
 
+    @property
+    def created_care_marks(self) -> Tuple[str, ...]:
+        return self.created_care_mark_ids
+
 
 @dataclass(frozen=True)
 class CareTriggerDecision:

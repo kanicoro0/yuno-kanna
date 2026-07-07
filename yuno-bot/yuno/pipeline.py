@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 import logging
 import time
@@ -81,6 +82,7 @@ class ConversationPipeline:
         self.care_service = care_service
         self.reference_selector = reference_selector
         self.maintenance_service = maintenance_service
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def process(self, message: IncomingMessage) -> PipelineResult:
         """Compatibility path: one eligible stored message becomes one turn."""
@@ -177,10 +179,10 @@ class ConversationPipeline:
                         turn.stream_id,
                         _elapsed_ms(started),
                     )
-                await self._auto_maintain(turn.stream_id, application)
                 include_care_mark_ids = list(application.include_care_mark_ids)
                 care_mark_changes = application.affected_care_marks
                 pre_care_completed = True
+                self._schedule_auto_maintain(turn.stream_id, application)
                 logger.debug(
                     "care_reader result stream_id=%s decision=%s speak=%s reason=%s memory=%d attention=%d cues=%d",
                     turn.stream_id,
@@ -332,7 +334,7 @@ class ConversationPipeline:
                 ticket.stream_id,
                 _elapsed_ms(started),
             )
-        await self._auto_maintain(ticket.stream_id, application)
+        self._schedule_auto_maintain(ticket.stream_id, application)
         logger.debug(
             "post-send care_reader result stream_id=%s memory=%d attention=%d cues=%d",
             ticket.stream_id,
@@ -353,19 +355,14 @@ class ConversationPipeline:
     ) -> None:
         if self.maintenance_service is None:
             return
-        if not application.created_care_mark_ids:
+        protected_public_ids = self._protected_public_ids(application)
+        if not protected_public_ids:
             return
         started = time.monotonic()
         try:
             await self.maintenance_service.auto_close_after_activity(
                 stream_id,
-                protected_public_ids=tuple(dict.fromkeys((
-                    *application.created_care_mark_ids,
-                    *(
-                        mark.public_id
-                        for mark in application.affected_care_marks
-                    ),
-                ))),
+                protected_public_ids=protected_public_ids,
             )
         except Exception:
             logger.exception("automatic care maintenance failed")
@@ -375,6 +372,31 @@ class ConversationPipeline:
                 stream_id,
                 _elapsed_ms(started),
             )
+
+    def _schedule_auto_maintain(
+        self, stream_id: int, application: CareApplication
+    ) -> None:
+        if self.maintenance_service is None:
+            return
+        if not self._protected_public_ids(application):
+            return
+        task = asyncio.create_task(
+            self._auto_maintain(stream_id, application)
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    @staticmethod
+    def _protected_public_ids(
+        application: CareApplication,
+    ) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((
+            *application.created_care_mark_ids,
+            *(
+                mark.public_id
+                for mark in application.affected_care_marks
+            ),
+        )))
 
     def _should_read_before_speaking(self, turn: PipelineTurn) -> bool:
         return (

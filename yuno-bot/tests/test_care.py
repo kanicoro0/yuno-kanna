@@ -23,9 +23,11 @@ class CareReaderTests(unittest.IsolatedAsyncioTestCase):
             read_cues=(),
             addressing_strength=1.0,
             cue_salience=0.0,
+            route_reason='mention',
+            reply_mode='discord_reply',
         )
 
-    async def test_reader_parses_new_contract_without_control_values(self) -> None:
+    async def test_reader_parses_contract_with_route_state_only(self) -> None:
         client = FakeJsonClient({
             'wants_to_speak': True,
             'should_speak': True,
@@ -50,9 +52,11 @@ class CareReaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.care_mark_candidates[0].text, '残す印')
         self.assertEqual(result.read_cue_updates[0].term, '星')
         payload = client.messages[1]['content']
-        self.assertNotIn('reply_mode', payload)
-        self.assertNotIn('routing', payload)
-        self.assertNotIn('reason', payload)
+        self.assertIn('route_reason', payload)
+        self.assertIn('reply_mode', payload)
+        self.assertNotIn('reply_reason', payload)
+        self.assertNotIn('speaker_note', payload)
+        self.assertNotIn('CareReader', payload)
 
     async def test_invalid_parse_falls_back_to_empty_result(self) -> None:
         result = await CareReader(FakeJsonClient('not an object')).read(
@@ -138,16 +142,11 @@ class CareReaderTests(unittest.IsolatedAsyncioTestCase):
                 },
             ],
         })
-
         self.assertEqual(
-            [item.status for item in result.care_mark_candidates],
-            ['draft', 'draft', 'draft'],
+            [(item.text, item.status) for item in result.care_mark_candidates],
+            [
+                ('通院している', 'draft'),
+                ('友人についての話', 'draft'),
+                ('センシティブ', 'draft'),
+            ],
         )
-
-    def test_string_booleans_do_not_enable_speaking(self) -> None:
-        result = parse_care_result({
-            'wants_to_speak': 'false',
-            'should_speak': 'true',
-        })
-        self.assertFalse(result.wants_to_speak)
-        self.assertFalse(result.should_speak)

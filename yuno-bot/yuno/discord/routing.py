@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 import re
 from typing import Iterable, Optional
 
@@ -6,6 +7,9 @@ from yuno.config import Settings
 from yuno.conversation.repository import ConversationRepository
 from yuno.listening.service import ListeningChannelService
 from yuno.messages import IncomingMessage
+
+
+RECENT_YUNO_FOLLOWUP_SECONDS = 10 * 60
 
 
 @dataclass(frozen=True)
@@ -61,9 +65,31 @@ class MessageRouter:
             call_strength = call_name_strength(content, self.settings.yuno_call_names)
             if call_strength == "direct":
                 return MessageRoute(True, True, content, "name_call", "plain")
+            if await self._is_recent_yuno_followup(message, content):
+                return MessageRoute(True, True, content, "recent_yuno_followup", "plain")
             reason = "name_seen" if call_strength == "weak" else "listening_only"
             return MessageRoute(True, False, content, reason, "none")
         return _ignored()
+
+    async def _is_recent_yuno_followup(
+        self,
+        message: IncomingMessage,
+        content: str,
+    ) -> bool:
+        if not _looks_like_followup(content):
+            return False
+        stream = await self.repository.get_stream_by_channel_id(
+            message.discord_channel_id
+        )
+        if stream is None:
+            return False
+        recent = await self.repository.recent(stream.id, 3)
+        if not recent or recent[-1].role != "assistant":
+            return False
+        return _seconds_between(
+            recent[-1].created_at,
+            message.created_at,
+        ) <= RECENT_YUNO_FOLLOWUP_SECONDS
 
 
 def call_name_strength(content: str, call_names: Iterable[str]) -> Optional[str]:
@@ -100,9 +126,15 @@ def _is_direct_japanese_call(before: str, after: str) -> bool:
         return True
     if _ends_as_direct_lead(before) and _starts_as_direct_tail(after):
         return True
+    if _ends_as_direct_lead(before) and _looks_like_question(after):
+        return True
     if not before and _starts_as_direct_tail(after):
         return True
+    if not before and _looks_like_question(after):
+        return True
     if _ends_with_boundary(before) and _starts_as_direct_tail(after):
+        return True
+    if _ends_with_boundary(before) and _looks_like_question(after):
         return True
     return False
 
@@ -130,8 +162,40 @@ def _starts_as_direct_tail(value: str) -> bool:
     return value.startswith((
         "おはよ", "おはよう", "おやすみ", "聞いて", "きいて",
         "教えて", "おしえて", "助けて", "たすけて", "いる", "いて",
+        "起き", "おき", "返事", "返信", "反応", "できる", "できない",
         "ちょっと", "ねえ", "ねー",
     ))
+
+
+def _looks_like_followup(content: str) -> bool:
+    value = content.strip()
+    if not value:
+        return False
+    if _looks_like_question(value):
+        return True
+    return value.startswith((
+        "それ", "これ", "じゃあ", "じゃ", "でも", "あと", "なら",
+        "うん", "いや", "え", "ん", "つまり",
+    ))
+
+
+def _looks_like_question(value: str) -> bool:
+    return "?" in value or "？" in value
+
+
+def _seconds_between(older: str, newer: str) -> float:
+    older_time = _parse_created_at(older)
+    newer_time = _parse_created_at(newer)
+    if older_time is None or newer_time is None:
+        return RECENT_YUNO_FOLLOWUP_SECONDS + 1
+    return (newer_time - older_time).total_seconds()
+
+
+def _parse_created_at(value: str) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _ends_with_boundary(value: str) -> bool:

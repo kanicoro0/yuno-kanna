@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from yuno.care_marks.service import CareMarkService
@@ -8,6 +9,7 @@ from yuno.conversation.repository import ConversationRepository
 
 RECENT_MESSAGE_LIMIT = 6
 RECENT_CHARACTER_LIMIT = 10_000
+RECENT_TIME_GAP_SECONDS = 30 * 60
 REFERENCE_LIMIT = 3
 
 
@@ -23,6 +25,7 @@ class SpeakerReference:
 class SpeakerContext:
     history: Tuple[Dict[str, str], ...]
     references: Tuple[SpeakerReference, ...] = ()
+    route_reason: Optional[str] = None
 
 
 class ContextBuilder:
@@ -40,6 +43,7 @@ class ContextBuilder:
         self,
         stream_id: int,
         include_care_mark_ids: Iterable[str] = (),
+        route_reason: Optional[str] = None,
     ) -> SpeakerContext:
         recent = await self.repository.recent(stream_id, RECENT_MESSAGE_LIMIT)
         references: List[SpeakerReference] = []
@@ -62,6 +66,7 @@ class ContextBuilder:
         return SpeakerContext(
             tuple(build_speaker_history(recent)),
             tuple(references),
+            route_reason,
         )
 
 
@@ -80,18 +85,42 @@ def build_speaker_history(
     '''Build chronological model history, retaining the newest messages first.'''
     selected: List[ConversationMessage] = []
     used = 0
+    newer: Optional[ConversationMessage] = None
     for message in reversed(messages):
+        if selected and _message_gap_seconds(message, newer) > RECENT_TIME_GAP_SECONDS:
+            break
         rendered = _render(message)
         size = len(rendered)
         if selected and used + size > character_limit:
             break
         selected.append(message)
         used += size
+        newer = message
     selected.reverse()
     return [
         {'role': message.role, 'content': _render(message)}
         for message in selected
     ]
+
+
+def _message_gap_seconds(
+    older: ConversationMessage,
+    newer: Optional[ConversationMessage],
+) -> float:
+    if newer is None:
+        return 0.0
+    older_time = _parse_created_at(older.created_at)
+    newer_time = _parse_created_at(newer.created_at)
+    if older_time is None or newer_time is None:
+        return 0.0
+    return (newer_time - older_time).total_seconds()
+
+
+def _parse_created_at(value: str) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _render(message: ConversationMessage) -> str:

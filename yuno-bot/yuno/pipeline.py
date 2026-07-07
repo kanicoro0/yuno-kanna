@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 CARE_READER_ROUTE_REASONS = frozenset({
     "dm", "mention", "reply_to_yuno", "name_call", "listening_only", "name_seen",
 })
+PASSIVE_CARE_READER_ROUTE_REASONS = frozenset({"listening_only", "name_seen"})
 
 
 @dataclass(frozen=True)
@@ -130,62 +131,72 @@ class ConversationPipeline:
         care_mark_changes: tuple[CareMark, ...] = ()
         if self._should_read_before_speaking(turn):
             state = await self.care_service.current_state(turn.stream_id)
-            request = await self.care_service.build_request(
-                turn.stream_id,
-                turn.content,
-                _addressing_strength(turn.route_reason),
-                cue_salience(turn.content, state.read_cues),
-                state,
-                route_reason=turn.route_reason,
-                reply_mode=turn.reply_mode,
-            )
-            logger.debug(
-                "care_reader called before speech decision stream_id=%s route=%s",
-                turn.stream_id,
-                turn.route_reason,
-            )
-            started = time.monotonic()
-            try:
-                care_result = await self.care_reader.read(request)
-            finally:
-                logger.info(
-                    "timing care_read stream_id=%s phase=pre ms=%.1f",
+            salience = cue_salience(turn.content, state.read_cues)
+            trigger = immediate_care_decision(turn.content, state)
+            if self._requires_care_trigger(turn) and not trigger.run:
+                logger.debug(
+                    "care_reader skipped before speech decision stream_id=%s route=%s reason=%s",
                     turn.stream_id,
-                    _elapsed_ms(started),
+                    turn.route_reason,
+                    trigger.reason,
                 )
-            started = time.monotonic()
-            try:
-                application = await self.care_service.apply(
+            else:
+                request = await self.care_service.build_request(
                     turn.stream_id,
-                    turn.care_source_user_message_id,
-                    care_result,
+                    turn.content,
+                    _addressing_strength(turn.route_reason),
+                    salience,
+                    state,
+                    route_reason=turn.route_reason,
+                    reply_mode=turn.reply_mode,
                 )
-            finally:
-                logger.info(
-                    "timing care_apply stream_id=%s phase=pre ms=%.1f",
+                logger.debug(
+                    "care_reader called before speech decision stream_id=%s route=%s",
                     turn.stream_id,
-                    _elapsed_ms(started),
+                    turn.route_reason,
                 )
-            await self._auto_maintain(turn.stream_id, application)
-            include_care_mark_ids = list(application.include_care_mark_ids)
-            care_mark_changes = application.affected_care_marks
-            pre_care_completed = True
-            logger.debug(
-                "care_reader result stream_id=%s decision=%s speak=%s reason=%s memory=%d attention=%d cues=%d",
-                turn.stream_id,
-                care_result.decision_made,
-                care_result.should_speak,
-                care_result.reply_reason,
-                sum(
-                    item.kind == 'memory'
-                    for item in care_result.care_mark_candidates
-                ),
-                sum(
-                    item.kind == 'attention'
-                    for item in care_result.care_mark_candidates
-                ),
-                len(care_result.read_cue_updates),
-            )
+                started = time.monotonic()
+                try:
+                    care_result = await self.care_reader.read(request)
+                finally:
+                    logger.info(
+                        "timing care_read stream_id=%s phase=pre ms=%.1f",
+                        turn.stream_id,
+                        _elapsed_ms(started),
+                    )
+                started = time.monotonic()
+                try:
+                    application = await self.care_service.apply(
+                        turn.stream_id,
+                        turn.care_source_user_message_id,
+                        care_result,
+                    )
+                finally:
+                    logger.info(
+                        "timing care_apply stream_id=%s phase=pre ms=%.1f",
+                        turn.stream_id,
+                        _elapsed_ms(started),
+                    )
+                await self._auto_maintain(turn.stream_id, application)
+                include_care_mark_ids = list(application.include_care_mark_ids)
+                care_mark_changes = application.affected_care_marks
+                pre_care_completed = True
+                logger.debug(
+                    "care_reader result stream_id=%s decision=%s speak=%s reason=%s memory=%d attention=%d cues=%d",
+                    turn.stream_id,
+                    care_result.decision_made,
+                    care_result.should_speak,
+                    care_result.reply_reason,
+                    sum(
+                        item.kind == 'memory'
+                        for item in care_result.care_mark_candidates
+                    ),
+                    sum(
+                        item.kind == 'attention'
+                        for item in care_result.care_mark_candidates
+                    ),
+                    len(care_result.read_cue_updates),
+                )
 
         should_speak = self._should_speak(turn, care_result)
         logger.debug(
@@ -371,6 +382,9 @@ class ConversationPipeline:
             and self.care_reader is not None
             and self.care_service is not None
         )
+
+    def _requires_care_trigger(self, turn: PipelineTurn) -> bool:
+        return turn.route_reason in PASSIVE_CARE_READER_ROUTE_REASONS
 
     def _should_speak(
         self, turn: PipelineTurn, care_result: CareReadResult

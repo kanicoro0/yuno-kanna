@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import logging
+import time
 from typing import Optional
 
 from yuno.care.models import CareReadResult
@@ -143,12 +144,28 @@ class ConversationPipeline:
                 turn.stream_id,
                 turn.route_reason,
             )
-            care_result = await self.care_reader.read(request)
-            application = await self.care_service.apply(
-                turn.stream_id,
-                turn.care_source_user_message_id,
-                care_result,
-            )
+            started = time.monotonic()
+            try:
+                care_result = await self.care_reader.read(request)
+            finally:
+                logger.info(
+                    "timing care_read stream_id=%s phase=pre ms=%.1f",
+                    turn.stream_id,
+                    _elapsed_ms(started),
+                )
+            started = time.monotonic()
+            try:
+                application = await self.care_service.apply(
+                    turn.stream_id,
+                    turn.care_source_user_message_id,
+                    care_result,
+                )
+            finally:
+                logger.info(
+                    "timing care_apply stream_id=%s phase=pre ms=%.1f",
+                    turn.stream_id,
+                    _elapsed_ms(started),
+                )
             await self._auto_maintain(turn.stream_id, application)
             include_care_mark_ids = list(application.include_care_mark_ids)
             care_mark_changes = application.affected_care_marks
@@ -204,7 +221,15 @@ class ConversationPipeline:
             reply_reason=care_result.reply_reason,
             speaker_note=care_result.speaker_note,
         )
-        reply = await self.speaker.speak(context)
+        started = time.monotonic()
+        try:
+            reply = await self.speaker.speak(context)
+        finally:
+            logger.info(
+                "timing speaker_generation stream_id=%s ms=%.1f",
+                turn.stream_id,
+                _elapsed_ms(started),
+            )
         reply_mode = turn.reply_mode if turn.should_reply else "plain"
         reply_to = (
             turn.reply_to_discord_message_id
@@ -274,12 +299,28 @@ class ConversationPipeline:
             route_reason=ticket.route_reason,
             reply_mode="plain",
         )
-        care_result = await self.care_reader.read(request)
-        application = await self.care_service.apply(
-            ticket.stream_id,
-            ticket.care_source_user_message_id,
-            care_result,
-        )
+        started = time.monotonic()
+        try:
+            care_result = await self.care_reader.read(request)
+        finally:
+            logger.info(
+                "timing care_read stream_id=%s phase=post ms=%.1f",
+                ticket.stream_id,
+                _elapsed_ms(started),
+            )
+        started = time.monotonic()
+        try:
+            application = await self.care_service.apply(
+                ticket.stream_id,
+                ticket.care_source_user_message_id,
+                care_result,
+            )
+        finally:
+            logger.info(
+                "timing care_apply stream_id=%s phase=post ms=%.1f",
+                ticket.stream_id,
+                _elapsed_ms(started),
+            )
         await self._auto_maintain(ticket.stream_id, application)
         logger.debug(
             "post-send care_reader result stream_id=%s memory=%d attention=%d cues=%d",
@@ -303,6 +344,7 @@ class ConversationPipeline:
             return
         if not application.created_care_mark_ids:
             return
+        started = time.monotonic()
         try:
             await self.maintenance_service.auto_close_after_activity(
                 stream_id,
@@ -316,6 +358,12 @@ class ConversationPipeline:
             )
         except Exception:
             logger.exception("automatic care maintenance failed")
+        finally:
+            logger.info(
+                "timing auto_maintenance stream_id=%s ms=%.1f",
+                stream_id,
+                _elapsed_ms(started),
+            )
 
     def _should_read_before_speaking(self, turn: PipelineTurn) -> bool:
         return (
@@ -340,3 +388,7 @@ def _addressing_strength(route_reason: str) -> float:
     if route_reason == "name_seen":
         return 0.3
     return 0.0
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.monotonic() - started) * 1000

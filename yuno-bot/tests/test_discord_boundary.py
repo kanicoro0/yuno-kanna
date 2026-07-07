@@ -323,11 +323,21 @@ class DiscordBoundaryTests(unittest.IsolatedAsyncioTestCase):
         first = RuntimeMessage(100, "ゆの", channel)
         second = RuntimeMessage(101, "どこにいる？", channel)
 
-        first_task = asyncio.create_task(handle_message(bot, first, runtime))
-        await generation_started.wait()
-        await handle_message(bot, second, runtime)
-        release_generation.set()
-        await first_task
+        with self.assertLogs("yuno.discord.events", level="INFO") as captured:
+            first_task = asyncio.create_task(handle_message(bot, first, runtime))
+            await generation_started.wait()
+            await handle_message(bot, second, runtime)
+            release_generation.set()
+            await first_task
+
+        timing_logs = "\n".join(captured.output)
+        self.assertIn("timing intake", timing_logs)
+        self.assertIn("timing turn_selection", timing_logs)
+        self.assertIn("timing stale_generation", timing_logs)
+        self.assertIn("timing discord_send", timing_logs)
+        self.assertIn("timing post_send_observation", timing_logs)
+        self.assertNotIn(first.content, timing_logs)
+        self.assertNotIn(second.content, timing_logs)
 
         self.assertEqual(pipeline.stored, ["100", "101"])
         self.assertEqual(

@@ -13,18 +13,30 @@ from yuno.infra.openai_client import OpenAITextClient
 
 
 CARE_SYSTEM_PROMPT = '''あなたは唯乃（ゆの）のCareReaderです。返答本文や口調指示は書きません。
-同じ場のテキスト会話だけを読み、失くしたくない印、まだ閉じないもの、印へ戻るための弱い語をJSONで返します。
-言われていないこと、心理の断定、幻や連想を事実にしません。迷うmemory候補はdraftにします。
-他人についての伝聞、医療、恋愛、家庭などセンシティブなmemory候補はactiveにしません。
-ReadCueは独立した記憶ではなくCareMarkへ戻るための索引です。ReadCueそのものを返答材料にしません。
-利用できる入力はテキストだけです。画像、写真、添付、音声、外部リンク本文、周囲の様子を読んだ前提で候補を作りません。
-未実装機能が使えることを前提に候補を作りません。
-listening通常発言へ割り込むのは、今この場で本当に一言返したい時だけshould_speak=trueにします。
-JSON fields: wants_to_speak, should_speak,
+同じ場のテキスト会話だけを読み、CareMark、ReadCue、今返すべきかをJSONで返します。
+言われていないことを事実にしません。迷うmemory候補はdraftにします。
+他人についての伝聞やセンシティブなmemory候補はactiveにしません。
+ReadCueはCareMarkへ戻るための索引です。ReadCueそのものを返答材料にしません。
+利用できる入力はテキストだけです。画像、添付、音声、外部リンク本文を読んだ前提で候補を作りません。
+
+発話判断:
+- route_reasonがdm/mention/reply_to_yuno/name_callなら、基本はshould_speak=true。
+- route_reasonがlistening_only/name_seenなら、会話の自然な続き、明確な問いかけ、短い相槌が必要な時だけshould_speak=true。
+- 名前が含まれていても、名前そのものの話題・偶然の文字列・独り言ならshould_speak=false。
+- listening通常発言へ割り込むのは、今この場で本当に一言返したい時だけ。
+
+speaker_noteには、Speakerに渡す短い判断メモだけを書きます。返答本文を書きません。
+reply_reasonは direct_call, mention, reply_to_yuno, followup, casual_reaction, name_topic, overheard_only, none のいずれか。
+JSON fields: wants_to_speak, should_speak, reply_reason, speaker_note,
 care_mark_candidates[{kind,status,text,confidence,sensitive,about_other_person}],
 read_cue_updates[{care_mark_public_id,candidate_text,term,weight}],
 touch_care_mark_ids, include_care_mark_ids。
 kindはmemoryまたはattention。memory statusはdraftまたはactive、attention statusはopenまたはclosedです。'''
+
+_ALLOWED_REPLY_REASONS = {
+    'direct_call', 'mention', 'reply_to_yuno', 'followup', 'casual_reaction',
+    'name_topic', 'overheard_only', 'none',
+}
 
 
 class CareReader:
@@ -80,9 +92,14 @@ def parse_care_result(data: Any) -> CareReadResult:
                 candidate_text=candidate_text,
             ))
 
+    reply_reason = str(data.get('reply_reason', '')).strip()[:40]
+    if reply_reason not in _ALLOWED_REPLY_REASONS:
+        reply_reason = ''
     return CareReadResult(
         wants_to_speak=_flag(data.get('wants_to_speak')),
         should_speak=_flag(data.get('should_speak')),
+        reply_reason=reply_reason,
+        speaker_note=str(data.get('speaker_note', '')).strip()[:300],
         care_mark_candidates=tuple(candidates),
         read_cue_updates=tuple(cue_updates),
         touch_care_mark_ids=_ids(data.get('touch_care_mark_ids'), 8),

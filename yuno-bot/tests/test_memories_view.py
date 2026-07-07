@@ -28,7 +28,6 @@ def mark(public_id='care_0001', kind='memory', status='active', text='残して�
         kind=kind,
         status=status,
         text=text,
-        confidence=0.5,
         created_at='now',
         updated_at='now',
     )
@@ -103,9 +102,9 @@ class FakeService:
                 kind=mark.kind,
                 status=status,
                 text=mark.text,
-                confidence=mark.confidence,
                 created_at=mark.created_at,
                 updated_at='changed',
+                last_touched_at=mark.last_touched_at,
             )
             for mark in self.marks
         )

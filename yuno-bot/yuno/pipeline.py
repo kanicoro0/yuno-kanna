@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from typing import Optional
 
@@ -8,6 +8,7 @@ from yuno.care.reader import CareReader
 from yuno.care.service import (
     CareApplication,
     CareService,
+    cue_salience,
     immediate_care_decision,
 )
 from yuno.care_marks.models import CareMark
@@ -21,7 +22,9 @@ from yuno.turns import PipelineTurn
 
 
 logger = logging.getLogger(__name__)
-OBSERVATION_ROUTE_REASONS = frozenset({"listening_only", "name_seen"})
+CARE_READER_ROUTE_REASONS = frozenset({
+    "dm", "mention", "reply_to_yuno", "name_call", "listening_only", "name_seen",
+})
 
 
 @dataclass(frozen=True)
@@ -119,73 +122,66 @@ class ConversationPipeline:
         )
 
     async def process_turn(self, turn: PipelineTurn) -> PipelineResult:
-        """Run existing CareReader/Speaker behavior for an already stored turn."""
+        """Run CareReader, then Speaker only when this turn should speak."""
         care_result = CareReadResult()
         include_care_mark_ids = []
         pre_care_completed = False
         care_mark_changes: tuple[CareMark, ...] = ()
         if (
-            turn.route_reason in OBSERVATION_ROUTE_REASONS
+            turn.route_reason in CARE_READER_ROUTE_REASONS
             and self.care_reader
             and self.care_service
         ):
             state = await self.care_service.current_state(turn.stream_id)
-            decision = immediate_care_decision(turn.content, state)
-            if decision.run:
-                logger.debug(
-                    "care_reader called before send stream_id=%s reason=%s",
-                    turn.stream_id,
-                    decision.reason,
-                )
-                request = await self.care_service.build_request(
-                    turn.stream_id,
-                    turn.content,
-                    0.0,
-                    decision.cue_salience,
-                    state,
-                )
-                care_result = await self.care_reader.read(request)
-                application = await self.care_service.apply(
-                    turn.stream_id,
-                    turn.care_source_user_message_id,
-                    care_result,
-                )
-                await self._auto_maintain(turn.stream_id, application)
-                include_care_mark_ids = list(
-                    application.include_care_mark_ids
-                )
-                care_mark_changes = application.affected_care_marks
-                pre_care_completed = True
-                logger.debug(
-                    "care_reader result stream_id=%s memory=%d attention=%d cues=%d",
-                    turn.stream_id,
-                    sum(
-                        item.kind == 'memory'
-                        for item in care_result.care_mark_candidates
-                    ),
-                    sum(
-                        item.kind == 'attention'
-                        for item in care_result.care_mark_candidates
-                    ),
-                    len(care_result.read_cue_updates),
-                )
-            else:
-                logger.debug(
-                    "care_reader skipped stream_id=%s reason=%s",
-                    turn.stream_id,
-                    decision.reason,
-                )
+            request = await self.care_service.build_request(
+                turn.stream_id,
+                turn.content,
+                _addressing_strength(turn.route_reason),
+                cue_salience(turn.content, state.read_cues),
+                state,
+            )
+            request = replace(
+                request,
+                route_reason=turn.route_reason,
+                reply_mode=turn.reply_mode,
+            )
+            logger.debug(
+                "care_reader called before speech decision stream_id=%s route=%s",
+                turn.stream_id,
+                turn.route_reason,
+            )
+            care_result = await self.care_reader.read(request)
+            application = await self.care_service.apply(
+                turn.stream_id,
+                turn.care_source_user_message_id,
+                care_result,
+            )
+            await self._auto_maintain(turn.stream_id, application)
+            include_care_mark_ids = list(application.include_care_mark_ids)
+            care_mark_changes = application.affected_care_marks
+            pre_care_completed = True
+            logger.debug(
+                "care_reader result stream_id=%s speak=%s reason=%s memory=%d attention=%d cues=%d",
+                turn.stream_id,
+                care_result.should_speak,
+                care_result.reply_reason,
+                sum(
+                    item.kind == 'memory'
+                    for item in care_result.care_mark_candidates
+                ),
+                sum(
+                    item.kind == 'attention'
+                    for item in care_result.care_mark_candidates
+                ),
+                len(care_result.read_cue_updates),
+            )
 
-        listening_should_speak = (
-            turn.route_reason == "listening_only"
-            and care_result.wants_to_speak
-            and care_result.should_speak
-        )
+        care_reader_should_speak = care_result.should_speak
         logger.debug(
-            "listening speech decision stream_id=%s should_speak=%s",
-            turn.stream_id, listening_should_speak,
+            "speech decision stream_id=%s route_reply=%s care_reply=%s",
+            turn.stream_id, turn.should_reply, care_reader_should_speak,
         )
-        should_speak = turn.should_reply or listening_should_speak
+        should_speak = turn.should_reply or care_reader_should_speak
         if not should_speak:
             return PipelineResult(
                 False,
@@ -201,11 +197,16 @@ class ConversationPipeline:
             selection = await self.reference_selector.select(
                 turn.stream_id, turn.content
             )
-            care_mark_ids = list(selection.care_mark_ids)
+            care_mark_ids = list(dict.fromkeys((
+                *care_mark_ids,
+                *selection.care_mark_ids,
+            )))
         context = await self.context_builder.build(
             turn.stream_id,
             care_mark_ids,
             route_reason=turn.route_reason,
+            reply_reason=care_result.reply_reason,
+            speaker_note=care_result.speaker_note,
         )
         reply = await self.speaker.speak(context)
         reply_mode = turn.reply_mode if turn.should_reply else "plain"
@@ -275,6 +276,11 @@ class ConversationPipeline:
             decision.cue_salience,
             state,
         )
+        request = replace(
+            request,
+            route_reason=ticket.route_reason,
+            reply_mode="plain",
+        )
         care_result = await self.care_reader.read(request)
         application = await self.care_service.apply(
             ticket.stream_id,
@@ -313,3 +319,13 @@ class ConversationPipeline:
             )
         except Exception:
             logger.exception("automatic care maintenance failed")
+
+
+def _addressing_strength(route_reason: str) -> float:
+    if route_reason in {"dm", "mention", "reply_to_yuno"}:
+        return 1.0
+    if route_reason == "name_call":
+        return 0.8
+    if route_reason == "name_seen":
+        return 0.3
+    return 0.0

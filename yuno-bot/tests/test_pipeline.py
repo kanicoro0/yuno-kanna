@@ -2,6 +2,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from yuno.care.models import CareReadRequest, CareReadResult
+from yuno.care.service import CareApplication
 from yuno.config import Settings
 from yuno.conversation.context import ContextBuilder, SpeakerContext
 from yuno.conversation.repository import ConversationRepository
@@ -17,7 +19,42 @@ class RecordingSpeaker:
 
     async def speak(self, context: SpeakerContext) -> str:
         self.contexts.append(context)
-        return "自然な返事"
+        return "natural reply"
+
+
+class FakeCareReader:
+    def __init__(self, result: CareReadResult):
+        self.result = result
+        self.requests = []
+
+    async def read(self, request: CareReadRequest) -> CareReadResult:
+        self.requests.append(request)
+        return self.result
+
+
+class FakeCareService:
+    async def current_state(self, stream_id):
+        return type("State", (), {"care_marks": (), "read_cues": ()})()
+
+    async def build_request(
+        self,
+        stream_id,
+        current_message,
+        addressing_strength,
+        cue_salience_value,
+        state,
+    ):
+        return CareReadRequest(
+            current_message=current_message,
+            recent_messages=(),
+            care_marks=(),
+            read_cues=(),
+            addressing_strength=addressing_strength,
+            cue_salience=cue_salience_value,
+        )
+
+    async def apply(self, stream_id, source_message_id, result):
+        return CareApplication()
 
 
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
@@ -66,7 +103,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             discord_guild_id=guild_id,
             stream_kind="dm" if guild_id is None else "channel",
             author_id="7",
-            author_name="こはる",
+            author_name="koharu",
             author_is_bot=author_is_bot,
             bot_user_id="99",
             mentions_bot=mention,
@@ -77,7 +114,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ignored_message_is_not_stored(self) -> None:
         result = await self.pipeline.process(
-            self.incoming("1", "対象外", channel_id="20")
+            self.incoming("1", "outside", channel_id="20")
         )
         self.assertFalse(result.should_send)
         self.assertIsNone(result.stream_id)
@@ -98,21 +135,21 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["count"], 0)
 
     async def test_single_dm_is_stored_then_processed_as_one_turn(self) -> None:
-        incoming = self.incoming("dm-1", "DMで話そう", channel_id="30", guild_id=None)
+        incoming = self.incoming("dm-1", "talk in dm", channel_id="30", guild_id=None)
 
         turn = await self.pipeline.intake(incoming)
 
         self.assertIsNotNone(turn)
         stored = await self.repository.find_by_discord_message_id("dm-1")
         self.assertEqual(turn.source_user_message_ids, (stored.id,))
-        self.assertEqual(turn.content, "DMで話そう")
+        self.assertEqual(turn.content, "talk in dm")
         result = await self.pipeline.process_turn(turn)
         self.assertTrue(result.should_send)
         self.assertEqual(result.reply_mode, "plain")
 
     async def test_turn_uses_stored_content_without_route_metadata(self) -> None:
         turn = await self.pipeline.intake(
-            self.incoming("turn-1", "<@99> 続けよう", mention=True)
+            self.incoming("turn-1", "<@99> continue", mention=True)
         )
 
         stored = await self.repository.find_by_discord_message_id("turn-1")
@@ -123,48 +160,53 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.should_send)
         self.assertEqual(result.reply_mode, "discord_reply")
         self.assertEqual(self.speaker.contexts[-1].route_reason, "mention")
-        self.assertIn("続けよう", rendered)
+        self.assertIn("continue", rendered)
         self.assertNotIn("mention", rendered)
         self.assertNotIn("discord_reply", rendered)
 
     async def test_reply_to_yuno_still_uses_discord_reply(self) -> None:
         stream = await self.repository.get_or_create_stream("channel", "10", "1")
         await self.repository.append(
-            stream.id, "yuno-1", "assistant", "99", "ゆの", "前の返事"
+            stream.id, "yuno-1", "assistant", "99", "yuno", "previous reply"
         )
 
         result = await self.pipeline.process(
-            self.incoming("reply-1", "続き", reply_to="yuno-1")
+            self.incoming("reply-1", "continue", reply_to="yuno-1")
         )
 
         self.assertTrue(result.should_send)
         self.assertEqual(result.reply_mode, "discord_reply")
         self.assertEqual(result.reply_to_discord_message_id, "reply-1")
 
-    async def test_recent_yuno_followup_can_reply_without_mention(self) -> None:
-        stream = await self.repository.get_or_create_stream("channel", "10", "1")
-        await self.repository.append(
-            stream.id,
-            "yuno-recent",
-            "assistant",
-            "99",
-            "ゆの",
-            "いるよ",
-            created_at="2026-01-01T15:14:00+00:00",
+    async def test_care_reader_can_enable_plain_listening_reply(self) -> None:
+        care_reader = FakeCareReader(CareReadResult(
+            should_speak=True,
+            reply_reason="followup",
+            speaker_note="plain listening followup",
+        ))
+        pipeline = ConversationPipeline(
+            MessageRouter(self.settings, self.repository),
+            self.repository,
+            ContextBuilder(self.repository),
+            self.speaker,
+            care_reader=care_reader,
+            care_service=FakeCareService(),
         )
 
-        result = await self.pipeline.process(self.incoming(
-            "followup",
-            "メンションなしでも返信できる？",
-            created_at="2026-01-01T15:15:00+00:00",
-        ))
+        result = await pipeline.process(self.incoming("followup", "plain followup?"))
 
         self.assertTrue(result.should_send)
         self.assertEqual(result.reply_mode, "plain")
-        self.assertEqual(self.speaker.contexts[-1].route_reason, "recent_yuno_followup")
+        self.assertEqual(care_reader.requests[-1].route_reason, "listening_only")
+        self.assertEqual(self.speaker.contexts[-1].route_reason, "listening_only")
+        self.assertEqual(self.speaker.contexts[-1].reply_reason, "followup")
+        self.assertEqual(
+            self.speaker.contexts[-1].speaker_note,
+            "plain listening followup",
+        )
 
     async def test_listening_message_is_saved_without_speaker(self) -> None:
-        result = await self.pipeline.process(self.incoming("1", "近くの会話"))
+        result = await self.pipeline.process(self.incoming("1", "nearby talk"))
         self.assertFalse(result.should_send)
         self.assertIsNotNone(result.stream_id)
         self.assertEqual(await self.repository.count_messages(result.stream_id), 1)
@@ -179,7 +221,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reply_generation_does_not_save_assistant_before_send(self) -> None:
         result = await self.pipeline.process(
-            self.incoming("1", "<@99> 話そう", mention=True)
+            self.incoming("1", "<@99> talk", mention=True)
         )
         self.assertTrue(result.should_send)
         self.assertEqual(result.reply_mode, "discord_reply")
@@ -189,7 +231,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
         await self.pipeline.record_sent_assistant(
             result,
-            SentMessage("2", "99", "ゆの", result.reply_text, "2026-01-01T00:00:01+00:00"),
+            SentMessage("2", "99", "yuno", result.reply_text, "2026-01-01T00:00:01+00:00"),
         )
         self.assertEqual(await self.repository.count_messages(result.stream_id), 2)
         self.assertTrue(await self.repository.is_assistant_message("2"))
@@ -197,45 +239,44 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_context_contains_only_same_stream_and_no_route_metadata(self) -> None:
         other = await self.repository.get_or_create_stream("channel", "20", "1")
         dm = await self.repository.get_or_create_stream("dm", "30", None)
-        await self.repository.append(other.id, "other", "user", "8", "A", "別channel")
-        await self.repository.append(dm.id, "private", "user", "7", "A", "DMの秘密")
+        await self.repository.append(other.id, "other", "user", "8", "A", "other channel")
+        await self.repository.append(dm.id, "private", "user", "7", "A", "dm secret")
 
-        await self.pipeline.process(self.incoming("1", "ふつうの前置き"))
-        await self.pipeline.process(self.incoming("2", "<@99> 続けよう", mention=True))
+        await self.pipeline.process(self.incoming("1", "normal preface"))
+        await self.pipeline.process(self.incoming("2", "<@99> continue", mention=True))
         history = self.speaker.contexts[-1].history
         rendered = "\n".join(item["content"] for item in history)
 
-        self.assertIn("ふつうの前置き", rendered)
-        self.assertIn("続けよう", rendered)
-        self.assertNotIn("別channel", rendered)
-        self.assertNotIn("DMの秘密", rendered)
+        self.assertIn("normal preface", rendered)
+        self.assertIn("continue", rendered)
+        self.assertNotIn("other channel", rendered)
+        self.assertNotIn("dm secret", rendered)
         self.assertNotIn("mention", rendered)
         self.assertNotIn("discord_reply", rendered)
-        self.assertNotIn("呼びかけられた", rendered)
 
     async def test_directed_context_uses_only_six_recent_messages(self) -> None:
         for index in range(7):
-            await self.pipeline.process(self.incoming(str(index), f"近くの会話{index}"))
+            await self.pipeline.process(self.incoming(str(index), f"nearby {index}"))
         await self.pipeline.process(
-            self.incoming("directed", "<@99> いまの話", mention=True)
+            self.incoming("directed", "<@99> current", mention=True)
         )
         history = self.speaker.contexts[-1].history
         self.assertEqual(len(history), 6)
-        self.assertNotIn("近くの会話0", str(history))
-        self.assertIn("いまの話", str(history))
+        self.assertNotIn("nearby 0", str(history))
+        self.assertIn("current", str(history))
 
     async def test_directed_context_drops_messages_before_long_gap(self) -> None:
         await self.pipeline.process(self.incoming(
-            "old", "3時の話", created_at="2026-01-01T03:00:00+00:00"
+            "old", "old topic", created_at="2026-01-01T03:00:00+00:00"
         ))
         await self.pipeline.process(self.incoming(
-            "new", "<@99> 12時の話", mention=True,
+            "new", "<@99> current topic", mention=True,
             created_at="2026-01-01T12:07:00+00:00",
         ))
         rendered = str(self.speaker.contexts[-1].history)
 
-        self.assertNotIn("3時の話", rendered)
-        self.assertIn("12時の話", rendered)
+        self.assertNotIn("old topic", rendered)
+        self.assertIn("current topic", rendered)
 
 
 if __name__ == "__main__":

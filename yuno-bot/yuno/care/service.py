@@ -79,6 +79,8 @@ class CareService:
         addressing_strength: float,
         cue_salience_value: float,
         state: CareState,
+        route_reason: str = '',
+        reply_mode: str = 'none',
     ) -> CareReadRequest:
         recent = await self.conversations.recent(stream_id, 8)
         public_ids = {mark.id: mark.public_id for mark in state.care_marks}
@@ -99,6 +101,8 @@ class CareService:
             } for cue in state.read_cues if cue.care_mark_id in public_ids),
             addressing_strength=max(0.0, min(1.0, addressing_strength)),
             cue_salience=max(0.0, min(0.7, cue_salience_value)),
+            route_reason=route_reason,
+            reply_mode=reply_mode,
         )
 
     async def apply(

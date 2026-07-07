@@ -1,4 +1,4 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import logging
 from typing import Optional
 
@@ -122,16 +122,12 @@ class ConversationPipeline:
         )
 
     async def process_turn(self, turn: PipelineTurn) -> PipelineResult:
-        """Run CareReader, then Speaker only when this turn should speak."""
+        """Read the turn, then call Speaker only when the final decision speaks."""
         care_result = CareReadResult()
         include_care_mark_ids = []
         pre_care_completed = False
         care_mark_changes: tuple[CareMark, ...] = ()
-        if (
-            turn.route_reason in CARE_READER_ROUTE_REASONS
-            and self.care_reader
-            and self.care_service
-        ):
+        if self._should_read_before_speaking(turn):
             state = await self.care_service.current_state(turn.stream_id)
             request = await self.care_service.build_request(
                 turn.stream_id,
@@ -139,9 +135,6 @@ class ConversationPipeline:
                 _addressing_strength(turn.route_reason),
                 cue_salience(turn.content, state.read_cues),
                 state,
-            )
-            request = replace(
-                request,
                 route_reason=turn.route_reason,
                 reply_mode=turn.reply_mode,
             )
@@ -161,8 +154,9 @@ class ConversationPipeline:
             care_mark_changes = application.affected_care_marks
             pre_care_completed = True
             logger.debug(
-                "care_reader result stream_id=%s speak=%s reason=%s memory=%d attention=%d cues=%d",
+                "care_reader result stream_id=%s decision=%s speak=%s reason=%s memory=%d attention=%d cues=%d",
                 turn.stream_id,
+                care_result.decision_made,
                 care_result.should_speak,
                 care_result.reply_reason,
                 sum(
@@ -176,12 +170,14 @@ class ConversationPipeline:
                 len(care_result.read_cue_updates),
             )
 
-        care_reader_should_speak = care_result.should_speak
+        should_speak = self._should_speak(turn, care_result)
         logger.debug(
-            "speech decision stream_id=%s route_reply=%s care_reply=%s",
-            turn.stream_id, turn.should_reply, care_reader_should_speak,
+            "speech decision stream_id=%s route_reply=%s care_decision=%s should_speak=%s",
+            turn.stream_id,
+            turn.should_reply,
+            care_result.decision_made,
+            should_speak,
         )
-        should_speak = turn.should_reply or care_reader_should_speak
         if not should_speak:
             return PipelineResult(
                 False,
@@ -193,7 +189,7 @@ class ConversationPipeline:
             )
 
         care_mark_ids = include_care_mark_ids
-        if turn.should_reply and self.reference_selector:
+        if self.reference_selector:
             selection = await self.reference_selector.select(
                 turn.stream_id, turn.content
             )
@@ -275,9 +271,6 @@ class ConversationPipeline:
             1.0,
             decision.cue_salience,
             state,
-        )
-        request = replace(
-            request,
             route_reason=ticket.route_reason,
             reply_mode="plain",
         )
@@ -319,6 +312,20 @@ class ConversationPipeline:
             )
         except Exception:
             logger.exception("automatic care maintenance failed")
+
+    def _should_read_before_speaking(self, turn: PipelineTurn) -> bool:
+        return (
+            turn.route_reason in CARE_READER_ROUTE_REASONS
+            and self.care_reader is not None
+            and self.care_service is not None
+        )
+
+    def _should_speak(
+        self, turn: PipelineTurn, care_result: CareReadResult
+    ) -> bool:
+        if care_result.decision_made:
+            return care_result.should_speak
+        return turn.should_reply
 
 
 def _addressing_strength(route_reason: str) -> float:

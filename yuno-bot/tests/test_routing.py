@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 from yuno.config import Settings
-from yuno.discord.routing import MessageRouter, contains_call_name
+from yuno.discord.routing import MessageRouter, call_name_strength, contains_call_name
 from yuno.messages import IncomingMessage
 
 
@@ -89,14 +89,22 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(user_reply.should_reply)
         self.assertEqual(missing_reply.reason, "ignored")
 
-    async def test_call_names_reply_plain_only_in_listening_channel(self) -> None:
-        for value in ("ゆの", "ゆの、聞いて", "ゆのちゃん", "ねえゆの", "yuno", "唯乃"):
+    async def test_direct_call_names_reply_plain_only_in_listening_channel(self) -> None:
+        for value in ("ゆの", "ゆの、聞いて", "ゆのちゃん", "ねえゆの", "ゆのおはよ", "yuno", "唯乃"):
             with self.subTest(value=value):
                 route = await self.route(incoming(value), channel_ids={10})
                 self.assertEqual((route.reason, route.reply_mode), ("name_call", "plain"))
                 self.assertTrue(route.should_reply)
         outside = await self.route(incoming("ねえゆの"))
         self.assertEqual(outside.reason, "ignored")
+
+    async def test_weak_name_matches_are_read_without_immediate_reply(self) -> None:
+        for value in ("しょうゆの作り方", "ゆのかわいい", "ゆのって名前いいよね"):
+            with self.subTest(value=value):
+                route = await self.route(incoming(value), channel_ids={10})
+                self.assertTrue(route.should_store)
+                self.assertFalse(route.should_reply)
+                self.assertEqual((route.reason, route.reply_mode), ("name_seen", "none"))
 
     async def test_listening_normal_message_is_store_only(self) -> None:
         route = await self.route(incoming("近くの会話"), channel_ids={10})
@@ -109,6 +117,12 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         bot = await self.route(incoming("ゆの", author_is_bot=True), channel_ids={10})
         self.assertFalse(outside.should_store)
         self.assertFalse(bot.should_store)
+
+    def test_call_name_strength_distinguishes_direct_and_weak_calls(self) -> None:
+        self.assertEqual(call_name_strength("ゆの、おはよ", ("ゆの",)), "direct")
+        self.assertEqual(call_name_strength("しょうゆの作り方", ("ゆの",)), "weak")
+        self.assertEqual(call_name_strength("ゆのかわいい", ("ゆの",)), "weak")
+        self.assertIsNone(call_name_strength("近くの会話", ("ゆの",)))
 
     def test_latin_call_name_does_not_match_longer_word(self) -> None:
         self.assertTrue(contains_call_name("hey yuno!", ("yuno",)))

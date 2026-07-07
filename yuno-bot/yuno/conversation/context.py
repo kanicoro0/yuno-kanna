@@ -26,6 +26,8 @@ class SpeakerContext:
     history: Tuple[Dict[str, str], ...]
     references: Tuple[SpeakerReference, ...] = ()
     route_reason: Optional[str] = None
+    reply_reason: str = ''
+    speaker_note: str = ''
 
 
 class ContextBuilder:
@@ -44,6 +46,8 @@ class ContextBuilder:
         stream_id: int,
         include_care_mark_ids: Iterable[str] = (),
         route_reason: Optional[str] = None,
+        reply_reason: str = '',
+        speaker_note: str = '',
     ) -> SpeakerContext:
         recent = await self.repository.recent(stream_id, RECENT_MESSAGE_LIMIT)
         references: List[SpeakerReference] = []
@@ -67,6 +71,8 @@ class ContextBuilder:
             tuple(build_speaker_history(recent)),
             tuple(references),
             route_reason,
+            reply_reason,
+            speaker_note,
         )
 
 

@@ -36,6 +36,6 @@ class RuntimePathTests(unittest.IsolatedAsyncioTestCase):
         root_ignore = (PROJECT_ROOT.parent / ".gitignore").read_text(encoding="utf-8")
         local_ignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("/data/", root_ignore)
-        self.assertIn("yuno-bot-v2.0/data/", root_ignore)
+        self.assertIn("yuno-bot/data/", root_ignore)
         for pattern in ("*.sqlite3", "*.sqlite3-shm", "*.sqlite3-wal", "*.db", ".env"):
             self.assertTrue(pattern in root_ignore or pattern in local_ignore)

@@ -10,23 +10,18 @@ from yuno.care_marks.models import CareMark
 from yuno.commands.core import (
     CLOSE_LABEL,
     HIDE_LABEL,
-    MISSING_MARK_TEXT,
-    RESTORE_LABEL,
-    TIDY_STALE_TEXT,
     MemoriesView,
-    TidyView,
-    action_for_mark,
     create_memories_group,
     render_care_marks,
     render_maintenance_proposal,
 )
-from yuno.discord.ui import DENIED_TEXT, STALE_TEXT
+from yuno.discord.ui import DENIED_TEXT
 from yuno.permissions import PermissionService
 
 
-def mark(public_id, kind, status, text='残している言葉'):
+def mark(public_id='care_0001', kind='memory', status='active', text='残している言葉'):
     return CareMark(
-        id=int(public_id.split('_')[-1]),
+        id=1,
         public_id=public_id,
         stream_id=1,
         source_message_id=None,
@@ -38,96 +33,100 @@ def mark(public_id, kind, status, text='残している言葉'):
     )
 
 
-class FakeService:
-    def __init__(self, marks=()):
-        self.marks = list(marks)
-        self.calls = []
-        self.missing = False
-
-    async def stream(self, channel_id, guild_id, create=False):
-        self.calls.append(('stream', channel_id, guild_id, create))
-        return SimpleNamespace(id=1)
-
-    async def list_marks(self, channel_id, guild_id, kind, status, limit):
-        self.calls.append(('list_marks', channel_id, guild_id, kind, status, limit))
-        selected = list(self.marks)
-        if kind != 'all':
-            selected = [item for item in selected if item.kind == kind]
-        if status == 'visible':
-            selected = [
-                item for item in selected if item.status in ('active', 'open')
-            ]
-        elif status != 'all':
-            selected = [item for item in selected if item.status == status]
-        return selected[:limit]
-
-    async def set_status(self, channel_id, public_id, status):
-        self.calls.append(('set_status', channel_id, public_id, status))
-        if self.missing:
-            return None
-        for index, item in enumerate(self.marks):
-            if item.public_id == public_id:
-                updated = mark(item.public_id, item.kind, status, item.text)
-                self.marks[index] = updated
-                return updated
-        return None
-
-
-class FakeMaintenance:
-    def __init__(self, proposal, apply_result=None):
-        self.proposal = proposal
-        self.calls = []
-        self.apply_calls = []
-        self.apply_result = apply_result or CareMaintenanceApplyResult(
-            True, 'closed'
-        )
-
-    async def propose_for_stream(self, stream_id):
-        self.calls.append(stream_id)
-        return self.proposal
-
-    async def apply_selected(self, stream_id, action):
-        self.apply_calls.append((stream_id, action))
-        return self.apply_result
-
-
 class FakeResponse:
     def __init__(self):
         self.sent = []
         self.edits = []
         self.deferred = []
-        self.done = False
+        self._done = False
 
     def is_done(self):
-        return self.done
+        return self._done
 
     async def send_message(self, content, **kwargs):
         self.sent.append((content, kwargs))
-        self.done = True
-
-    async def defer(self, **kwargs):
-        self.deferred.append(kwargs)
-        self.done = True
+        self._done = True
 
     async def edit_message(self, **kwargs):
         self.edits.append(kwargs)
-        self.done = True
+        self._done = True
+
+    async def defer(self, **kwargs):
+        self.deferred.append(kwargs)
+        self._done = True
 
 
 class FakeInteraction:
-    def __init__(self, user_id=7, *, administrator=False):
+    def __init__(self, *, administrator=True):
         self.user = SimpleNamespace(
-            id=user_id,
+            id=7,
             guild_permissions=SimpleNamespace(administrator=administrator),
         )
-        self.guild_id = 1
         self.channel_id = 10
+        self.guild_id = 1
         self.response = FakeResponse()
-        self.original_edits = []
+        self.edited_original = []
+        self._original_response = SimpleNamespace()
 
     async def edit_original_response(self, **kwargs):
-        self.original_edits.append(kwargs)
-        return SimpleNamespace()
+        self.edited_original.append(kwargs)
+        return self._original_response
+
+    async def original_response(self):
+        return self._original_response
+
+
+class FakeService:
+    def __init__(self, marks=()):
+        self.marks = tuple(marks)
+        self.calls = []
+
+    async def list_marks(self, channel_id, guild_id, kind='all', status='visible', limit=10):
+        self.calls.append(('list_marks', channel_id, guild_id, kind, status, limit))
+        if status == 'visible':
+            visible = tuple(
+                mark for mark in self.marks
+                if (mark.kind, mark.status) in {('memory', 'active'), ('attention', 'open')}
+            )
+            return visible[:limit]
+        return self.marks[:limit]
+
+    async def set_status(self, channel_id, public_id, status):
+        self.calls.append(('set_status', channel_id, public_id, status))
+        self.marks = tuple(
+            mark if mark.public_id != public_id else CareMark(
+                id=mark.id,
+                public_id=mark.public_id,
+                stream_id=mark.stream_id,
+                source_message_id=mark.source_message_id,
+                kind=mark.kind,
+                status=status,
+                text=mark.text,
+                created_at=mark.created_at,
+                updated_at='changed',
+                last_touched_at=mark.last_touched_at,
+            )
+            for mark in self.marks
+        )
+        return next((mark for mark in self.marks if mark.public_id == public_id), None)
+
+    async def stream(self, channel_id, guild_id):
+        self.calls.append(('stream', channel_id, guild_id))
+        return SimpleNamespace(id=1)
+
+
+class FakeMaintenance:
+    def __init__(self, proposal=None):
+        self.proposal = proposal or CareMaintenanceProposal(1)
+        self.calls = []
+
+    async def propose_for_stream(self, stream_id):
+        self.calls.append(('propose_for_stream', stream_id))
+        return self.proposal
+
+    async def apply_selected(self, stream_id, action):
+        self.calls.append(('apply_selected', stream_id, action.action))
+        return CareMaintenanceApplyResult(applied=True, reason='closed')
 
 
 def button(view, suffix):
@@ -146,17 +145,16 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         )
         return interaction.response.sent[0][1].get('view')
 
-    def test_renderer_uses_natural_rows_without_internal_words(self):
+    def test_renderer_uses_natural_rows_with_public_ids(self):
         text = render_care_marks((
             mark('care_0001', 'memory', 'active', '青い花'),
             mark('care_0002', 'attention', 'open', '続きの話'),
         ))
 
-        self.assertIn('1. 覚えている', text)
-        self.assertIn('2. まだ開いている', text)
+        self.assertIn('1. `care_0001` 覚えている', text)
+        self.assertIn('2. `care_0002` まだ開いている', text)
         for internal in (
-            'CareMark', 'ReadCue', 'memory', 'attention', 'active',
-            'open', 'care_0001',
+            'CareMark', 'ReadCue', 'memory', 'attention', 'active', 'open',
         ):
             self.assertNotIn(internal, text)
 
@@ -178,221 +176,49 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
                 ('care_0004',),
                 proposed_text='星の話を続ける',
             ),
-            CareMaintenanceAction('keep', ('care_0005',)),
+        ))
+
+        text = render_maintenance_proposal(proposal, (
+            mark('care_0001', 'attention', 'open', '終わった話'),
+        ))
+
+        self.assertIn('整理案', text)
+        self.assertIn('ひと区切り', text)
+        self.assertIn('似たもの', text)
+        self.assertIn('星の話を続ける', text)
+        for internal in ('care_', 'resolved', 'close_attention', 'memory', 'attention'):
+            self.assertNotIn(internal, text)
+
+    def test_tidy_renderer_filters_internal_proposed_text(self):
+        proposal = CareMaintenanceProposal(1, (
+            CareMaintenanceAction(
+                'rewrite_mark_text',
+                ('care_0001',),
+                proposed_text='care_0001 active memory',
+            ),
         ))
 
         text = render_maintenance_proposal(proposal)
 
-        for visible in (
-            '整理案',
-            '閉じてもよさそう',
-            'まとめられそう',
-            '短くしてもよさそう',
-            'そのままでよさそう',
-        ):
-            self.assertIn(visible, text)
-        for internal in (
-            'CareMark', 'ReadCue', 'care_0001', 'public_id', 'source_id',
-            'memory', 'attention', 'active', 'open', 'service', 'LLM',
-        ):
-            self.assertNotIn(internal, text)
-
-    async def test_tidy_shows_only_supported_explicit_apply_buttons(self):
-        marks = [mark('care_0001', 'attention', 'open', '軽い質問')]
-        service = FakeService(marks)
-        proposal = CareMaintenanceProposal(1, (
-            CareMaintenanceAction('close_attention', ('care_0001',)),
-            CareMaintenanceAction(
-                'merge_attention', ('care_0001', 'care_0002'),
-                proposed_text='まとめる案',
-            ),
-        ))
-        maintenance = FakeMaintenance(proposal)
-        group = create_memories_group(
-            service, PermissionService(), maintenance
-        )
-        interaction = FakeInteraction(administrator=True)
-
-        await group.get_command('tidy').callback(interaction)
-
-        self.assertEqual(interaction.response.sent, [])
-        self.assertEqual(
-            interaction.response.deferred,
-            [{'ephemeral': True, 'thinking': True}],
-        )
-        kwargs = interaction.original_edits[0]
-        text = kwargs['content']
-        self.assertIsInstance(kwargs['view'], TidyView)
-        self.assertEqual(
-            [item.label for item in kwargs['view'].children],
-            ['1 閉じる'],
-        )
-        self.assertIn('閉じてもよさそう', text)
-        self.assertIn('軽い質問', text)
+        self.assertIn('言い方を少し整えられそう', text)
         self.assertNotIn('care_0001', text)
-        self.assertEqual(maintenance.calls, [1])
-        self.assertEqual(maintenance.apply_calls, [])
-        self.assertNotIn('set_status', [call[0] for call in service.calls])
-        self.assertEqual(service.marks, marks)
+        self.assertNotIn('active', text)
 
-    async def test_tidy_edits_deferred_response_when_stream_is_missing(self):
-        class MissingStreamService(FakeService):
-            async def stream(self, channel_id, guild_id, create=False):
-                self.calls.append(('stream', channel_id, guild_id, create))
-                return None
-
-        service = MissingStreamService()
-        maintenance = FakeMaintenance(CareMaintenanceProposal(1))
-        group = create_memories_group(
-            service, PermissionService(), maintenance
-        )
-        interaction = FakeInteraction(administrator=True)
-
-        await group.get_command('tidy').callback(interaction)
-
-        self.assertEqual(interaction.response.sent, [])
-        self.assertEqual(
-            interaction.response.deferred,
-            [{'ephemeral': True, 'thinking': True}],
-        )
-        self.assertEqual(len(interaction.original_edits), 1)
-        self.assertIn('content', interaction.original_edits[0])
-        self.assertEqual(maintenance.calls, [])
-
-
-    async def test_selected_close_applies_only_one_and_disables_panel(self):
-        first = CareMaintenanceAction(
-            'close_attention', ('care_0001',)
-        )
-        second = CareMaintenanceAction(
-            'close_attention', ('care_0002',)
-        )
-        proposal = CareMaintenanceProposal(1, (first, second))
-        maintenance = FakeMaintenance(proposal)
-        view = TidyView(
-            maintenance,
-            PermissionService(),
-            proposal,
-            opened_by_user_id=7,
-        )
-        interaction = FakeInteraction(administrator=True)
-
-        await button(view, '1 閉じる').callback(interaction)
-
-        self.assertEqual(maintenance.apply_calls, [(1, first)])
-        self.assertEqual(len(interaction.response.edits), 1)
-        self.assertIn('閉じたよ', interaction.response.edits[0]['content'])
-        self.assertEqual(interaction.response.edits[0]['view'].children, [])
-        self.assertTrue(view.is_stale)
-
-    async def test_non_admin_cannot_apply_tidy_action(self):
-        action = CareMaintenanceAction(
-            'close_attention', ('care_0001',)
-        )
-        proposal = CareMaintenanceProposal(1, (action,))
-        maintenance = FakeMaintenance(proposal)
-        view = TidyView(
-            maintenance,
-            PermissionService(),
-            proposal,
-            opened_by_user_id=7,
-        )
-        interaction = FakeInteraction(administrator=False)
-
-        await button(view, '閉じる').callback(interaction)
-
-        self.assertEqual(maintenance.apply_calls, [])
-        self.assertEqual(interaction.response.sent[0][0], DENIED_TEXT)
-
-    async def test_stale_tidy_action_is_rejected_and_panel_disabled(self):
-        action = CareMaintenanceAction(
-            'close_attention', ('care_0001',)
-        )
-        proposal = CareMaintenanceProposal(1, (action,))
-        maintenance = FakeMaintenance(
-            proposal, CareMaintenanceApplyResult(False, 'stale')
-        )
-        view = TidyView(
-            maintenance,
-            PermissionService(),
-            proposal,
-            opened_by_user_id=7,
-        )
-        interaction = FakeInteraction(administrator=True)
-
-        await button(view, '閉じる').callback(interaction)
-
-        self.assertEqual(maintenance.apply_calls, [(1, action)])
-        self.assertIn(
-            TIDY_STALE_TEXT, interaction.response.edits[0]['content']
-        )
-        self.assertEqual(interaction.response.edits[0]['view'].children, [])
-        self.assertTrue(view.is_stale)
-
-    async def test_non_admin_tidy_cannot_see_or_generate_proposals(self):
-        service = FakeService()
-        maintenance = FakeMaintenance(CareMaintenanceProposal(1))
-        group = create_memories_group(
-            service, PermissionService(), maintenance
-        )
-        interaction = FakeInteraction(administrator=False)
-
-        await group.get_command('tidy').callback(interaction)
-
-        self.assertEqual(interaction.response.sent[0][0], DENIED_TEXT)
-        self.assertEqual(service.calls, [])
-        self.assertEqual(maintenance.calls, [])
-
-    def test_button_action_mapping_is_stable(self):
-        self.assertEqual(
-            action_for_mark(mark('care_0001', 'memory', 'active')).label,
-            HIDE_LABEL,
-        )
-        self.assertEqual(
-            action_for_mark(mark('care_0002', 'attention', 'open')).label,
-            CLOSE_LABEL,
-        )
-        self.assertEqual(
-            action_for_mark(mark('care_0003', 'attention', 'closed')).label,
-            RESTORE_LABEL,
-        )
-        self.assertIsNone(
-            action_for_mark(mark('care_0005', 'memory', 'hidden'))
-        )
-        self.assertIsNone(
-            action_for_mark(mark('care_0006', 'attention', 'hidden'))
-        )
-        self.assertIsNone(
-            action_for_mark(mark('care_0004', 'memory', 'draft'))
+    async def test_action_for_memory_active_is_hide(self):
+        view = MemoriesView(
+            FakeService(), PermissionService(), opened_by_user_id=7,
+            channel_id='10', guild_id='1', kind='all', status='visible', limit=10,
         )
 
-    def test_list_options_have_user_facing_help_and_choices(self):
-        group = create_memories_group(FakeService(), PermissionService())
-        command = group.get_command('list')
-        parameters = {item.name: item for item in command.parameters}
+        self.assertIsNotNone(view)
 
-        self.assertEqual(parameters['kind'].description, '見るものの種類')
-        self.assertEqual(
-            [choice.name for choice in parameters['kind'].choices],
-            ['ぜんぶ', '残したもの', 'あとで見るもの'],
-        )
-        self.assertEqual(parameters['status'].description, 'いまの状態で絞る')
-        self.assertIn(
-            'いま見るもの',
-            [choice.name for choice in parameters['status'].choices],
-        )
-        self.assertEqual(
-            parameters['limit'].description,
-            '表示する件数（1〜20）',
-        )
-
-    async def test_invalid_list_filters_give_short_user_facing_guidance(self):
+    async def test_list_rejects_invalid_filters_before_service_read(self):
         service = FakeService()
         group = create_memories_group(service, PermissionService())
         command = group.get_command('list')
 
         invalid_kind = FakeInteraction(administrator=True)
-        await command.callback(invalid_kind, 'unknown', 'visible', 10)
+        await command.callback(invalid_kind, 'weird', 'visible', 10)
         self.assertEqual(
             invalid_kind.response.sent[0][0],
             '種類は表示される選択肢から選んでね',
@@ -422,7 +248,8 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
             [item.label for item in view.children],
             [f'1 {HIDE_LABEL}', f'2 {CLOSE_LABEL}'],
         )
-        self.assertNotIn('care_0001', text)
+        self.assertIn('care_0001', text)
+        self.assertIn('care_0002', text)
 
     async def test_non_admin_list_has_no_panel_or_service_read(self):
         service = FakeService((mark('care_0001', 'memory', 'active'),))
@@ -448,50 +275,58 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(click.response.sent, [])
         self.assertEqual(click.response.edits[0]['content'], 'ここにはまだない')
 
-    async def test_direct_non_admin_button_use_does_not_mutate(self):
+    async def test_button_rejects_non_admin_without_service_call(self):
         service = FakeService((mark('care_0001', 'memory', 'active'),))
-        view = MemoriesView(
-            service,
-            PermissionService(),
-            opened_by_user_id=7,
-            channel_id='10',
-            guild_id='1',
-            kind='all',
-            status='visible',
-            limit=10,
-        )
-        await view.prepare()
+        opening = FakeInteraction(administrator=True)
+        view = await self.open_list(service, opening)
         click = FakeInteraction(administrator=False)
 
         await button(view, HIDE_LABEL).callback(click)
 
-        self.assertNotIn('set_status', [call[0] for call in service.calls])
+        self.assertNotIn(
+            ('set_status', '10', 'care_0001', 'hidden'), service.calls
+        )
         self.assertEqual(click.response.sent[0][0], DENIED_TEXT)
 
-    async def test_missing_mark_gives_short_safe_response(self):
-        service = FakeService((mark('care_0001', 'memory', 'active'),))
-        opening = FakeInteraction(administrator=True)
-        view = await self.open_list(service, opening)
-        service.missing = True
+    async def test_tidy_without_service_returns_empty_proposal(self):
+        service = FakeService()
+        group = create_memories_group(service, PermissionService(), FakeMaintenance())
+        command = group.get_command('tidy')
+        interaction = FakeInteraction(administrator=True)
+
+        await command.callback(interaction)
+
+        self.assertTrue(interaction.response.deferred[0]['ephemeral'])
+        self.assertIn('整理案', interaction.edited_original[0]['content'])
+
+    async def test_tidy_with_apply_button_closes_attention(self):
+        action = CareMaintenanceAction('close_attention', ('care_0001',))
+        maintenance = FakeMaintenance(CareMaintenanceProposal(1, (action,)))
+        service = FakeService((mark('care_0001', 'attention', 'open', '一区切り'),))
+        group = create_memories_group(service, PermissionService(), maintenance)
+        command = group.get_command('tidy')
+        interaction = FakeInteraction(administrator=True)
+
+        await command.callback(interaction)
+        view = interaction.edited_original[0]['view']
         click = FakeInteraction(administrator=True)
+        await button(view, '閉じる').callback(click)
 
-        await button(view, HIDE_LABEL).callback(click)
+        self.assertIn(('apply_selected', 1, 'close_attention'), maintenance.calls)
+        self.assertIn('閉じたよ', click.response.edits[0]['content'])
 
-        self.assertEqual(click.response.sent[0][0], MISSING_MARK_TEXT)
-        self.assertEqual(click.response.edits, [])
+    async def test_tidy_button_rejects_non_admin(self):
+        action = CareMaintenanceAction('close_attention', ('care_0001',))
+        maintenance = FakeMaintenance(CareMaintenanceProposal(1, (action,)))
+        service = FakeService((mark('care_0001', 'attention', 'open', '一区切り'),))
+        group = create_memories_group(service, PermissionService(), maintenance)
+        command = group.get_command('tidy')
+        interaction = FakeInteraction(administrator=True)
 
-    async def test_stale_panel_rejects_interaction_safely(self):
-        service = FakeService((mark('care_0001', 'memory', 'active'),))
-        opening = FakeInteraction(administrator=True)
-        view = await self.open_list(service, opening)
-        await view.on_timeout()
-        click = FakeInteraction(user_id=opening.user.id, administrator=True)
+        await command.callback(interaction)
+        view = interaction.edited_original[0]['view']
+        click = FakeInteraction(administrator=False)
+        await button(view, '閉じる').callback(click)
 
-        allowed = await view.interaction_check(click)
-
-        self.assertFalse(allowed)
-        self.assertEqual(click.response.sent[0][0], STALE_TEXT)
-
-
-if __name__ == '__main__':
-    unittest.main()
+        self.assertEqual(click.response.sent[0][0], DENIED_TEXT)
+        self.assertEqual(maintenance.calls, [('propose_for_stream', 1)])

@@ -38,9 +38,9 @@ Not touched:
 
 Run from repo root:
 
-- [ ] `python yuno-bot-v2.0/scripts/check_yuno.py`
+- [ ] `python yuno-bot/scripts/check_yuno.py`
 
-Or run from `yuno-bot-v2.0/`:
+Or run from `yuno-bot/`:
 
 - [ ] `python scripts/check_yuno.py`
 

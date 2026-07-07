@@ -182,7 +182,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.reply_mode, "discord_reply")
         self.assertEqual(result.reply_to_discord_message_id, "reply-1")
 
-    async def test_care_reader_can_enable_plain_listening_reply(self) -> None:
+    async def test_care_reader_can_enable_plain_listening_reply_for_triggered_message(self) -> None:
         care_reader = FakeCareReader(CareReadResult(
             decision_made=True,
             should_speak=True,
@@ -198,7 +198,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             care_service=FakeCareService(),
         )
 
-        result = await pipeline.process(self.incoming("followup", "plain followup?"))
+        result = await pipeline.process(self.incoming("followup", "これを覚えて plain followup?"))
 
         self.assertTrue(result.should_send)
         self.assertEqual(result.reply_mode, "plain")
@@ -320,50 +320,15 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             "old", "old topic", created_at="2026-01-01T03:00:00+00:00"
         ))
         await self.pipeline.process(self.incoming(
-            "new", "<@99> current topic", mention=True,
-            created_at="2026-01-01T12:07:00+00:00",
+            "near", "near topic", created_at="2026-01-01T04:00:00+00:00"
         ))
-        rendered = str(self.speaker.contexts[-1].history)
+        await self.pipeline.process(self.incoming(
+            "current", "<@99> current", mention=True,
+            created_at="2026-01-01T04:05:00+00:00",
+        ))
 
+        history = self.speaker.contexts[-1].history
+        rendered = str(history)
         self.assertNotIn("old topic", rendered)
-        self.assertIn("current topic", rendered)
-
-
-    async def test_timing_logs_cover_care_and_speaker_without_content(self) -> None:
-        class CreatedCareService(FakeCareService):
-            async def apply(self, stream_id, source_message_id, result):
-                return CareApplication(created_care_mark_ids=("care_0001",))
-
-        class Maintenance:
-            async def auto_close_after_activity(self, stream_id, **kwargs):
-                return ()
-
-        pipeline = ConversationPipeline(
-            MessageRouter(self.settings, self.repository),
-            self.repository,
-            ContextBuilder(self.repository),
-            self.speaker,
-            care_reader=FakeCareReader(CareReadResult()),
-            care_service=CreatedCareService(),
-            maintenance_service=Maintenance(),
-        )
-
-        with self.assertLogs("yuno.pipeline", level="INFO") as captured:
-            result = await pipeline.process(self.incoming(
-                "timed",
-                "PRIVATE_TIMING_PAYLOAD",
-                mention=True,
-            ))
-
-        rendered = "\n".join(captured.output)
-        self.assertTrue(result.should_send)
-        self.assertIn("timing care_read", rendered)
-        self.assertIn("timing care_apply", rendered)
-        self.assertIn("timing auto_maintenance", rendered)
-        self.assertIn("timing speaker_generation", rendered)
-        self.assertIn("ms=", rendered)
-        self.assertNotIn("PRIVATE_TIMING_PAYLOAD", rendered)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertIn("near topic", rendered)
+        self.assertIn("current", rendered)

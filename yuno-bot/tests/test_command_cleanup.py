@@ -54,14 +54,14 @@ class CareMarkCommandServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(activated.status, 'active')
 
-    async def test_renderer_has_no_internal_scores_or_cues(self) -> None:
+    async def test_renderer_keeps_public_ids_for_status_commands_without_scores(self) -> None:
         mark = await self.service.add_mark(
             '10', '1', 'memory', '短い本文', 'active'
         )
 
         text = render_care_marks((mark,))
 
-        self.assertNotIn(mark.public_id, text)
+        self.assertIn(mark.public_id, text)
         self.assertIn('短い本文', text)
         self.assertNotIn('score', text.casefold())
         self.assertNotIn('weight', text.casefold())
@@ -131,9 +131,12 @@ class CommandCleanupGuardTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_pull_request_ci_runs_standard_check(self) -> None:
+    def test_pull_request_ci_runs_split_checks(self) -> None:
         workflow = (
             REPOSITORY_ROOT / '.github' / 'workflows' / 'yuno-check.yml'
         ).read_text(encoding='utf-8')
         self.assertIn('pull_request:', workflow)
-        self.assertIn('python scripts/check_yuno.py', workflow)
+        self.assertIn('working-directory: yuno-bot', workflow)
+        self.assertIn('python -m compileall main.py yuno tests', workflow)
+        self.assertIn('python -m unittest discover -s tests', workflow)
+        self.assertIn('from yuno.app import create_bot', workflow)

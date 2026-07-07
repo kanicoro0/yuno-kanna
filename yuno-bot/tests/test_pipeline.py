@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,7 +11,7 @@ from yuno.conversation.repository import ConversationRepository
 from yuno.discord.routing import MessageRouter
 from yuno.infra.database import Database
 from yuno.messages import IncomingMessage, SentMessage
-from yuno.pipeline import ConversationPipeline
+from yuno.pipeline import ConversationPipeline, ObservationTicket
 
 
 class RecordingSpeaker:
@@ -332,3 +333,94 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("old topic", rendered)
         self.assertIn("near topic", rendered)
         self.assertIn("current", rendered)
+
+    async def test_pre_send_auto_maintenance_is_scheduled_not_awaited(self) -> None:
+        called = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingMaintenance:
+            def __init__(self):
+                self.calls = []
+
+            async def auto_close_after_activity(self, stream_id, **kwargs):
+                self.calls.append((stream_id, kwargs))
+                called.set()
+                await release.wait()
+
+        class ApplyingCareService(FakeCareService):
+            async def apply(self, stream_id, source_message_id, result):
+                return CareApplication(created_care_mark_ids=('care_0001',))
+
+        maintenance = BlockingMaintenance()
+        pipeline = ConversationPipeline(
+            MessageRouter(self.settings, self.repository),
+            self.repository,
+            ContextBuilder(self.repository),
+            self.speaker,
+            care_reader=FakeCareReader(CareReadResult()),
+            care_service=ApplyingCareService(),
+            maintenance_service=maintenance,
+        )
+
+        result = await asyncio.wait_for(
+            pipeline.process(self.incoming('mention-maint', '<@99> hi', mention=True)),
+            0.2,
+        )
+
+        self.assertTrue(result.should_send)
+        await asyncio.wait_for(called.wait(), 0.2)
+        self.assertEqual(
+            maintenance.calls,
+            [(result.stream_id, {'protected_public_ids': ('care_0001',)})],
+        )
+        release.set()
+        await asyncio.gather(*tuple(pipeline._background_tasks))
+
+    async def test_post_send_auto_maintenance_is_scheduled_not_awaited(self) -> None:
+        called = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingMaintenance:
+            def __init__(self):
+                self.calls = []
+
+            async def auto_close_after_activity(self, stream_id, **kwargs):
+                self.calls.append((stream_id, kwargs))
+                called.set()
+                await release.wait()
+
+        class ApplyingCareService(FakeCareService):
+            async def apply(self, stream_id, source_message_id, result):
+                return CareApplication(created_care_mark_ids=('care_0002',))
+
+        maintenance = BlockingMaintenance()
+        pipeline = ConversationPipeline(
+            MessageRouter(self.settings, self.repository),
+            self.repository,
+            ContextBuilder(self.repository),
+            self.speaker,
+            care_reader=FakeCareReader(CareReadResult()),
+            care_service=ApplyingCareService(),
+            maintenance_service=maintenance,
+        )
+
+        stream = await self.repository.get_or_create_stream('channel', '10', '1')
+        application = await asyncio.wait_for(
+            pipeline.observe_after_send(ObservationTicket(
+                stream_id=stream.id,
+                source_user_message_ids=(1,),
+                user_content='覚えておいて',
+                route_reason='listening_only',
+                pre_care_completed=False,
+            )),
+            0.2,
+        )
+
+        self.assertEqual(application.created_care_mark_ids, ('care_0002',))
+        await asyncio.wait_for(called.wait(), 0.2)
+        self.assertEqual(
+            maintenance.calls,
+            [(stream.id, {'protected_public_ids': ('care_0002',)})],
+        )
+        release.set()
+        await asyncio.gather(*tuple(pipeline._background_tasks))

@@ -24,10 +24,11 @@ def mark(public_id='care_0001', kind='memory', status='active', text='残して�
         id=1,
         public_id=public_id,
         stream_id=1,
+        source_message_id=None,
         kind=kind,
         status=status,
         text=text,
-        source_message_id=None,
+        confidence=0.5,
         created_at='now',
         updated_at='now',
     )
@@ -83,21 +84,28 @@ class FakeService:
 
     async def list_marks(self, channel_id, guild_id, kind='all', status='visible', limit=10):
         self.calls.append(('list_marks', channel_id, guild_id, kind, status, limit))
+        if status == 'visible':
+            visible = tuple(
+                mark for mark in self.marks
+                if (mark.kind, mark.status) in {('memory', 'active'), ('attention', 'open')}
+            )
+            return visible[:limit]
         return self.marks[:limit]
 
     async def set_status(self, channel_id, public_id, status):
         self.calls.append(('set_status', channel_id, public_id, status))
         self.marks = tuple(
             mark if mark.public_id != public_id else CareMark(
-                mark.id,
-                mark.public_id,
-                mark.stream_id,
-                mark.kind,
-                status,
-                mark.text,
-                mark.source_message_id,
-                mark.created_at,
-                'changed',
+                id=mark.id,
+                public_id=mark.public_id,
+                stream_id=mark.stream_id,
+                source_message_id=mark.source_message_id,
+                kind=mark.kind,
+                status=status,
+                text=mark.text,
+                confidence=mark.confidence,
+                created_at=mark.created_at,
+                updated_at='changed',
             )
             for mark in self.marks
         )

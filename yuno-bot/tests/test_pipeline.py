@@ -141,6 +141,28 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.reply_mode, "discord_reply")
         self.assertEqual(result.reply_to_discord_message_id, "reply-1")
 
+    async def test_recent_yuno_followup_can_reply_without_mention(self) -> None:
+        stream = await self.repository.get_or_create_stream("channel", "10", "1")
+        await self.repository.append(
+            stream.id,
+            "yuno-recent",
+            "assistant",
+            "99",
+            "ゆの",
+            "いるよ",
+            created_at="2026-01-01T15:14:00+00:00",
+        )
+
+        result = await self.pipeline.process(self.incoming(
+            "followup",
+            "メンションなしでも返信できる？",
+            created_at="2026-01-01T15:15:00+00:00",
+        ))
+
+        self.assertTrue(result.should_send)
+        self.assertEqual(result.reply_mode, "plain")
+        self.assertEqual(self.speaker.contexts[-1].route_reason, "recent_yuno_followup")
+
     async def test_listening_message_is_saved_without_speaker(self) -> None:
         result = await self.pipeline.process(self.incoming("1", "近くの会話"))
         self.assertFalse(result.should_send)

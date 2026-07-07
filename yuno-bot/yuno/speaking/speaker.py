@@ -23,7 +23,6 @@ _ROUTE_NOTES = {
     "dm": "今の発言はDMで届いている。短く自然に返す。",
     "mention": "今の発言はメンションで直接呼ばれている。最新の発言だけを主に返す。",
     "reply_to_yuno": "今の発言は直前のゆのへの返信。返信先の流れを主に見る。",
-    "recent_yuno_followup": "直前のゆのの返事に続いた発言として返す。メンションがなくても会話の続きとして短く返す。",
     "name_call": "今の発言は呼びかけとして扱われている。ただし名前が出た理由を決めつけず、短く返す。",
     "listening_only": "今の発言は近くの会話として読んでいる。割り込みすぎず、必要な時だけ短く返す。",
     "name_seen": "今の発言には名前に似た音が含まれるが、直接呼ばれたとは限らない。返す時も決めつけず短く返す。",
@@ -39,6 +38,11 @@ class Speaker:
         route_note = _ROUTE_NOTES.get(context.route_reason or "")
         if route_note:
             messages.append({"role": "system", "content": route_note})
+        if context.reply_reason or context.speaker_note:
+            messages.append({
+                "role": "system",
+                "content": _care_note(context),
+            })
         if context.references:
             messages.append({
                 "role": "system",
@@ -48,3 +52,12 @@ class Speaker:
             })
         messages.extend(context.history)
         return (await self.client.complete(messages)).strip()[:2000]
+
+
+def _care_note(context: SpeakerContext) -> str:
+    parts = []
+    if context.reply_reason:
+        parts.append(f"CareReader reply_reason: {context.reply_reason}")
+    if context.speaker_note:
+        parts.append(f"CareReader note: {context.speaker_note}")
+    return "\n".join(parts)

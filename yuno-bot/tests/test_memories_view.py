@@ -151,6 +151,12 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         )
         return interaction.response.sent[0][1].get('view')
 
+    async def open_open(self, service, interaction, **options):
+        group = create_memories_group(service, PermissionService())
+        command = group.get_command('open')
+        await command.callback(interaction, options.get('limit', 10))
+        return interaction.response.sent[0][1].get('view')
+
     def test_renderer_uses_natural_rows_with_public_ids(self):
         text = render_care_marks((
             mark('care_0001', 'memory', 'active', '青い花'),
@@ -164,10 +170,11 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertNotIn(internal, text)
 
-    def test_tidy_is_registered_under_memories_group(self):
+    def test_tidy_and_open_are_registered_under_memories_group(self):
         group = create_memories_group(FakeService(), PermissionService())
 
         self.assertIsNotNone(group.get_command('tidy'))
+        self.assertIsNotNone(group.get_command('open'))
 
     def test_tidy_renderer_uses_only_user_facing_wording(self):
         proposal = CareMaintenanceProposal(1, (
@@ -276,6 +283,27 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.label for item in view.children], [f'1 {CLOSE_LABEL}'])
         self.assertNotIn('care_0001', text)
         self.assertIn('care_0002', text)
+        self.assertEqual(service.calls[0], (
+            'list_marks', '10', '1', 'attention', 'open', 10,
+        ))
+
+    async def test_open_command_shows_open_attention_surface(self):
+        service = FakeService((
+            mark('care_0001', 'memory', 'active'),
+            mark('care_0002', 'attention', 'open'),
+            mark('care_0003', 'attention', 'closed'),
+        ))
+        interaction = FakeInteraction(administrator=True)
+
+        view = await self.open_open(service, interaction)
+
+        text, kwargs = interaction.response.sent[0]
+        self.assertTrue(kwargs['ephemeral'])
+        self.assertIs(kwargs['view'], view)
+        self.assertEqual([item.label for item in view.children], [f'1 {CLOSE_LABEL}'])
+        self.assertNotIn('care_0001', text)
+        self.assertIn('care_0002', text)
+        self.assertNotIn('care_0003', text)
         self.assertEqual(service.calls[0], (
             'list_marks', '10', '1', 'attention', 'open', 10,
         ))

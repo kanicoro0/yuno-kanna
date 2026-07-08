@@ -36,6 +36,7 @@ ConversationLog につく印です。
 - fixed remembered: 明示的な呼び名、強い好み、設定、相手が覚えてほしいと言ったもの
 - recent remembered: しばらく使うが、古くなったら通常参照から外してよいもの
 
+現在の最小表示では、active memory-like CareMark を fixed remembered、draft memory-like CareMark を recent remembered の表示に置きます。
 この段階では、DB schema ではなく表示と整理方針として扱います。
 CareMark は引き続き source/evidence であり、fixed/recent の判断は元の ConversationLog と CareMark に戻れる形で進めます。
 

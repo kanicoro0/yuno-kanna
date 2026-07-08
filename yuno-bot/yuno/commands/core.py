@@ -272,27 +272,13 @@ def create_memories_group(
         description='この場に覚えていることを見る',
     )
 
-    @group.command(name='list', description='この場所に覚えていることを見る')
-    @app_commands.describe(
-        kind='省略すると覚えていることだけを見る',
-        status='省略すると覚えているものだけを見る',
-        limit='表示する件数（1〜20）',
-    )
-    @app_commands.choices(kind=_KIND_CHOICES, status=_STATUS_CHOICES)
-    async def memories_list(
+    async def _send_mark_panel(
         interaction: discord.Interaction,
-        kind: str = DEFAULT_MEMORIES_KIND,
-        status: str = DEFAULT_MEMORIES_STATUS,
-        limit: app_commands.Range[int, 1, 20] = 10,
+        *,
+        kind: str,
+        status: str,
+        limit: int,
     ) -> None:
-        if not await _require_admin(interaction, permissions):
-            return
-        if kind not in {*CARE_MARK_KINDS, 'all'}:
-            await _reply(interaction, '種類は表示される選択肢から選んでね')
-            return
-        if status not in {*CARE_MARK_STATUS_NAMES, 'visible', 'all'}:
-            await _reply(interaction, '状態は表示される選択肢から選んでね')
-            return
         view = MemoriesView(
             service,
             permissions,
@@ -315,6 +301,43 @@ def create_memories_group(
                 view.bind_message(await original_response())
             except discord.HTTPException:
                 pass
+
+    @group.command(name='list', description='この場所に覚えていることを見る')
+    @app_commands.describe(
+        kind='省略すると覚えていることだけを見る',
+        status='省略すると覚えているものだけを見る',
+        limit='表示する件数（1〜20）',
+    )
+    @app_commands.choices(kind=_KIND_CHOICES, status=_STATUS_CHOICES)
+    async def memories_list(
+        interaction: discord.Interaction,
+        kind: str = DEFAULT_MEMORIES_KIND,
+        status: str = DEFAULT_MEMORIES_STATUS,
+        limit: app_commands.Range[int, 1, 20] = 10,
+    ) -> None:
+        if not await _require_admin(interaction, permissions):
+            return
+        if kind not in {*CARE_MARK_KINDS, 'all'}:
+            await _reply(interaction, '種類は表示される選択肢から選んでね')
+            return
+        if status not in {*CARE_MARK_STATUS_NAMES, 'visible', 'all'}:
+            await _reply(interaction, '状態は表示される選択肢から選んでね')
+            return
+        await _send_mark_panel(
+            interaction, kind=kind, status=status, limit=limit
+        )
+
+    @group.command(name='open', description='この場所でまだ開いているものを見る')
+    @app_commands.describe(limit='表示する件数（1〜20）')
+    async def memories_open(
+        interaction: discord.Interaction,
+        limit: app_commands.Range[int, 1, 20] = 10,
+    ) -> None:
+        if not await _require_admin(interaction, permissions):
+            return
+        await _send_mark_panel(
+            interaction, kind='attention', status='open', limit=limit
+        )
 
     @group.command(name='tidy', description='この場所に残したものの整理案を見る')
     async def memories_tidy(interaction: discord.Interaction) -> None:
@@ -388,7 +411,7 @@ def create_memories_group(
 
     @group.command(name='status', description='印の状態を変更')
     @app_commands.describe(
-        public_id='/memories list に出ているID',
+        public_id='/memories に出ているID',
         status='変更後の状態',
     )
     @app_commands.choices(status=_MARK_STATUS_CHOICES)

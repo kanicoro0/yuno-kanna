@@ -40,6 +40,7 @@ open な attention-like CareMark は同じ印の一種ですが、まだ閉じ�
 - recent remembered: しばらく使えるが、件数制限や時間経過で通常参照から外してよいもの。元の ConversationLog と CareMark は根拠として残す
 
 現在の最小表示では、active な memory-like CareMark を「固定で覚えていること」、draft な memory-like CareMark を「最近覚えていること」に出します。
+`/memories list` では draft な memory-like CareMark を `固定にする` 操作で active に上げられます。
 この分割はまず表示と整理方針として扱います。
 DB schema、CareReader contract、Speaker reference selection を同時に変えません。
 

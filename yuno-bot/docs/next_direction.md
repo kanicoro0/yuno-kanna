@@ -29,7 +29,7 @@ ConversationLog につく印です。
 - attention-like: `open / closed / hidden`
 
 `/memories` は CareMark 全体の管理名ではなく、覚えていることの表面として扱います。
-初期表示は active memory-like CareMark だけに寄せ、open attention-like CareMark は明示的に選んだ時だけ見る対象にします。
+`/memories list` の初期表示は active memory-like CareMark だけに寄せ、open attention-like CareMark は `/memories open` で見る対象にします。
 
 ### ReadCue
 
@@ -81,13 +81,14 @@ listening 対象の通常発言は、低信号なら保存のみで終わるこ�
 
 - `/status`: いまの場の状態確認
 - `/listening`: listening 対象の管理
-- `/memories`: 初期表示では覚えていることだけを見る
+- `/memories list`: 初期表示では覚えていることだけを見る
+- `/memories open`: まだ開いているものを見る
 - `/guide`: いま使える入口の案内
 
 旧 `/memory` `/attention` `/interest` は current-facing surface としては使いません。
 
 open attention-like CareMark は `/memories` から完全には消しません。
-ただし初期表示からは外し、`kind=attention` と `status=open` を明示した時だけ見る対象にします。
+ただし `/memories list` の初期表示からは外し、`/memories open` に分けます。
 これは「覚えていること」と「まだ開いているもの」を同じ棚に混ぜないためです。
 
 ## これからの整理方向

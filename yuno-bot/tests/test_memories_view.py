@@ -9,6 +9,8 @@ from yuno.care.maintenance import (
 from yuno.care_marks.models import CareMark
 from yuno.commands.core import (
     CLOSE_LABEL,
+    DEFAULT_MEMORIES_KIND,
+    DEFAULT_MEMORIES_STATUS,
     HIDE_LABEL,
     MemoriesView,
     create_memories_group,
@@ -83,13 +85,17 @@ class FakeService:
 
     async def list_marks(self, channel_id, guild_id, kind='all', status='visible', limit=10):
         self.calls.append(('list_marks', channel_id, guild_id, kind, status, limit))
+        selected = tuple(self.marks)
+        if kind != 'all':
+            selected = tuple(mark for mark in selected if mark.kind == kind)
         if status == 'visible':
-            visible = tuple(
-                mark for mark in self.marks
+            selected = tuple(
+                mark for mark in selected
                 if (mark.kind, mark.status) in {('memory', 'active'), ('attention', 'open')}
             )
-            return visible[:limit]
-        return self.marks[:limit]
+        elif status != 'all':
+            selected = tuple(mark for mark in selected if mark.status == status)
+        return selected[:limit]
 
     async def set_status(self, channel_id, public_id, status):
         self.calls.append(('set_status', channel_id, public_id, status))
@@ -139,8 +145,8 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         command = group.get_command('list')
         await command.callback(
             interaction,
-            options.get('kind', 'all'),
-            options.get('status', 'visible'),
+            options.get('kind', DEFAULT_MEMORIES_KIND),
+            options.get('status', DEFAULT_MEMORIES_STATUS),
             options.get('limit', 10),
         )
         return interaction.response.sent[0][1].get('view')
@@ -232,10 +238,11 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(service.calls, [])
 
-    async def test_list_returns_ephemeral_panel_with_mark_buttons(self):
+    async def test_list_defaults_to_remembered_memory_surface(self):
         service = FakeService((
             mark('care_0001', 'memory', 'active'),
             mark('care_0002', 'attention', 'open'),
+            mark('care_0003', 'memory', 'draft'),
         ))
         interaction = FakeInteraction(administrator=True)
 
@@ -244,12 +251,34 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         text, kwargs = interaction.response.sent[0]
         self.assertTrue(kwargs['ephemeral'])
         self.assertIs(kwargs['view'], view)
-        self.assertEqual(
-            [item.label for item in view.children],
-            [f'1 {HIDE_LABEL}', f'2 {CLOSE_LABEL}'],
-        )
+        self.assertEqual([item.label for item in view.children], [f'1 {HIDE_LABEL}'])
         self.assertIn('care_0001', text)
+        self.assertNotIn('care_0002', text)
+        self.assertNotIn('care_0003', text)
+        self.assertEqual(service.calls[0], (
+            'list_marks', '10', '1', 'memory', 'active', 10,
+        ))
+
+    async def test_list_can_explicitly_show_open_attention(self):
+        service = FakeService((
+            mark('care_0001', 'memory', 'active'),
+            mark('care_0002', 'attention', 'open'),
+        ))
+        interaction = FakeInteraction(administrator=True)
+
+        view = await self.open_list(
+            service, interaction, kind='attention', status='open'
+        )
+
+        text, kwargs = interaction.response.sent[0]
+        self.assertTrue(kwargs['ephemeral'])
+        self.assertIs(kwargs['view'], view)
+        self.assertEqual([item.label for item in view.children], [f'1 {CLOSE_LABEL}'])
+        self.assertNotIn('care_0001', text)
         self.assertIn('care_0002', text)
+        self.assertEqual(service.calls[0], (
+            'list_marks', '10', '1', 'attention', 'open', 10,
+        ))
 
     async def test_non_admin_list_has_no_panel_or_service_read(self):
         service = FakeService((mark('care_0001', 'memory', 'active'),))

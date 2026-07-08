@@ -28,6 +28,17 @@ _ROUTE_NOTES = {
     "name_seen": "今の発言には名前に似た音が含まれるが、直接呼ばれたとは限らない。返す時も決めつけず短く返す。",
 }
 
+_REPLY_REASON_HINTS = {
+    "direct_call": "ゆのへのはっきりした呼びかけとして受け取って大丈夫。",
+    "mention": "今のひとことは、ゆのへの呼びかけとして返して大丈夫。",
+    "reply_to_yuno": "いまの返事の続きとして受け取って大丈夫。",
+    "followup": "さっきの流れの続きとして自然につないで大丈夫。",
+    "casual_reaction": "軽く受け止めるくらいの返しで十分。",
+    "name_topic": "呼びかけや話題の向き先として、ゆのが意識されている。",
+    "overheard_only": "強く踏み込みすぎず、必要なら控えめに返す。",
+    "none": "返す時は、今の会話だけを素直に受け取る。",
+}
+
 
 class Speaker:
     def __init__(self, client: OpenAITextClient):
@@ -41,7 +52,7 @@ class Speaker:
         if context.reply_reason or context.speaker_note:
             messages.append({
                 "role": "system",
-                "content": _care_note(context),
+                "content": _speaker_support_message(context),
             })
         if context.references:
             messages.append({
@@ -54,10 +65,12 @@ class Speaker:
         return (await self.client.complete(messages)).strip()[:2000]
 
 
-def _care_note(context: SpeakerContext) -> str:
+def _speaker_support_message(context: SpeakerContext) -> str:
     parts = []
     if context.reply_reason:
-        parts.append(f"CareReader reply_reason: {context.reply_reason}")
+        hint = _REPLY_REASON_HINTS.get(context.reply_reason)
+        if hint:
+            parts.append(hint)
     if context.speaker_note:
-        parts.append(f"CareReader note: {context.speaker_note}")
+        parts.append(context.speaker_note)
     return "\n".join(parts)

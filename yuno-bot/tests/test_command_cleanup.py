@@ -131,6 +131,23 @@ class CommandCleanupGuardTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, source)
 
+    def test_legacy_module_files_are_removed(self) -> None:
+        for relative in (
+            'yuno/attention/__init__.py',
+            'yuno/attention/models.py',
+            'yuno/attention/repository.py',
+            'yuno/attention/service.py',
+            'yuno/interest/__init__.py',
+            'yuno/interest/models.py',
+            'yuno/interest/repository.py',
+            'yuno/interest/service.py',
+            'yuno/memory/__init__.py',
+            'yuno/memory/models.py',
+            'yuno/memory/repository.py',
+            'yuno/memory/service.py',
+        ):
+            self.assertFalse((PROJECT_ROOT / relative).exists(), relative)
+
     def test_pull_request_ci_runs_split_checks(self) -> None:
         workflow = (
             REPOSITORY_ROOT / '.github' / 'workflows' / 'yuno-check.yml'

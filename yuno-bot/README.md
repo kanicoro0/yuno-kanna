@@ -11,10 +11,10 @@ Discord bot「ゆの / 唯乃」の、ConversationLogを本体にした再設計
 実装や設計を進める前に、まず [`docs/yuno_design_principles.md`](docs/yuno_design_principles.md)、[`docs/next_direction.md`](docs/next_direction.md)、[`docs/implementation_practice.md`](docs/implementation_practice.md) を読んでください。ゆのでは、機能追加よりも「相手の言葉を処理対象として消費せず、預かったものとして扱うこと」と、不要な概念を増やさず整理しながら進めることを優先します。
 
 ```text
-directed: user保存 → recent 6件 → Speaker → Discord送信
-→ assistant保存 → CareReaderによる送信後観察
+directed: user保存 → pre CareReader → recent 6件 + 必要なCareMark → Speaker → Discord送信
+→ assistant保存 → 必要なら送信後観察
 
-listening通常発言: user保存 → pre-filter → CareReader
+listening通常発言: user保存 → pre-filter → 必要ならCareReader
 → wants_to_speak && should_speak の時だけSpeaker → Discord送信 → assistant保存
 ```
 
@@ -22,7 +22,7 @@ CareMarkは独立した記憶庫ではなく、ConversationLogにつく印です
 
 ReadCueはCareMarkを選ぶための弱い手がかりです。独立した記憶や関心ではなく、返信スイッチや返信確率でもありません。
 
-CareReaderは同じstreamを静かに読み、CareMark候補とReadCue更新をJSONで返します。返答本文や口調指示は書きません。directed会話では送信前に挟まず、送信成功後に観察します。listening通常発言では割り込み判断も担います。
+CareReaderは同じstreamを静かに読み、CareMark候補とReadCue更新をJSONで返します。返答本文や口調指示は書きません。directed会話では送信前に読み、返信可否判断やSpeakerへの補助に使われます。listening通常発言では低信号なら読まずに保存のみとし、必要な場合だけ割り込み判断も担います。auto maintenanceは返信前には待たず、別タスクとして進めます。
 
 Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive memory CareMarkとopen attention CareMarkから合計3件までを選び、本文だけを渡します。ReadCue、ID、状態、routing名、内部理由、scoreは渡しません。
 
@@ -51,9 +51,9 @@ Copy-Item .env.example .env
 python main.py
 ```
 
-必須設定は `DISCORD_TOKEN`、`OPENAI_API_KEY`、`OPENAI_MODEL` です。OpenAI設定が空の場合は、ローカルの短いfallback応答を使います。
+必須設定は `.env.example` を参照してください。OpenAI設定が空の場合は、ローカルの短いfallback応答を使います。
 
-SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは起動時のcurrent directoryではなく、必ず `yuno-bot` を基準に解決されます。WAL、foreign keys、busy timeout、schema migrationを使用し、DB・WAL・SHM・`.env` はGit管理外です。
+SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは起動時のcurrent directoryではなく、必ず `yuno-bot` を基準に解決されます。WAL、foreign keys、busy timeout、schema migrationを使用し、DB・WAL・SHM・local env fileはGit管理外です。
 
 ## 管理command
 
@@ -63,7 +63,7 @@ SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは�
 /listening list|add|remove|clear
 ```
 
-`/listening` は `.env` 初期値とDB設定を統合します。`.env` 由来はcommandで解除できず、DB由来の追加・解除は再起動なしでroutingへ反映されます。変更操作にはManage Channels権限が必要です。
+`/listening` はenv初期値とDB設定を統合します。env由来はcommandで解除できず、DB由来の追加・解除は再起動なしでroutingへ反映されます。変更操作にはManage Channels権限が必要です。
 
 `/memories` はownerまたはサーバー管理者だけが使用でき、実行したstreamのCareMarkだけを扱います。ReadCueを独立管理するcommandはありません。
 
@@ -82,12 +82,12 @@ SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは�
 
 旧記憶は破棄しません。後続段階で、明示的なdry-run付きimportとして実装します。
 
-- 旧noteをMemoryMarkまたはAttentionItemへ変換する
+- 旧noteをmemory系またはattention系のCareMarkへ変換する
 - source messageがなければ `legacy_v2_notebook` sourceとする
 - 旧note ID、import日時、batch IDを保持する
 - scopeを拡大せず、不明なscopeは `legacy_unscoped` とする
 - 同じ旧noteを重複作成しない
-- ConversationLog由来のMemoryMark / Attentionと矛盾した場合は新しい方を優先する
+- ConversationLog由来のCareMarkと矛盾した場合は新しい方を優先する
 - previewを `data/import_preview_*.json` に出力できるようにする
 
 この互換sourceは新規記憶の通常経路には使用しません。

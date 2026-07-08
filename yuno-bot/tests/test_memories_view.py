@@ -184,7 +184,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertRegex(
             text,
-            r'最近覚えていること\n1\. `care_0002` まだ置いてある',
+            r'最近覚えていること\n2\. `care_0002` まだ置いてある',
         )
 
     def test_tidy_and_open_are_registered_under_memories_group(self):
@@ -281,8 +281,8 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('固定で覚えていること', text)
         self.assertIn('最近覚えていること', text)
-        self.assertIn('care_0001', text)
-        self.assertIn('care_0003', text)
+        self.assertIn('1. `care_0001`', text)
+        self.assertIn('2. `care_0003`', text)
         self.assertNotIn('care_0002', text)
         self.assertEqual(service.calls[:2], [
             ('list_marks', '10', '1', 'memory', 'active', 10),

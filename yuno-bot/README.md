@@ -22,9 +22,9 @@ CareMarkは独立した記憶庫ではなく、ConversationLogにつく印です
 
 ReadCueはCareMarkを選ぶための弱い手がかりです。独立した記憶や関心ではなく、返信スイッチや返信確率でもありません。
 
-CareReaderは同じstreamを静かに読み、CareMark候補とReadCue更新をJSONで返します。返答本文や口調指示は書きません。directed会話では送信前に読み、返信可否判断やSpeakerへの補助に使われます。listening通常発言では低信号なら読まずに保存のみとし、必要な場合だけ割り込み判断も担います。auto maintenanceは返信前には待たず、別タスクとして進めます。
+CareReaderは同じstreamを静かに読み、CareMark候補とReadCue更新をJSONで返します。返答本文や口調指示は書きません。必要な時だけ、Speakerへ短い補助メモを渡しますが、`CareReader` や `speaker_note` `reply_reason` などの内部ラベルはそのまま見せません。directed会話では送信前に読み、返信可否判断やSpeakerへの補助に使われます。listening通常発言では低信号なら読まずに保存のみとし、必要な場合だけ割り込み判断も担います。auto maintenanceは返信前には待たず、別タスクとして進めます。
 
-Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive memory-like CareMarkとopen attention-like CareMarkから合計3件までを選び、本文だけを渡します。ReadCue、ID、状態、routing名、内部理由、scoreは渡しません。
+Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive memory-like CareMarkとopen attention-like CareMarkから合計3件までを選び、本文だけを渡します。必要なら短い補助メモも渡しますが、内部field名や raw の判断値にはしません。ReadCue、ID、routing名、内部理由、scoreは渡しません。
 
 管理commandは現状 `/memories` と `/listening` です。`/memory`、`/attention`、`/interest` は旧table廃止に伴って登録を終了しました。表示と操作は実行したDMまたはchannelのstreamだけに限定され、すべてephemeralです。
 

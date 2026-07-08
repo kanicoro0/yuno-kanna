@@ -39,7 +39,9 @@
 
 - CareReader は本文を書かない
 - Speaker は最終の一通だけを書く
-- ReadCue や内部理由を Speaker に渡さない
+- ReadCue の詳細や raw の内部理由を Speaker に渡さない
+- `speaker_note` は残してよいが、Speaker へ渡す時に `CareReader` や field 名を見せない
+- `reply_reason` を Speaker へ渡すなら raw 値ではなく短い定型補助にする
 
 この境界を触る変更は、小さく独立させます。
 

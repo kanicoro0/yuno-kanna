@@ -57,6 +57,7 @@ CareReader は同じ stream を静かに読み、次のような構造化結果�
 - CareMark candidate
 - ReadCue update
 - touch / include の候補
+- 必要なら Speaker への短い補助メモ（内部では `speaker_note`）
 - `wants_to_speak` / `should_speak` のような会話上の補助判断
 
 CareReader がしてはいけないこと:
@@ -66,6 +67,9 @@ CareReader がしてはいけないこと:
 - tool 操作を決める
 - shell / file / service 実行を担う
 - raw log や内部理由をそのまま Speaker に渡す
+
+`speaker_note` は短い返答補助として内部で持ってよいですが、Speaker へ渡す時に `CareReader` や field 名を見せません。
+`reply_reason` も判断記録として保持してよいですが、Speaker へ渡す時は raw 値のままではなく短い定型補助へ整えます。
 
 ### Speaker
 
@@ -77,6 +81,7 @@ Speaker に渡してよいもの:
 - 同じ stream の recent 会話
 - 選ばれた CareMark の本文
 - 安全に整えられた最小限の補助情報
+- 必要な時だけ、短い返答補助メモ
 
 Speaker に渡してはいけないもの:
 
@@ -84,6 +89,7 @@ Speaker に渡してはいけないもの:
 - routing 名
 - `reply_mode`
 - `wants_to_speak` や `should_speak` の内部理由
+- raw の `reply_reason` 値や field 名
 - 内部 score
 - raw JSON
 - raw log / secret / traceback

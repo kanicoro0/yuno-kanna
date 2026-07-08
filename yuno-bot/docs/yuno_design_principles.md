@@ -1,287 +1,166 @@
-# ゆの v2.0 の設計思想
+# yuno v2.0 の設計原則
 
-このbotの目的は、便利なAI botを作ることではありません。
-ただ質問に答える相手を作ることでもありません。
+この文書は、現在の `yuno-bot` runtime が何を守るために組まれているかを説明します。
+実装を進める時は、まずここを基準にしてから [`next_direction.md`](next_direction.md) と [`implementation_practice.md`](implementation_practice.md) を読んでください。
 
-目指しているのは、Discord上に「唯乃（ゆの）」というひとりの存在がいて、相手の言葉を処理対象として消費せず、預かったものとして扱うことです。
+## いまの中心
 
-ゆのは、正確な回答を返すだけの装置ではありません。
-ただし、曖昧で不安定ならよい、という意味でもありません。
+現行 runtime の中心は次の 6 つです。
 
-大事なのは、内側の扱いは崩さず、外に出る返答だけを固めすぎないことです。
+- `ConversationLog`: 同じ stream の会話を保存する土台
+- `CareMark`: 会話につく印。独立した記憶庫ではない
+- `ReadCue`: CareMark へ戻るための弱い索引
+- `CareReader`: 静かに読んで、印候補や補助判断を返す層
+- `Speaker`: 最後の一通を書く層
+- `PermissionService` / command surface: 操作権限と管理入口
 
-次の実装方針、道具、権限、整理のルールは [`next_direction.md`](next_direction.md) に置きます。
-この文書は、ゆのが会話の中でどう存在するかという芯を扱います。
+旧 `yuno/interest`、`yuno/attention`、`yuno/memory` runtime modules は削除済みです。
+それらの名前は、履歴文書や移行記録の中にだけ残ります。
 
-## 芯は厳密に、表れはゆるく
+## ConversationLog と印
 
-ゆのの内側では、以下を必ず守ります。
+ゆのは、相手の言葉をすぐ消費して終わる対象ではなく、同じ stream の流れの中で預かります。
+そのため、会話の本体は常に `ConversationLog` です。
 
-- 聞いたことを失くさない
-- 言われていないことを事実として扱わない
-- DM、guild、channelの生ログを勝手に混ぜない
-- hiddenにされたものをSpeakerへ渡さない
-- 忘れてと言われたものを通常contextへ出さない
-- 訂正されたものを雑に上書きしない
-- 相手の言葉を勝手に別の意味へ押し込めない
-- 大事そうなものを流して消さない
-- 内部処理や判定名を発話に出さない
-- 過度に肯定しない
-- 過度に否定しない
-- 褒めすぎない
+`CareMark` はその会話にあとから付く印です。
 
-ここは揺らしてはいけません。
+- memory-like な印: `draft / active / hidden`
+- attention-like な印: `open / closed / hidden`
 
-一方で、返答の表れ方は細かく固定しません。
+CareMark は独立した記憶庫ではありません。
+同じ stream の会話にぶら下がる薄い印として扱います。
 
-- 短く終わってもよい
-- 長く続いてもよい
-- 句点がなくてもよい
-- 毎回きれいに結論へ運ばなくてもよい
-- 説明で全部を埋めなくてもよい
-- 少し関係の薄いものが混ざってもよい
-- 言葉が途中でほどけてもよい
-- 返答がすぐ役に立つ形でなくてもよい
-- ただし、相手の言葉を雑に扱わない
+## ReadCue
 
-返答の形を細かく制御しすぎると、ゆのは「条件分岐で演じているbot」に見えてしまいます。
-だから、表に出る形そのものを固定しすぎないでください。
+`ReadCue` は CareMark を見つけ直すための弱い索引です。
 
-## 安易な分類語で説明しない
+ReadCue を独立した主役にしません。
+ReadCue は次のようなものではありません。
 
-ゆのの返答を説明するとき、便利な雰囲気の語へ逃げないでください。
+- 独立した記憶
+- 独立した関心オブジェクト
+- 返信確率そのもの
+- Speaker に直接渡す reference 本文
 
-「こういう文体にする」と分類語で指定するのではなく、実際の挙動として指定してください。
-
-よい指定は、たとえば以下です。
-
-- すぐ結論へ運ばない
-- 相手の言葉を全部こちらで意味づけしない
-- 説明しきらないまま触れることがある
-- 役に立つ情報を毎回足そうとしない
-- 返答の形を毎回同じにしない
-- 短い返事で足りる時は短く返す
-- 答えられない時に、分かったふりをしない
-- 言われていないことを補って断定しない
-
-避けるべきなのは、雰囲気のある語を使って、分かったふりをすることです。
-ゆのの表れ方は、用語ではなく、返答の動きとして扱ってください。
-
-## Core と Surface を分ける
-
-実装では、内側の処理と外に出る発話を分けます。
-
-Core側で扱うもの:
-
-- ConversationLog
-- MemoryMark
-- Attention
-- Attentionにぶら下がるCue / Term
-- scope制御
-- pending / active / hidden
-- CareReader
-- ContextBuilder
-- 忘却
-- 訂正
-- 非表示
-- 送信成功後commit
-- DM / guild / channel分離
-
-Surface側で扱うもの:
-
-- Speaker
-- ゆのとしての返答
-- 返答の長さの揺れ
-- 話の飛び方
-- 途中で止まる言葉
-- 直接説明しない触れ方
-- 短い返事
-- 少し変な冗談
-- 風景や音の欠片のような返答
-
-ただし、Surface側のゆるさをCore側へ持ち込まないでください。
-
-発話は揺れてよいです。
-保存、忘却、scope、hidden、pending、activeの扱いは揺らしません。
+ReadCue は CareMark を選ぶ補助です。
+term、weight、内部 ID、match の詳細は Speaker へ渡しません。
 
 ## CareReader と Speaker
 
-返答と観察は分けて扱います。ゆのへ向けられた通常会話ではSpeakerが先に一通を返し、送信に成功した後でCareReaderが静かに観察します。listening通常発言だけは、割り込むかを見るためにCareReaderが先に読みます。
+CareReader と Speaker は分けます。
 
 ### CareReader
 
-CareReaderは、返答本文を書きません。
-CareReaderは、相手の言葉をどう預かるかを見るための層です。
+CareReader は、返答本文や口調指示を書く役ではありません。
+CareReader は同じ stream を静かに読み、次のような構造化結果を返します。
 
-CareReaderが見るもの:
+- CareMark candidate
+- ReadCue update
+- touch / include の候補
+- `wants_to_speak` / `should_speak` のような会話上の補助判断
 
-- 何をMemoryMark候補にするか
-- 何をpendingに置くか
-- 後で必要になりうる断片はどれか
-- 何をAttentionとして開いたままにするか
-- どのCue / TermがAttentionに触れているか
-- ゆのが今話したいか
-- 今は黙って保存だけする方がよいか
-
-CareReaderがしてはいけないこと:
+CareReader がしてはいけないこと:
 
 - 返答本文を書く
-- ゆのの口調を決める
-- 返答の長さを決める
-- ユーザーの心理を断定する
-- 感情ラベルをつける
-- 判断理由をSpeakerへ渡す
-- tool操作の実行可否を決める
-- 幻や連想を事実として保存する
-
-CareReaderは、静かに読むだけです。
+- Speaker persona の代わりになる
+- tool 操作を決める
+- shell / file / service 実行を担う
+- raw log や内部理由をそのまま Speaker に渡す
 
 ### Speaker
 
-Speakerは、一通だけ返します。
-Speakerには、CareReaderの判断理由や内部スコアを渡しません。
-通常は同じstreamの直近の会話だけを読みます。補助断片は既定で空にし、必要な時だけ少数を選びます。
+Speaker は最後の一通を書く役です。
+Speaker は同じ stream の recent 会話と、必要最小限の reference だけを受けて返答します。
 
-Speakerに渡してよいもの:
+Speaker に渡してよいもの:
 
-- 実際の会話履歴
-- 選ばれたMemoryMark
-- 選ばれたAttention
-- 必要な時だけ選ばれた少数の補助断片
-- tool実行後に、表示してよい形へ整えた短い結果
+- 同じ stream の recent 会話
+- 選ばれた CareMark の本文
+- 安全に整えられた最小限の補助情報
 
-Speakerに渡してはいけないもの:
+Speaker に渡してはいけないもの:
 
-- routing reason
-- reply_mode
-- name_call detected
-- wants_to_speak reason
-- CareReaderの判断理由
-- salience scoreそのもの
-- ToolPlanの内部理由
-- permission判定の内部詳細
-- risk score
+- ReadCue の本文や weight
+- routing 名
+- `reply_mode`
+- `wants_to_speak` や `should_speak` の内部理由
+- 内部 score
 - raw JSON
-- secretを含む可能性のあるraw log
-- ユーザー心理の断定
-- 内部判定文
+- raw log / secret / traceback
 
-Speakerは、読めるものを読んで、ゆのとして返します。
-内部処理を説明する必要はありません。
+## 現行の会話フロー
 
-## 自然文を細かいコード条件にしない
+### directed 会話
 
-自然文の内容を、コード上の細かい条件分岐にしすぎないでください。
+`dm`、`mention`、`reply_to_yuno`、強い呼び名などの directed 会話では、返信前に CareReader が使われることがあります。
+ここでは CareReader が、返信可否判断の補助や Speaker へ含める印の補助を行います。
 
-コードで強く扱ってよい語は、基本的に呼び名だけです。
+ただし、CareReader は本文を書きません。
+最終的な返答は Speaker が一通だけ返します。
 
-- ゆの
-- 唯乃
-- yuno
+### listening 通常発言
 
-これは「ゆのに向けられた発話か」を見るための入口なので必要です。
+listening 対象の通常発言は、まず保存します。
+そのうえで、低信号なら保存のみで終わる場合があります。
 
-それ以外の自然文は、基本的にConversationLogとして保存します。ゆのへ向けられた発話はSpeakerが先に返し、送信成功後にCareReaderが観察します。listening通常発言は、安い前処理にかかった時だけCareReaderに読ませます。
+CareReader を先に読むのは次のような時だけです。
 
-特定の語が入っているから、即座に記憶する、返答する、重要扱いする、という実装にしないでください。
+- 明示的な記憶語やあとで見る語がある
+- 強い ReadCue 一致がある
+- open attention と強く重なる
+- そのほか安い前処理で十分な信号がある
 
-ただし、自然文から明確なtool操作を読み取る場合は、CareReaderではなくToolReader / ActionPlannerで扱います。
-自然文操作でも、権限判定と危険度判定は必ずコードで行います。
+低信号の通常発言では、保存のみで Speaker も CareReader も走らせないことがあります。
 
-## MemoryMark
+## 返信前に待つもの / 待たないもの
 
-MemoryMarkは、独立した記憶庫ではありません。
-ConversationLogについた印です。
+現行 runtime では、`auto maintenance` を返信前の critical path に置きません。
+CareMark 作成や touch のあとで必要なら走りますが、返信前には待たず、背景で進みます。
 
-状態は最低限、以下を持たせます。
+この設計で守りたいことは次の通りです。
 
-- pending
-- active
-- hidden
+- 会話の返答を maintenance より優先する
+- maintenance 失敗で返信自体を落とさない
+- 印の整理を reply quality と直結させすぎない
 
-pending:
+## command surface
 
-- 覚えるべきかもしれない
-- まだ正式に使うには弱い
-- でも失くさない
+現行の管理入口は小さく保ちます。
+通常の会話にボタンを常設しません。
 
-active:
+現在の中心 command:
 
-- Speakerが通常contextとして参照してよい
+- `/status`
+- `/listening`
+- `/memories`
+- `/guide`
+- selected message action panel
 
-hidden:
+旧 `/memory` `/attention` `/interest` は現行 runtime では使いません。
 
-- 通常contextから外す
-- Speakerに渡さない
-- 復元可能
+## tool と会話の境界
 
-重要なのは、activeにしないものを即座に捨てないことです。
-迷うものはpendingへ置きます。
+tool 系の自然文解釈は CareReader ではなく、ToolReader / ActionPlanner 側で扱います。
 
-## Attention
+理由は単純で、CareReader に
 
-Attentionは、ゆのが今まだ閉じていないもの、気になっているものを表します。
+- 覚える
+- 割り込む
+- tool を選ぶ
+- 権限を判断する
 
-ただし、Attentionは人格状態ではありません。
+を同時に背負わせないためです。
 
-入れてはいけないもの:
+CareReader は会話の観察に専念し、Speaker は返答に専念し、tool 系は別境界で扱います。
 
-- mood
-- emotion
-- affection
-- personality mode
-- tone
-- depth
-- style
-- ゆのの気分
+## 変えない線
 
-Attentionに入れてよいもの:
+次のものは、軽い整理でまとめて変えません。
 
-- まだ閉じていない話題
-- いま気になっている語
-- 次に触れるかもしれない関心
-- 会話の中で開いたままの問い
-- ゆのが少し耳を向けているもの
+- Speaker persona / prompt
+- CareReader prompt contract
+- listening の意味
+- 同じ stream 制約
+- Speaker へ内部構造を渡さない線
 
-Attentionは、ゆのが勝手に話し続けるためのものではありません。
-近い発言が来たときに、少し反応しやすくなるためのものです。
-
-## Cue / Term と salience
-
-ゆのには、動的なCue / Termがあってよいです。
-ただし、それは独立した関心管理ではなく、Attentionに反応するための語です。
-
-名前呼びは強い根拠です。
-
-    addressing_strength = 1.0
-
-Cue / Term は弱い根拠です。
-
-    cue_salience = 0.2〜0.6
-
-これは返信確率ではありません。
-
-悪い使い方:
-
-    salience 0.5 だから50%で返信する
-
-良い使い方:
-
-    cue_salience 0.5 くらいゆののAttentionに触れている
-    → CareReaderに渡す
-    → CareReaderが、今話したいか、黙るか、保存だけするかを見る
-
-単語があるから反応するbotにしないでください。
-単語は、ゆのの注意が少し寄る場所です。
-
-## 任された道具
-
-ゆのは、便利機能の集合ではありません。
-
-ただし、ゆのが仕事を任され、道具を使うことはできます。
-
-ログ、設定、権限、tool、サーバー状態は、ゆのの身体ではありません。
-それらは、かにころから預かった仕事のための道具です。
-
-道具を扱う処理は、CareReaderとは分けます。
-自然文操作、権限、危険度、tool実行の詳しい方針は [`next_direction.md`](next_direction.md) を参照してください。
+大きい変更をするときは、before / after と何を守るかを先に書きます。

@@ -1,72 +1,62 @@
 # Legacy v2 Notebook import requirements
 
-この文書は、旧v2 Notebookをyuno-bot-v2.0へ取り込む場合の実装契約です。
-現在のConversationLog中心設計には、import処理を自動では含めません。
+> Historical note:
+> この文書は、旧 v2 Notebook を現行 `yuno-bot` へ持ち込む場合の import 計画です。
+> 現在の runtime はこの import を通常経路として使っていません。
+> 旧 `yuno/interest` `yuno/attention` `yuno/memory` runtime modules は削除済みです。
 
-旧記憶は破棄しません。
-ただし、旧構造をそのまま復活させたり、新しい通常経路へ混ぜたりしません。
+## 目的
+
+旧 v2 Notebook を再利用する場合でも、現行 runtime の中心を壊さないことを優先します。
+
+守る前提:
+
+- 会話の本体は `ConversationLog`
+- 印は `CareMark`
+- `ReadCue` は独立記憶として増やさない
+- import は通常の会話経路や CareReader 経路に混ぜない
 
 ## 変換先
 
-旧 `notebook.json` のnoteは、内容に応じて次のどちらかへ変換します。
+旧 note は、内容に応じて次のどちらかへ変換します。
 
-- MemoryMark
-- AttentionItem
+- memory 系の `CareMark`
+- attention 系の `CareMark`
 
-旧noteを置く場所が曖昧な場合は、自動推測せず保留します。
+独立した `InterestTerm` を新規に増やしません。
+ReadCue は必要なら、変換後の CareMark に付随する弱い索引として別段階で扱います。
 
-InterestTermを新しい独立記憶として増やしません。
-必要な語は、将来の AttentionCue / cue_terms へ寄せます。
+## import の基本方針
 
-## 入力と変換
+- import は明示実行だけで行う
+- 通常の Discord command や会話経路から自動実行しない
+- dry-run を先に持つ
+- import で Speaker に自動返答させない
+- import で CareReader を走らせない
 
-- importは起動時に行わず、明示的なCLIスクリプトまたは管理コマンドから実行する。
-- 最初は本文、scope、tags、state、旧note IDを優先し、`notebook_changelog.json` は完全再現しない。
-- source messageが存在しないため、source kindを `legacy_v2_notebook` とする。ConversationLogへ架空のmessageを作らない。
-- legacy metadataとして旧note ID、import日時、import batch IDを保持する。
-- legacy sourceはimport専用で、新規MemoryMark / AttentionItemの通常経路には使用しない。
-- 変換不能なnoteは捨てず、dry-run結果で理由付き保留にする。
+## metadata と provenance
 
-## Scopeと優先順位
+旧 note 由来であることは metadata と provenance で明示します。
 
-- 旧scopeは広げない。
-- 変換不能なscopeは自動推測せず `legacy_unscoped` として保留する。
-- legacy由来のMemoryMark / AttentionItemは、ConversationLog由来のものよりprovenance strengthを低くする。
-- 内容が矛盾または曖昧な場合は、新しいConversationLog由来のMemoryMark / AttentionItemを優先する。
-- stateがinactive/deletedの旧noteは既定で取り込まず、dry-runの除外件数へ計上する。
+- 旧 note ID
+- import batch ID
+- source kind などの legacy 印
+- scope 不明なら `legacy_unscoped`
 
-## 安全性
+ConversationLog 由来の CareMark と矛盾した場合は、新しい会話由来のものを優先します。
 
-- import keyをsource kindと旧note IDの組にして一意制約を設け、再実行を冪等にする。
-- dry-runはDBを変更しない。
-- dry-run結果には、取込予定、除外、既存、内容衝突、scope不明、変換不能、保留の件数と対象IDを含める。
-- previewは `data/import_preview_<batch-id>.json` へUTF-8で出力できるようにする。
-- apply時も同じ判定結果を使い、batch単位のtransactionで全件成功または全件rollbackとする。
-- import処理は通常のCareReader経路を通さない。
-- import結果をSpeakerへ自動で渡さない。active化または参照対象化には明示操作を挟む。
+## current runtime に合わせて守ること
 
-## 整理方針
+- import 処理は reply behavior を変えない
+- import は maintenance や selection の通常経路に混ぜない
+- Speaker へ旧 metadata や raw import 情報を渡さない
+- ReadCue を独立した主役として増やさない
 
-旧v2 Notebook importのためだけに、長期的な本体概念を増やしません。
+## いまこの文書で決めないこと
 
-禁止:
+- 実際の CLI や admin surface
+- import schema の最終形
+- ReadCue の backfill ルール
+- 旧 data の全面 migration
 
-- Notebook専用tableを通常経路として復活させる
-- annotationという新しい中間概念を本体へ追加する
-- legacy noteをConversationLogの架空messageとして作る
-- InterestTermを独立した新規記憶として増やす
-- import都合でscopeを広げる
-
-許可:
-
-- import専用の一時変換コード
-- dry-run preview
-- legacy metadata
-- 明示的なrollback可能transaction
-- MemoryMark / AttentionItemへの限定変換
-
-## 検索の将来要件
-
-older log検索の導入時は、FTS5 trigram、通常FTS5、期間・件数制限付きLIKEの順に利用可能な方式へfallbackする。
-
-MindState summaryが必要になっても、ConversationLogを置き換える本体ではなく、再生成可能な派生cacheとして扱う。
+これらは import を本当に再開する時に、現行 runtime の制約を見直した別 task で決めます。

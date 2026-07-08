@@ -1,261 +1,120 @@
-# yuno-bot-v2.0 次の方針
+# yuno-bot v2.0 の次の方向
 
-この文書は、yuno-bot-v2.0 を次にどう変化させるかを決めるための方針です。
+この文書は、現在の runtime を前提に、これからどこを整理していくかを示します。
+挙動そのものの規範は [`yuno_design_principles.md`](yuno_design_principles.md)、作業単位の切り方は [`implementation_practice.md`](implementation_practice.md) を見てください。
 
-既存の `yuno_design_principles.md` は、ゆのが会話の中でどう存在するかを扱います。
-この文書では、その芯を残したまま、自分のサーバーで常駐させ、必要な仕事を任せられる状態へ進めるための判断基準を書きます。
+## 現在地
 
-実装をどう進めるか、作業ごとに何を整理するかは [`implementation_practice.md`](implementation_practice.md) に分けます。
+現行 runtime は次の状態にあります。
 
-## 目的
+- 会話の本体は `ConversationLog`
+- 印は `CareMark`
+- 索引は `ReadCue`
+- 会話観察は `CareReader`
+- 最終返答は `Speaker`
+- 管理入口は `/status` `/listening` `/memories` `/guide`
+- selected message panel と小さな Discord UI は補助として使う
 
-yuno-bot-v2.0 は、Discord上で自然に会話する「唯乃（ゆの）」を本体として育てます。
+旧 `yuno/interest`、`yuno/attention`、`yuno/memory` runtime modules は削除済みです。
+旧名称は、履歴文書や移行記録の説明としてのみ残ります。
 
-ただし、今後は会話の自然さだけではなく、自分のサーバーで常駐させ、必要な仕事を任せられる状態へ進めます。
+## いま明確にしたいこと
 
-ゆのはコンピュータそのものではありません。
-ゆのは、任された道具を使って、見に行ったり、持ってきたり、危ない時に止めたりする存在です。
+### CareMark
 
-ログ、設定、権限、tool、サーバー状態は、ゆのの身体ではなく、預かった仕事のための道具です。
+CareMark は独立した記憶庫ではありません。
+ConversationLog につく印です。
 
-## 旧プランとの差分
+- memory-like: `draft / active / hidden`
+- attention-like: `open / closed / hidden`
 
-以前の方針は、公開前提の安全化や、既存の管理コマンド群をそのまま整える方向に寄っていました。
+### ReadCue
 
-新しい方針では、公開botではなく、自分のサーバーに住ませて運用することを前提にします。
-そのため、一般公開向けの説明や広い利用者対応よりも、以下を優先します。
+ReadCue は CareMark に戻るための弱い索引です。
 
-- owner中心の運用
-- 自分のサーバーでの常駐
-- ログ取得と要約
-- health確認
-- backup / export / forget
-- systemdやservice状態確認
-- 自然文からのread-only tool実行
-- 機能追加と同時に整理すること
+- 独立した関心ではない
+- 返信確率そのものではない
+- Speaker に直接見せる本文ではない
 
-旧プランでは、`MemoryMark`、`AttentionItem`、`InterestTerm` を並列の管理対象として扱う前提が残っていました。
-新しい方針では、`InterestTerm` を独立した主役にせず、`AttentionItem` に反応するための Cue / Term へ寄せます。
+### CareReader
 
-旧プランでは、`/memory`、`/attention`、`/interest`、`/listening` のように機能別コマンドを増やして管理していました。
-新しい方針では、表の入口を以下に寄せます。
+CareReader は本文や口調を書く役ではありません。
+CareMark candidate、ReadCue update、会話上の補助判断を返すだけにとどめます。
 
-- /status
-- /settings
-- /memories
-- /tools
+### Speaker
 
-旧プランでは、CareReaderに「読む」「覚える」「割り込む」を多く背負わせていました。
-新しい方針では、CareReaderにtool操作を混ぜず、ToolReader / ActionPlanner を別層に置きます。
+Speaker は最終的な一通を書く役です。
+内部理由や score を受け取らず、same-stream の会話と少数の CareMark 本文だけを読んで返します。
 
-旧プランでは、実装の終着点を決めることに寄りすぎると、途中の方針転換で不要コードが残り続ける危険がありました。
-新しい方針では、各実装回で「追加したもの」だけでなく「置き換えたもの」「残っているlegacy/debug」「次に削る候補」を必ず扱います。
+## directed 会話と listening 会話
 
-## 残す芯
+### directed 会話
 
-以下は削りません。
+現行 runtime では、directed 会話で返信前に CareReader が使われることがあります。
+これは返信可否判断の補助や Speaker へ含める印の補助のためです。
 
-- ConversationLog を中心にする
-- stream単位で会話を分ける
-- Speaker と CareReader を分ける
-- Speakerへ内部判定名、score、routing理由を渡さない
-- MemoryMark は会話についた印として扱う
-- pending / active / hidden の扱いを残す
-- 小さな女の子のかたちを、ゆのの最低限の存在条件として残す
-- 返答を管理説明にしすぎない
-- 与えられていないものを見たふりしない
+ただし、CareReader が本文を書くわけではありません。
+最終返答は常に Speaker が一通だけ返します。
 
-## 畳むもの
+### listening 通常発言
 
-InterestTerm は、独立した管理対象としては強すぎます。
+listening 対象の通常発言は、低信号なら保存のみで終わることがあります。
+安い前処理で十分な信号がある時だけ CareReader を先に走らせ、`wants_to_speak` と `should_speak` の両方が立つ時だけ控えめに返します。
 
-今後は、以下のように寄せます。
+## latency と maintenance
 
-- AttentionItem: まだ閉じていない話題、問い、気にしているもの
-- Cue / Term: Attentionに反応するための語
+現行 runtime では、auto maintenance は返信前の critical path にいません。
+必要なら背景で進み、maintenance の失敗で返信自体は失敗させません。
 
-つまり、独立した三本柱としての
+今後も、この線は保ちます。
 
-```text
-MemoryMark
-AttentionItem
-InterestTerm
-```
+- reply latency を maintenance で悪化させない
+- maintenance 失敗を reply failure にしない
+- 会話品質と整理処理を必要以上に密結合させない
 
-ではなく、次の形を目指します。
+## command surface
 
-```text
-MemoryMark
-AttentionItem
-  └ cue_terms
-```
+現在の管理入口は増やしすぎません。
 
-InterestTermをすぐ削除する必要はありません。
-ただし、UI上では独立した主役にせず、将来的には AttentionCue へ移します。
+- `/status`: いまの場の状態確認
+- `/listening`: listening 対象の管理
+- `/memories`: CareMark の確認と小さな操作
+- `/guide`: いま使える入口の案内
 
-## 追加する層
+旧 `/memory` `/attention` `/interest` は current-facing surface としては使いません。
 
-CareReaderにtool操作を混ぜません。
+## これからの整理方向
 
-追加するなら、別に ToolReader / ActionPlanner を置きます。
+### 1. 会話境界を保ったまま整理する
 
-- CareReader: 記憶、Attention、Cueを見る
-- ToolReader / ActionPlanner: 自然文をtool操作の計画へ変換する
-- ToolExecutor: 許可されたtoolだけを実行する
-- Speaker: 結果を受けて、ゆのとして一通だけ返す
+- CareReader と Speaker の境界を崩さない
+- Speaker へ内部判定名、score、routing 理由を渡さない
+- ReadCue を独立 UI にしない
 
-自然文操作の流れは以下とします。
+### 2. tool 系は別層で進める
 
-```text
-User message
-→ ToolReader / ActionPlanner
-→ PermissionService
-→ RiskCheck
-→ ToolExecutor
-→ Speaker
-```
+- CareReader に tool 操作を混ぜない
+- ToolReader / ActionPlanner / executor の境界を保つ
+- read-only と write 系の危険度を分ける
 
-AIに任意shellを渡しません。
+### 3. command と UI は小さく保つ
 
-禁止する形:
+- slash command は入口と状態確認に寄せる
+- button panel は、すでに開いた対象の継続操作に限定する
+- ordinary reply はボタンだらけにしない
 
-- run_shell(command)
-- 自由なファイル読み取り
-- 権限判定をLLMに任せる
-- tool内部JSONをそのまま発話に出す
-- ログ全量をモデルへ投げる
+### 4. historical docs は履歴として残す
 
-許可する形:
+移行記録や queue 文書は、履歴として意味がある限り残します。
+ただし current runtime の説明として誤読される箇所は、注記を足すか current-facing docs 側で明確に打ち消します。
 
-- read_status()
-- read_journal(unit, since, until, limit)
-- read_bot_log(since, until, level, limit)
-- read_allowed_log(source, filter, limit)
-- get_service_status(name)
-- backup_database()
-- restart_allowed_service(name)
+## いまこの文書で提案だけにとどめるもの
 
-## 権限
+この文書で方向だけ示し、実装変更は別 PR に分けるもの:
 
-操作内容はユーザーの権限に沿わせます。
+- directed 会話の pre CareReader 条件の見直し
+- より広い tool surface
+- import / migration の再有効化
+- log / service read の拡張
 
-ただし、権限判定はAIではなくコードで行います。
-
-- owner
-- guild_admin
-- user
-
-Discord上の権限と、サーバーOS上の権限は分けます。
-
-Discord管理者ができること:
-
-- listening設定
-- channel単位の設定
-- サーバー内の表示・管理系操作
-
-ownerだけができること:
-
-- bot再起動
-- DB backup / restore
-- systemd log
-- OS側service状態
-- 危険操作
-
-危険操作は、権限があっても確認を挟みます。
-
-## scope
-
-最初から全scopeを同格にしません。
-
-内部は stream 中心を維持します。
-
-最初に扱うscope:
-
-- global
-- server
-- channel
-- stream
-
-user scope は後回しにします。
-
-## コマンド入口
-
-slash commandを機能ごとに増やしすぎません。
-
-表の入口は以下に寄せます。
-
-- /status
-- /settings
-- /memories
-- /tools
-
-旧 `/memory` `/attention` `/interest` はCareMark移行後に登録を終了しました。現在の管理入口は `/memories` と `/listening` です。
-
-対応:
-
-- /status: 現在の稼働状態、listening、sleep、DB、OpenAI、tool状態を見る
-- /settings: global / server / channel の設定を見る・変える
-- /memories: memory / attention CareMarkを扱う。ReadCueは独立表示しない
-- /tools: ログ、health、backup、service状態など、任された仕事を扱う
-
-## 実装順
-
-### 1回目: 設計基盤
-
-- scope model
-- PermissionService
-- ToolDefinition
-- ToolPlan
-- ToolResult
-- ToolRegistry
-- InterestをAttention Cueへ寄せる方針をdocsへ反映
-- 既存会話挙動は変えない
-
-### 2回目: 入口整理
-
-- /status
-- /settings
-- /memories
-- /tools
-- 既存コマンドはlegacy/debug扱い
-- 表示層とService層を分ける
-
-### 3回目: 自然文tool実行 read-only
-
-- 自然文からToolPlanを作る
-- health
-- status
-- service status
-- 権限はコードで判定
-- Speakerへは結果だけ渡す
-
-### 4回目: ログ取得と要約
-
-- allowlist log source
-- journalctl
-- bot log
-- since / until / limit / grep
-- secret mask
-- ログ要約
-
-### 5回目: 常駐運用
-
-- sleep / wake
-- backup / export / forget
-- health拡張
-- systemd docs
-- restartは確認必須
-- error確認
-
-## 判断基準
-
-迷ったら、以下を優先します。
-
-- ゆのの発話を管理説明にしない
-- 内部構造をSpeakerへ漏らさない
-- 自然文操作でも同じPermissionServiceを通す
-- Toolは増やせるようにするが、任意実行はしない
-- 便利さのためにConversationLog中心を崩さない
-- ゆのを万能管理者にしない
-- ゆのが任された道具を使う、という位置に置く
-- 追加したら、同時に畳めるものがないか見る
+実装を触る時は、何を守るかを先に書いてから分離して進めます。

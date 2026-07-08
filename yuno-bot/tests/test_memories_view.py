@@ -16,6 +16,7 @@ from yuno.commands.core import (
     create_memories_group,
     render_care_marks,
     render_maintenance_proposal,
+    render_remembered_marks,
 )
 from yuno.discord.ui import DENIED_TEXT
 from yuno.permissions import PermissionService
@@ -170,6 +171,16 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertNotIn(internal, text)
 
+    def test_remembered_renderer_starts_fixed_and_recent_sections(self):
+        text = render_remembered_marks((
+            mark('care_0001', 'memory', 'active', '青い花'),
+        ))
+
+        self.assertIn('固定で覚えていること', text)
+        self.assertIn('1. `care_0001` 覚えている', text)
+        self.assertIn('最近覚えていること', text)
+        self.assertRegex(text, r'最近覚えていること\nここにはまだない')
+
     def test_tidy_and_open_are_registered_under_memories_group(self):
         group = create_memories_group(FakeService(), PermissionService())
 
@@ -259,6 +270,8 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs['ephemeral'])
         self.assertIs(kwargs['view'], view)
         self.assertEqual([item.label for item in view.children], [f'1 {HIDE_LABEL}'])
+        self.assertIn('固定で覚えていること', text)
+        self.assertIn('最近覚えていること', text)
         self.assertIn('care_0001', text)
         self.assertNotIn('care_0002', text)
         self.assertNotIn('care_0003', text)
@@ -330,7 +343,11 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
             ('set_status', '10', 'care_0001', 'hidden'), service.calls
         )
         self.assertEqual(click.response.sent, [])
-        self.assertEqual(click.response.edits[0]['content'], 'ここにはまだない')
+        self.assertEqual(
+            click.response.edits[0]['content'],
+            '固定で覚えていること\nここにはまだない\n\n'
+            '最近覚えていること\nここにはまだない',
+        )
 
     async def test_button_rejects_non_admin_without_service_call(self):
         service = FakeService((mark('care_0001', 'memory', 'active'),))

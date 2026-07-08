@@ -24,7 +24,7 @@ ReadCueはCareMarkを選ぶための弱い手がかりです。独立した記�
 
 CareReaderは同じstreamを静かに読み、CareMark候補とReadCue更新をJSONで返します。返答本文や口調指示は書きません。directed会話では送信前に読み、返信可否判断やSpeakerへの補助に使われます。listening通常発言では低信号なら読まずに保存のみとし、必要な場合だけ割り込み判断も担います。auto maintenanceは返信前には待たず、別タスクとして進めます。
 
-Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive memory CareMarkとopen attention CareMarkから合計3件までを選び、本文だけを渡します。ReadCue、ID、状態、routing名、内部理由、scoreは渡しません。
+Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中します。補助断片は既定で空です。必要な時だけsame-streamのactive memory-like CareMarkとopen attention-like CareMarkから合計3件までを選び、本文だけを渡します。ReadCue、ID、状態、routing名、内部理由、scoreは渡しません。
 
 管理commandは現状 `/memories` と `/listening` です。`/memory`、`/attention`、`/interest` は旧table廃止に伴って登録を終了しました。表示と操作は実行したDMまたはchannelのstreamだけに限定され、すべてephemeralです。
 
@@ -33,7 +33,7 @@ Speakerは同じstreamのrecent 6件を基本に、一通の返答へ集中し�
 - DMは保存して返信します。
 - 直接mentionと、DBに保存済みのゆのの発言へのDiscord replyは保存してreplyします。
 - `LISTENING_CHANNEL_IDS` と `/listening add` の対象では人間の通常発言を保存します。
-- 通常発言は、Cue / Termやopen Attentionに軽く重なる場合だけCareReaderが読み、`wants_to_speak` と `should_speak` の両方が成立した時だけ控えめに返します。それ以外は保存のみです。
+- 通常発言は、Cue / Termやopen attention-like CareMarkに軽く重なる場合だけCareReaderが読み、`wants_to_speak` と `should_speak` の両方が成立した時だけ控えめに返します。それ以外は保存のみです。
 - listening対象で `YUNO_CALL_NAMES` の呼び名を含む発言にはplain送信で返します。
 - それ以外のguild発言は保存しません。
 - `/status` で現在の保存範囲を確認できます。

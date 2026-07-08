@@ -82,12 +82,12 @@ SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは�
 
 旧記憶は破棄しません。後続段階で、明示的なdry-run付きimportとして実装します。
 
-- 旧noteをMemoryMarkまたはAttentionItemへ変換する
+- 旧noteをmemory系またはattention系のCareMarkへ変換する
 - source messageがなければ `legacy_v2_notebook` sourceとする
 - 旧note ID、import日時、batch IDを保持する
 - scopeを拡大せず、不明なscopeは `legacy_unscoped` とする
 - 同じ旧noteを重複作成しない
-- ConversationLog由来のMemoryMark / Attentionと矛盾した場合は新しい方を優先する
+- ConversationLog由来のCareMarkと矛盾した場合は新しい方を優先する
 - previewを `data/import_preview_*.json` に出力できるようにする
 
 この互換sourceは新規記憶の通常経路には使用しません。

@@ -18,13 +18,13 @@ class SpeakerSupportMessageTests(unittest.IsolatedAsyncioTestCase):
         context = SpeakerContext(
             history=({"role": "user", "content": "A: こんにちは"},),
             reply_reason="followup",
-            speaker_note="短く返して。",
+            speaker_note="直前の流れへの軽い反応として扱う。",
         )
 
         await Speaker(client).speak(context)
 
         payload = str(client.messages)
-        self.assertIn("短く返して。", payload)
+        self.assertIn("直前の流れへの軽い反応として扱う。", payload)
         self.assertIn("さっきの流れの続きとして自然につないで大丈夫。", payload)
         self.assertNotIn("CareReader note:", payload)
         self.assertNotIn("CareReader reply_reason:", payload)

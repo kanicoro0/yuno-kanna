@@ -136,14 +136,16 @@ class MemoriesView(YunoView):
         self._shown_mark_ids = frozenset()
 
     async def prepare(self) -> str:
-        marks = await self.service.list_marks(
+        marks = tuple(await self.service.list_marks(
             self.channel_id,
             self.guild_id,
             self.kind,
             self.status,
             self.limit,
-        )
+        ))
         self._set_buttons(marks)
+        if _is_default_remembered_surface(self.kind, self.status):
+            return render_remembered_marks(marks)
         return render_care_marks(marks)
 
     def _set_buttons(self, marks: Iterable[CareMark]) -> None:
@@ -443,12 +445,17 @@ def create_memories_group(
     return group
 
 
+def render_remembered_marks(marks: Iterable[CareMark]) -> str:
+    fixed_marks = tuple(marks)
+    recent_marks: tuple[CareMark, ...] = ()
+    return '\n\n'.join((
+        _render_mark_section('固定で覚えていること', fixed_marks),
+        _render_mark_section('最近覚えていること', recent_marks),
+    ))
+
+
 def render_care_marks(marks: Iterable[CareMark]) -> str:
-    return '\n'.join(
-        f'{index}. `{mark.public_id}` {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
-        f'   {_preview(mark.text)}'
-        for index, mark in enumerate(marks, start=1)
-    ) or 'ここにはまだない'
+    return '\n'.join(_care_mark_rows(marks)) or 'ここにはまだない'
 
 
 def render_maintenance_proposal(
@@ -466,6 +473,22 @@ def render_maintenance_proposal(
         detail = _maintenance_detail(action, by_public)
         rows.append(f'{index}. {label}\n   {detail}')
     return '整理案\n' + ('\n\n'.join(rows) or 'いまは特にないよ')
+
+
+def _render_mark_section(title: str, marks: Iterable[CareMark]) -> str:
+    return f'{title}\n{render_care_marks(marks)}'
+
+
+def _care_mark_rows(marks: Iterable[CareMark]) -> tuple[str, ...]:
+    return tuple(
+        f'{index}. `{mark.public_id}` {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
+        f'   {_preview(mark.text)}'
+        for index, mark in enumerate(marks, start=1)
+    )
+
+
+def _is_default_remembered_surface(kind: str, status: str) -> bool:
+    return kind == DEFAULT_MEMORIES_KIND and status == DEFAULT_MEMORIES_STATUS
 
 
 def _maintenance_detail(

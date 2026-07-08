@@ -482,13 +482,25 @@ def render_remembered_marks(marks: Iterable[CareMark]) -> str:
         if mark.kind == 'memory' and mark.status == 'draft'
     )
     return '\n\n'.join((
-        _render_mark_section('固定で覚えていること', fixed_marks),
-        _render_mark_section('最近覚えていること', recent_marks),
+        _render_mark_section(
+            '固定で覚えていること', fixed_marks, start_index=1
+        ),
+        _render_mark_section(
+            '最近覚えていること',
+            recent_marks,
+            start_index=len(fixed_marks) + 1,
+        ),
     ))
 
 
-def render_care_marks(marks: Iterable[CareMark]) -> str:
-    return '\n'.join(_care_mark_rows(marks)) or 'ここにはまだない'
+def render_care_marks(
+    marks: Iterable[CareMark],
+    *,
+    start_index: int = 1,
+) -> str:
+    return '\n'.join(
+        _care_mark_rows(marks, start_index=start_index)
+    ) or 'ここにはまだない'
 
 
 def render_maintenance_proposal(
@@ -508,15 +520,24 @@ def render_maintenance_proposal(
     return '整理案\n' + ('\n\n'.join(rows) or 'いまは特にないよ')
 
 
-def _render_mark_section(title: str, marks: Iterable[CareMark]) -> str:
-    return f'{title}\n{render_care_marks(marks)}'
+def _render_mark_section(
+    title: str,
+    marks: Iterable[CareMark],
+    *,
+    start_index: int = 1,
+) -> str:
+    return f'{title}\n{render_care_marks(marks, start_index=start_index)}'
 
 
-def _care_mark_rows(marks: Iterable[CareMark]) -> tuple[str, ...]:
+def _care_mark_rows(
+    marks: Iterable[CareMark],
+    *,
+    start_index: int = 1,
+) -> tuple[str, ...]:
     return tuple(
         f'{index}. `{mark.public_id}` {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
         f'   {_preview(mark.text)}'
-        for index, mark in enumerate(marks, start=1)
+        for index, mark in enumerate(marks, start=start_index)
     )
 
 

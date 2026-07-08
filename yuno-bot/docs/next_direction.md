@@ -37,6 +37,7 @@ ConversationLog につく印です。
 - recent remembered: しばらく使うが、古くなったら通常参照から外してよいもの
 
 現在の最小表示では、active memory-like CareMark を fixed remembered、draft memory-like CareMark を recent remembered の表示に置きます。
+`/memories list` では draft memory-like CareMark を `固定にする` 操作で active に上げられます。
 この段階では、DB schema ではなく表示と整理方針として扱います。
 CareMark は引き続き source/evidence であり、fixed/recent の判断は元の ConversationLog と CareMark に戻れる形で進めます。
 

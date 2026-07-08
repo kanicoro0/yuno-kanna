@@ -31,8 +31,8 @@ CareMark は独立した記憶庫ではありません。
 同じ stream の会話にぶら下がる薄い印として扱います。
 
 `/memories` は CareMark 全体の名前ではなく、覚えていることの表面です。
-初期表示では active な memory-like CareMark だけを見せます。
-open な attention-like CareMark は同じ印の一種ですが、まだ閉じていない話題やあとで見るものなので、覚えていることの棚とは分けて扱います。
+`/memories list` の初期表示では active な memory-like CareMark だけを見せます。
+open な attention-like CareMark は同じ印の一種ですが、まだ閉じていない話題やあとで見るものなので、覚えていることの棚とは分けて `/memories open` で扱います。
 
 ## ReadCue
 
@@ -142,7 +142,8 @@ CareMark 作成や touch のあとで必要なら走りますが、返信前に�
 
 - `/status`
 - `/listening`
-- `/memories`: 初期表示では active memory-like CareMark を見る
+- `/memories list`: 初期表示では active memory-like CareMark を見る
+- `/memories open`: open attention-like CareMark を見る
 - `/guide`
 - selected message action panel
 

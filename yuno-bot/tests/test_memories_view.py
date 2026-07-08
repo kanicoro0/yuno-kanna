@@ -12,6 +12,7 @@ from yuno.commands.core import (
     DEFAULT_MEMORIES_KIND,
     DEFAULT_MEMORIES_STATUS,
     HIDE_LABEL,
+    PROMOTE_LABEL,
     MemoriesView,
     create_memories_group,
     render_care_marks,
@@ -171,15 +172,20 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertNotIn(internal, text)
 
-    def test_remembered_renderer_starts_fixed_and_recent_sections(self):
+    def test_remembered_renderer_splits_fixed_and_recent_sections(self):
         text = render_remembered_marks((
             mark('care_0001', 'memory', 'active', '青い花'),
+            mark('care_0002', 'memory', 'draft', '小さい花'),
         ))
 
-        self.assertIn('固定で覚えていること', text)
-        self.assertIn('1. `care_0001` 覚えている', text)
-        self.assertIn('最近覚えていること', text)
-        self.assertRegex(text, r'最近覚えていること\nここにはまだない')
+        self.assertRegex(
+            text,
+            r'固定で覚えていること\n1\. `care_0001` 覚えている',
+        )
+        self.assertRegex(
+            text,
+            r'最近覚えていること\n1\. `care_0002` まだ置いてある',
+        )
 
     def test_tidy_and_open_are_registered_under_memories_group(self):
         group = create_memories_group(FakeService(), PermissionService())
@@ -269,15 +275,19 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         text, kwargs = interaction.response.sent[0]
         self.assertTrue(kwargs['ephemeral'])
         self.assertIs(kwargs['view'], view)
-        self.assertEqual([item.label for item in view.children], [f'1 {HIDE_LABEL}'])
+        self.assertEqual(
+            [item.label for item in view.children],
+            [f'1 {HIDE_LABEL}', f'2 {PROMOTE_LABEL}'],
+        )
         self.assertIn('固定で覚えていること', text)
         self.assertIn('最近覚えていること', text)
         self.assertIn('care_0001', text)
+        self.assertIn('care_0003', text)
         self.assertNotIn('care_0002', text)
-        self.assertNotIn('care_0003', text)
-        self.assertEqual(service.calls[0], (
-            'list_marks', '10', '1', 'memory', 'active', 10,
-        ))
+        self.assertEqual(service.calls[:2], [
+            ('list_marks', '10', '1', 'memory', 'active', 10),
+            ('list_marks', '10', '1', 'memory', 'draft', 9),
+        ])
 
     async def test_list_can_explicitly_show_open_attention(self):
         service = FakeService((
@@ -347,6 +357,27 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
             click.response.edits[0]['content'],
             '固定で覚えていること\nここにはまだない\n\n'
             '最近覚えていること\nここにはまだない',
+        )
+
+    async def test_promote_recent_button_makes_draft_memory_active(self):
+        service = FakeService((
+            mark('care_0001', 'memory', 'active'),
+            mark('care_0002', 'memory', 'draft'),
+        ))
+        opening = FakeInteraction(administrator=True)
+        view = await self.open_list(service, opening)
+        click = FakeInteraction(administrator=True)
+
+        await button(view, PROMOTE_LABEL).callback(click)
+
+        self.assertIn(
+            ('set_status', '10', 'care_0002', 'active'), service.calls
+        )
+        self.assertIn('固定で覚えていること', click.response.edits[0]['content'])
+        self.assertIn('care_0002', click.response.edits[0]['content'])
+        self.assertRegex(
+            click.response.edits[0]['content'],
+            r'最近覚えていること\nここにはまだない',
         )
 
     async def test_button_rejects_non_admin_without_service_call(self):

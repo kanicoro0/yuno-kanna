@@ -1,10 +1,10 @@
 # Codex work queue
 
-This directory is the low-friction queue for Codex work on `yuno-bot`.
+This directory is the low-friction queue history for the staged `yuno-bot` refactor work.
 
 Unless a task says otherwise, run Codex tasks from the `yuno-bot/` working directory.
 
-The goal is to make the human workload as small as possible:
+The goal was to make the human workload as small as possible:
 
 1. Pick one numbered request.
 2. Paste that request into Codex.
@@ -22,7 +22,14 @@ Every Codex task should start by reading:
 - `docs/implementation_practice.md`
 - the selected file in this directory
 
-## Queue order
+## Queue record
+
+The numbered files here are primarily a historical implementation record and design breadcrumb trail.
+They are useful for understanding why current runtime boundaries exist, but they are not the current pending roadmap by default.
+
+When a new task explicitly points to one of these files, treat that file as scoped instructions for that task.
+
+## Original queue order
 
 1. `001_review_current_structure.md`
 2. `002_permission_service.md`
@@ -41,7 +48,13 @@ Every Codex task should start by reading:
 15. `015_read_operation_draft.md`
 16. `016_reaction_surface.md`
 
-Do not skip directly to tool execution. The queue intentionally builds boundaries first: permission, scope, tool definitions, status display, message intake / turn boundaries, and the simple CareMark / ReadCue base before broader natural-language operations.
+The sequence shows how the runtime moved toward the current boundaries: permission, scope, tool definitions, status display, message intake / turn boundaries, and the CareMark / ReadCue base before broader natural-language operations.
+
+Current runtime has already moved beyond this initial queue. For the live design, prefer:
+
+- `docs/yuno_design_principles.md`
+- `docs/next_direction.md`
+- `docs/implementation_practice.md`
 
 ## Default rule
 

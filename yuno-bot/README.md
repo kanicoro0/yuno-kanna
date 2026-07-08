@@ -67,13 +67,14 @@ SQLiteは既定で `data/yuno.sqlite3` に作成されます。相対パスは�
 
 `/memories` はownerまたはサーバー管理者だけが使用でき、実行したstreamのCareMarkだけを扱います。ReadCueを独立管理するcommandはありません。
 
-将来追加する場合も、入口は次へ寄せます。
+現行の user-facing な入口は次です。
 
 ```text
 /status
-/settings
+/listening
 /memories
-/tools
+/guide
+右クリック → ゆのに預ける
 ```
 
 画像・添付・音声・外部リンク本文の読み取りは未実装です。与えられていないものを見たふりはせず、CareReaderもテキストで説明された内容だけを扱います。

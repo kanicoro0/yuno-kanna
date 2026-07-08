@@ -31,6 +31,8 @@ CLOSE_LABEL = '閉じる'
 RESTORE_LABEL = '戻す'
 MISSING_MARK_TEXT = 'もう見つからないよ'
 TIDY_STALE_TEXT = 'もう状態が変わってるみたい'
+DEFAULT_MEMORIES_KIND = 'memory'
+DEFAULT_MEMORIES_STATUS = 'active'
 
 _STATUS_TEXT = {
     'draft': 'まだ置いてある',
@@ -267,20 +269,20 @@ def create_memories_group(
 ) -> app_commands.Group:
     group = app_commands.Group(
         name='memories',
-        description='この場に残した印を見る',
+        description='この場に覚えていることを見る',
     )
 
-    @group.command(name='list', description='この場所に残したものを見る')
+    @group.command(name='list', description='この場所に覚えていることを見る')
     @app_commands.describe(
-        kind='見るものの種類',
-        status='いまの状態で絞る',
+        kind='省略すると覚えていることだけを見る',
+        status='省略すると覚えているものだけを見る',
         limit='表示する件数（1〜20）',
     )
     @app_commands.choices(kind=_KIND_CHOICES, status=_STATUS_CHOICES)
     async def memories_list(
         interaction: discord.Interaction,
-        kind: str = 'all',
-        status: str = 'visible',
+        kind: str = DEFAULT_MEMORIES_KIND,
+        status: str = DEFAULT_MEMORIES_STATUS,
         limit: app_commands.Range[int, 1, 20] = 10,
     ) -> None:
         if not await _require_admin(interaction, permissions):

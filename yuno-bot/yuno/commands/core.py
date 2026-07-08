@@ -29,6 +29,7 @@ from yuno.permissions import (
 HIDE_LABEL = '隠す'
 CLOSE_LABEL = '閉じる'
 RESTORE_LABEL = '戻す'
+PROMOTE_LABEL = '固定にする'
 MISSING_MARK_TEXT = 'もう見つからないよ'
 TIDY_STALE_TEXT = 'もう状態が変わってるみたい'
 DEFAULT_MEMORIES_KIND = 'memory'
@@ -101,6 +102,8 @@ class MarkAction:
 def action_for_mark(mark: CareMark) -> Optional[MarkAction]:
     if mark.kind == 'memory' and mark.status == 'active':
         return MarkAction(HIDE_LABEL, 'hidden')
+    if mark.kind == 'memory' and mark.status == 'draft':
+        return MarkAction(PROMOTE_LABEL, 'active')
     if mark.kind == 'attention' and mark.status == 'open':
         return MarkAction(CLOSE_LABEL, 'closed')
     if mark.kind == 'attention' and mark.status == 'closed':
@@ -136,6 +139,11 @@ class MemoriesView(YunoView):
         self._shown_mark_ids = frozenset()
 
     async def prepare(self) -> str:
+        if _is_default_remembered_surface(self.kind, self.status):
+            marks = await self._default_remembered_marks()
+            self._set_buttons(marks)
+            return render_remembered_marks(marks)
+
         marks = tuple(await self.service.list_marks(
             self.channel_id,
             self.guild_id,
@@ -144,9 +152,27 @@ class MemoriesView(YunoView):
             self.limit,
         ))
         self._set_buttons(marks)
-        if _is_default_remembered_surface(self.kind, self.status):
-            return render_remembered_marks(marks)
         return render_care_marks(marks)
+
+    async def _default_remembered_marks(self) -> tuple[CareMark, ...]:
+        fixed_marks = tuple(await self.service.list_marks(
+            self.channel_id,
+            self.guild_id,
+            'memory',
+            'active',
+            self.limit,
+        ))
+        recent_limit = max(0, self.limit - len(fixed_marks))
+        if recent_limit == 0:
+            return fixed_marks
+        recent_marks = tuple(await self.service.list_marks(
+            self.channel_id,
+            self.guild_id,
+            'memory',
+            'draft',
+            recent_limit,
+        ))
+        return fixed_marks + recent_marks
 
     def _set_buttons(self, marks: Iterable[CareMark]) -> None:
         selected = tuple(marks)
@@ -446,8 +472,15 @@ def create_memories_group(
 
 
 def render_remembered_marks(marks: Iterable[CareMark]) -> str:
-    fixed_marks = tuple(marks)
-    recent_marks: tuple[CareMark, ...] = ()
+    selected = tuple(marks)
+    fixed_marks = tuple(
+        mark for mark in selected
+        if mark.kind == 'memory' and mark.status == 'active'
+    )
+    recent_marks = tuple(
+        mark for mark in selected
+        if mark.kind == 'memory' and mark.status == 'draft'
+    )
     return '\n\n'.join((
         _render_mark_section('固定で覚えていること', fixed_marks),
         _render_mark_section('最近覚えていること', recent_marks),

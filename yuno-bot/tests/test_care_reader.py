@@ -61,6 +61,20 @@ class CareReaderTests(unittest.TestCase):
         self.assertEqual(result.close_care_mark_ids, ())
         self.assertEqual(result.forget_care_mark_ids, ())
         self.assertEqual(result.promote_care_mark_ids, ())
+        self.assertEqual(result.unclear_operation, "")
+
+    def test_parse_unclear_operation_accepts_known_values_only(self) -> None:
+        for value, expected in (
+            ("forget", "forget"),
+            ("close", "close"),
+            ("promote", "promote"),
+            ("reset", ""),
+            (True, ""),
+            (None, ""),
+        ):
+            with self.subTest(value=value):
+                result = parse_care_result({"unclear_operation": value})
+                self.assertEqual(result.unclear_operation, expected)
 
 
 if __name__ == "__main__":

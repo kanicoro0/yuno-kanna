@@ -65,6 +65,19 @@ class CareMarkCommandService:
             _limit(limit),
         )
 
+    async def list_recent_marks(
+        self,
+        channel_id: str,
+        guild_id: Optional[str],
+        limit: int = 10,
+    ) -> List[CareMark]:
+        stream = await self.stream(channel_id, guild_id)
+        if stream is None:
+            return []
+        return await self.care_marks.list_recent_for_stream(
+            stream.id, _limit(limit)
+        )
+
     async def add_mark(
         self,
         channel_id: str,

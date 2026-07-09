@@ -87,17 +87,58 @@ class CareReactionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(message.reactions), 1)
 
-    async def test_hidden_closed_and_draft_marks_do_not_react(self) -> None:
+    async def test_draft_marks_do_not_react(self) -> None:
         message = FakeMessage()
 
         await CareReactionSurface().add_for_marks(message, (
-            mark('memory', 'hidden'),
             mark('memory', 'draft'),
-            mark('attention', 'closed'),
-            mark('attention', 'hidden'),
         ))
 
         self.assertEqual(message.reactions, [])
+
+    async def test_settled_marks_react_once_on_the_current_message(self) -> None:
+        channel = FakeChannel()
+        old_source = FakeMessage('前の内容', message_id=101, channel=channel)
+        channel.messages = {101: old_source}
+        request = FakeMessage(
+            'さっきのは忘れて', message_id=100, channel=channel
+        )
+        conversations = FakeConversations({
+            10: SimpleNamespace(stream_id=1, discord_message_id='101'),
+        })
+        surface = CareReactionSurface(
+            CareReactionTargetResolver(conversations)
+        )
+
+        await surface.add_for_marks(request, (
+            mark('memory', 'hidden', mark_id=1, source_message_id=10),
+            mark('attention', 'closed', mark_id=2, source_message_id=10),
+        ))
+
+        self.assertEqual(len(request.reactions), 1)
+        self.assertEqual(old_source.reactions, [])
+
+    async def test_standing_marks_win_over_settled_marks(self) -> None:
+        message = FakeMessage('こう呼んでね')
+
+        await CareReactionSurface().add_for_marks(message, (
+            mark('memory', 'hidden', '古い呼び方', mark_id=1),
+            mark('memory', 'active', '新しい呼び方', mark_id=2),
+        ))
+
+        self.assertEqual(len(message.reactions), 1)
+
+    def test_settled_picker_uses_the_quiet_settled_pool(self) -> None:
+        settled_choices = {
+            pick_care_mark_reaction(
+                mark('attention', 'closed', f'区切り {index}'),
+                f'もう終わった話 {index}',
+            )
+            for index in range(24)
+        }
+
+        self.assertGreater(len(settled_choices), 1)
+        self.assertNotIn(None, settled_choices)
 
     async def test_reaction_failure_is_isolated(self) -> None:
         class FailingMessage(FakeMessage):

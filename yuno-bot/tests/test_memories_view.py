@@ -13,10 +13,12 @@ from yuno.commands.core import (
     DEFAULT_MEMORIES_STATUS,
     HIDE_LABEL,
     PROMOTE_LABEL,
+    RESTORE_LABEL,
     MemoriesView,
     create_memories_group,
     render_care_marks,
     render_maintenance_proposal,
+    render_recent_marks,
     render_remembered_marks,
 )
 from yuno.discord.ui import DENIED_TEXT
@@ -99,6 +101,10 @@ class FakeService:
             selected = tuple(mark for mark in selected if mark.status == status)
         return selected[:limit]
 
+    async def list_recent_marks(self, channel_id, guild_id, limit=10):
+        self.calls.append(('list_recent_marks', channel_id, guild_id, limit))
+        return tuple(self.marks)[:limit]
+
     async def set_status(self, channel_id, public_id, status):
         self.calls.append(('set_status', channel_id, public_id, status))
         self.marks = tuple(
@@ -159,16 +165,19 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         await command.callback(interaction, options.get('limit', 10))
         return interaction.response.sent[0][1].get('view')
 
-    def test_renderer_uses_natural_rows_with_public_ids(self):
+    def test_renderer_uses_natural_rows_without_public_ids(self):
         text = render_care_marks((
             mark('care_0001', 'memory', 'active', '青い花'),
             mark('care_0002', 'attention', 'open', '続きの話'),
         ))
 
-        self.assertIn('1. `care_0001` 覚えている', text)
-        self.assertIn('2. `care_0002` まだ開いている', text)
+        self.assertIn('1. 覚えている', text)
+        self.assertIn('青い花', text)
+        self.assertIn('2. まだ開いている', text)
+        self.assertIn('続きの話', text)
         for internal in (
-            'CareMark', 'ReadCue', 'memory', 'attention', 'active', 'open',
+            'care_', 'CareMark', 'ReadCue', 'memory', 'attention',
+            'active', 'open',
         ):
             self.assertNotIn(internal, text)
 
@@ -180,13 +189,32 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertRegex(
             text,
-            r'固定で覚えていること\n1\. `care_0001` 覚えている',
+            r'固定で覚えていること\n1\. 覚えている',
         )
         self.assertRegex(
             text,
-            r'固定する前の候補\n2\. `care_0002` まだ置いてある',
+            r'固定する前の候補\n2\. まだ置いてある',
         )
+        self.assertNotIn('care_', text)
         self.assertNotIn('最近覚えていること', text)
+
+    def test_recent_renderer_shows_settled_and_standing_rows(self):
+        text = render_recent_marks((
+            mark('care_0001', 'memory', 'hidden', '手放した話'),
+            mark('care_0002', 'attention', 'closed', '終わった話'),
+        ))
+
+        self.assertIn('最近の動き', text)
+        self.assertIn('1. 隠している', text)
+        self.assertIn('手放した話', text)
+        self.assertIn('2. 閉じている', text)
+        self.assertNotIn('care_', text)
+
+    def test_recent_renderer_has_a_quiet_empty_state(self):
+        text = render_recent_marks(())
+
+        self.assertIn('最近の動き', text)
+        self.assertIn('まだ動きはないみたい', text)
 
     def test_tidy_and_open_are_registered_under_memories_group(self):
         group = create_memories_group(FakeService(), PermissionService())
@@ -286,9 +314,9 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_defaults_to_remembered_memory_surface(self):
         service = FakeService((
-            mark('care_0001', 'memory', 'active'),
-            mark('care_0002', 'attention', 'open'),
-            mark('care_0003', 'memory', 'draft'),
+            mark('care_0001', 'memory', 'active', '固定の言葉'),
+            mark('care_0002', 'attention', 'open', '開いた話'),
+            mark('care_0003', 'memory', 'draft', '候補の言葉'),
         ))
         interaction = FakeInteraction(administrator=True)
 
@@ -303,9 +331,10 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('固定で覚えていること', text)
         self.assertIn('固定する前の候補', text)
-        self.assertIn('1. `care_0001`', text)
-        self.assertIn('2. `care_0003`', text)
-        self.assertNotIn('care_0002', text)
+        self.assertIn('固定の言葉', text)
+        self.assertIn('候補の言葉', text)
+        self.assertNotIn('開いた話', text)
+        self.assertNotIn('care_', text)
         self.assertEqual(service.calls[:2], [
             ('list_marks', '10', '1', 'memory', 'active', 10),
             ('list_marks', '10', '1', 'memory', 'draft', 9),
@@ -313,8 +342,8 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_can_explicitly_show_open_attention(self):
         service = FakeService((
-            mark('care_0001', 'memory', 'active'),
-            mark('care_0002', 'attention', 'open'),
+            mark('care_0001', 'memory', 'active', '固定の言葉'),
+            mark('care_0002', 'attention', 'open', '開いた話'),
         ))
         interaction = FakeInteraction(administrator=True)
 
@@ -326,17 +355,17 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs['ephemeral'])
         self.assertIs(kwargs['view'], view)
         self.assertEqual([item.label for item in view.children], [f'1 {CLOSE_LABEL}'])
-        self.assertNotIn('care_0001', text)
-        self.assertIn('care_0002', text)
+        self.assertNotIn('固定の言葉', text)
+        self.assertIn('開いた話', text)
         self.assertEqual(service.calls[0], (
             'list_marks', '10', '1', 'attention', 'open', 10,
         ))
 
     async def test_open_command_shows_open_attention_surface(self):
         service = FakeService((
-            mark('care_0001', 'memory', 'active'),
-            mark('care_0002', 'attention', 'open'),
-            mark('care_0003', 'attention', 'closed'),
+            mark('care_0001', 'memory', 'active', '固定の言葉'),
+            mark('care_0002', 'attention', 'open', '開いた話'),
+            mark('care_0003', 'attention', 'closed', '終わった話'),
         ))
         interaction = FakeInteraction(administrator=True)
 
@@ -346,12 +375,58 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs['ephemeral'])
         self.assertIs(kwargs['view'], view)
         self.assertEqual([item.label for item in view.children], [f'1 {CLOSE_LABEL}'])
-        self.assertNotIn('care_0001', text)
-        self.assertIn('care_0002', text)
-        self.assertNotIn('care_0003', text)
+        self.assertNotIn('固定の言葉', text)
+        self.assertIn('開いた話', text)
+        self.assertNotIn('終わった話', text)
         self.assertEqual(service.calls[0], (
             'list_marks', '10', '1', 'attention', 'open', 10,
         ))
+
+    async def test_recent_command_shows_recent_moves_with_restore_button(self):
+        service = FakeService((
+            mark('care_0001', 'memory', 'hidden', '手放した話'),
+        ))
+        interaction = FakeInteraction(administrator=True)
+        group = create_memories_group(service, PermissionService())
+        command = group.get_command('recent')
+
+        await command.callback(interaction, 10)
+
+        text, kwargs = interaction.response.sent[0]
+        view = kwargs.get('view')
+        self.assertTrue(kwargs['ephemeral'])
+        self.assertIn('最近の動き', text)
+        self.assertIn('手放した話', text)
+        self.assertNotIn('care_', text)
+        self.assertEqual(
+            [item.label for item in view.children],
+            [f'1 {RESTORE_LABEL}'],
+        )
+        self.assertIn(('list_recent_marks', '10', '1', 10), service.calls)
+
+    async def test_recent_restore_button_brings_hidden_memory_back(self):
+        service = FakeService((
+            mark('care_0001', 'memory', 'hidden', '手放した話'),
+        ))
+        interaction = FakeInteraction(administrator=True)
+        group = create_memories_group(service, PermissionService())
+        command = group.get_command('recent')
+        await command.callback(interaction, 10)
+        view = interaction.response.sent[0][1]['view']
+        click = FakeInteraction(administrator=True)
+
+        await button(view, RESTORE_LABEL).callback(click)
+
+        self.assertIn(
+            ('set_status', '10', 'care_0001', 'active'), service.calls
+        )
+        self.assertIn('最近の動き', click.response.edits[0]['content'])
+
+    async def test_status_command_is_gone_from_the_surface(self):
+        group = create_memories_group(FakeService(), PermissionService())
+
+        self.assertIsNone(group.get_command('status'))
+        self.assertIsNotNone(group.get_command('recent'))
 
     async def test_non_admin_list_has_no_panel_or_service_read(self):
         service = FakeService((mark('care_0001', 'memory', 'active'),))
@@ -383,8 +458,8 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_promote_recent_button_makes_draft_memory_active(self):
         service = FakeService((
-            mark('care_0001', 'memory', 'active'),
-            mark('care_0002', 'memory', 'draft'),
+            mark('care_0001', 'memory', 'active', '固定の言葉'),
+            mark('care_0002', 'memory', 'draft', '候補の言葉'),
         ))
         opening = FakeInteraction(administrator=True)
         view = await self.open_list(service, opening)
@@ -396,7 +471,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
             ('set_status', '10', 'care_0002', 'active'), service.calls
         )
         self.assertIn('固定で覚えていること', click.response.edits[0]['content'])
-        self.assertIn('care_0002', click.response.edits[0]['content'])
+        self.assertIn('候補の言葉', click.response.edits[0]['content'])
         self.assertRegex(
             click.response.edits[0]['content'],
             r'固定する前の候補\nここにはまだない',

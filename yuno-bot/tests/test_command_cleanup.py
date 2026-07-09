@@ -54,14 +54,15 @@ class CareMarkCommandServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(activated.status, 'active')
 
-    async def test_renderer_keeps_public_ids_for_status_commands_without_scores(self) -> None:
+    async def test_renderer_hides_public_ids_and_scores(self) -> None:
         mark = await self.service.add_mark(
             '10', '1', 'memory', '短い本文', 'active'
         )
 
         text = render_care_marks((mark,))
 
-        self.assertIn(mark.public_id, text)
+        self.assertNotIn(mark.public_id, text)
+        self.assertNotIn('care_', text)
         self.assertIn('短い本文', text)
         self.assertNotIn('score', text.casefold())
         self.assertNotIn('weight', text.casefold())

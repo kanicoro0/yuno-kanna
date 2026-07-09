@@ -91,6 +91,18 @@ class CareMarkRepository:
         )).fetchall()
         return [self._model(row) for row in rows]
 
+    async def list_recently_updated(
+        self, stream_id: int, limit: int = 10
+    ) -> List[CareMark]:
+        """Marks in most-recently-changed order, hidden included."""
+        rows = await (await self.database.connection.execute(
+            '''SELECT * FROM care_marks
+               WHERE stream_id = ?
+               ORDER BY updated_at DESC, id DESC LIMIT ?''',
+            (stream_id, max(1, min(int(limit), 100))),
+        )).fetchall()
+        return [self._model(row) for row in rows]
+
     async def list_all_for_kind(
         self, stream_id: int, kind: str
     ) -> List[CareMark]:

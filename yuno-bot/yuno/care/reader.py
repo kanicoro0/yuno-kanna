@@ -8,6 +8,7 @@ from yuno.care.models import (
     CareReadResult,
     ReadCueUpdate,
 )
+from yuno.care.operations import UNCLEAR_OPERATIONS
 from yuno.care.safety import looks_sensitive
 from yuno.infra.openai_client import OpenAITextClient
 
@@ -32,6 +33,9 @@ ReadCueはCareMarkへ戻るための索引です。ReadCueそのものを返答�
 - promote_care_mark_ids: 「ちゃんと覚えて」「固定して」と明確に頼まれたdraft memoryだけ。
 迷ったら状態変更を出しません。頼まれていなければ空にします。
 呼び方や記憶の訂正を頼まれた時は、古い印をforget_care_mark_idsに挙げ、新しい内容をcare_mark_candidatesに出します。
+操作は明確に頼まれたが、どの印のことか決められない時は、状態変更を出さずに
+unclear_operationへforget/close/promoteのどれかを入れます。対象を推測で選びません。
+その時はshould_speakをtrueにして、短く聞き返せるようにします。
 route_reasonがlistening_only/name_seenの時は、ゆのへの明確な依頼でない限り状態変更を出しません。
 
 speaker_noteには、Speakerに渡す短い判断メモだけを書きます。返答本文を書きません。
@@ -41,7 +45,7 @@ JSON fields: wants_to_speak, should_speak, reply_reason, speaker_note,
 care_mark_candidates[{kind,status,text,confidence,sensitive,about_other_person}],
 read_cue_updates[{care_mark_public_id,candidate_text,term,weight}],
 touch_care_mark_ids, include_care_mark_ids,
-close_care_mark_ids, forget_care_mark_ids, promote_care_mark_ids。
+close_care_mark_ids, forget_care_mark_ids, promote_care_mark_ids, unclear_operation。
 kindはmemoryまたはattention。memory statusはdraftまたはactive、attention statusはopenまたはclosedです。'''
 
 _ALLOWED_REPLY_REASONS = {
@@ -120,6 +124,7 @@ def parse_care_result(data: Any) -> CareReadResult:
         close_care_mark_ids=_ids(data.get('close_care_mark_ids'), 4),
         forget_care_mark_ids=_ids(data.get('forget_care_mark_ids'), 4),
         promote_care_mark_ids=_ids(data.get('promote_care_mark_ids'), 4),
+        unclear_operation=_unclear_operation(data.get('unclear_operation')),
     )
 
 
@@ -135,6 +140,11 @@ def _objects(value: Any, limit: int) -> Iterable[Dict[str, Any]]:
     if not isinstance(value, list):
         return ()
     return (item for item in value[:limit] if isinstance(item, dict))
+
+
+def _unclear_operation(value: Any) -> str:
+    text = str(value).strip() if isinstance(value, str) else ''
+    return text if text in UNCLEAR_OPERATIONS else ''
 
 
 def _optional_id(value: Any) -> str:

@@ -151,7 +151,14 @@ CareReader を先に読むのは次のような時だけです。
 - 1 ターンあたりの適用件数に上限があります
 - 実際に状態が変わった時だけ、短い定型メモとして Speaker に結果が渡ります
 - 操作を頼まれたのに状態が変わらなかった時は、「変えたと言わない」旨のメモが渡ります
+- 操作は読み取れたが、どの印のことか決められない時は、状態を変えずに聞き返します
 - Speaker は、知らされていないのに覚えた・忘れた・閉じたと言い切りません
+
+無言で状態が変わりすぎないように、静かな可視性を持ちます。
+
+- 印がひと区切りついた・手放された時も、静かなリアクションが 1 つだけ付くことがあります
+- `/memories recent` で、この場所の最近の動きを後から見られます
+- 一覧や応答に内部 ID は出しません。操作は番号付きのボタンで行います
 
 ## 返信前に待つもの / 待たないもの
 
@@ -180,8 +187,12 @@ close_attention 以外の提案は、`/memories tidy` でも自動でも適用�
 - `/listening`
 - `/memories list`: 初期表示では active memory-like CareMark を見る
 - `/memories open`: open attention-like CareMark を見る
+- `/memories recent`: 最近状態が動いた CareMark を見る
 - `/guide`
 - selected message action panel
+
+`/memories status` のような ID 手打ちの状態変更 command は置きません。
+状態の訂正は一覧の番号付きボタン（隠す・固定にする・閉じる・戻す）で行います。
 
 旧 `/memory` `/attention` `/interest` は現行 runtime では使いません。
 

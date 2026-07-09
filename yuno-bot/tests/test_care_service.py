@@ -8,10 +8,13 @@ from yuno.care.models import (
     ReadCueUpdate,
 )
 from yuno.care.service import (
+    CareApplication,
     CareService,
     CareState,
+    care_outcome_note,
     immediate_care_decision,
 )
+from yuno.care_marks.models import CareMark
 from yuno.care_marks.repository import CareMarkRepository
 from yuno.care_marks.service import CareMarkService
 from yuno.config import Settings
@@ -359,3 +362,334 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(application.touched_care_mark_ids, (mark.public_id,))
         self.assertEqual(application.affected_care_marks[0].public_id, mark.public_id)
+
+    def test_memory_operation_language_triggers_immediate_care(self) -> None:
+        examples = (
+            'さっきのことは忘れて',
+            'それはもう覚えなくていいよ',
+            'この件は閉じていいよ',
+            'これは固定しておいて',
+        )
+        for content in examples:
+            with self.subTest(content=content):
+                decision = immediate_care_decision(content, CareState())
+                self.assertTrue(decision.run)
+
+    async def test_close_operation_closes_open_attention(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'attention', 'open', '週末の約束の話'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(close_care_mark_ids=(mark.public_id,)),
+            source_content='その件、もう閉じていいよ',
+        )
+
+        self.assertEqual(application.closed_care_mark_ids, (mark.public_id,))
+        refreshed = await self.marks.get_by_public_id(mark.public_id)
+        self.assertEqual(refreshed.status, 'closed')
+        self.assertEqual(
+            application.affected_care_marks[0].status, 'closed'
+        )
+
+    async def test_close_operation_ignores_non_open_targets(self) -> None:
+        memory = await self.marks.create(
+            self.stream.id, 'memory', 'active', '青が好き'
+        )
+        already_closed = await self.marks.create(
+            self.stream.id, 'attention', 'closed', '前の話'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(close_care_mark_ids=(
+                memory.public_id, already_closed.public_id,
+            )),
+            source_content='もう閉じていいよ',
+        )
+
+        self.assertEqual(application.closed_care_mark_ids, ())
+        self.assertEqual(
+            (await self.marks.get_by_public_id(memory.public_id)).status,
+            'active',
+        )
+
+    async def test_forget_needs_spoken_request(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(forget_care_mark_ids=(mark.public_id,)),
+            source_content='今日は晴れだね',
+        )
+
+        self.assertEqual(application.forgotten_care_mark_ids, ())
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'active',
+        )
+
+    async def test_forget_hides_mark_when_spoken_request_matches(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(forget_care_mark_ids=(mark.public_id,)),
+            source_content='さっきの呼び方はもう忘れて',
+        )
+
+        self.assertEqual(
+            application.forgotten_care_mark_ids, (mark.public_id,)
+        )
+        refreshed = await self.marks.get_by_public_id(mark.public_id)
+        self.assertEqual(refreshed.status, 'hidden')
+
+    async def test_forget_applies_at_most_two_marks_per_turn(self) -> None:
+        marks = [
+            await self.marks.create(
+                self.stream.id, 'memory', 'active', f'話その{index}'
+            )
+            for index in range(3)
+        ]
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(forget_care_mark_ids=tuple(
+                mark.public_id for mark in marks
+            )),
+            source_content='ぜんぶ忘れて',
+        )
+
+        self.assertEqual(len(application.forgotten_care_mark_ids), 2)
+        statuses = [
+            (await self.marks.get_by_public_id(mark.public_id)).status
+            for mark in marks
+        ]
+        self.assertEqual(statuses.count('hidden'), 2)
+
+    async def test_correction_forgets_old_mark_and_creates_new_one(self) -> None:
+        old = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(
+                forget_care_mark_ids=(old.public_id,),
+                care_mark_candidates=(
+                    CareMarkCandidate('memory', 'active', 'ゆきと呼ぶ'),
+                ),
+            ),
+            source_content='さっきの呼び方はやめて、ゆきって呼んで',
+        )
+
+        self.assertEqual(application.forgotten_care_mark_ids, (old.public_id,))
+        self.assertEqual(len(application.created_care_mark_ids), 1)
+        self.assertEqual(
+            (await self.marks.get_by_public_id(old.public_id)).status,
+            'hidden',
+        )
+        created = await self.marks.get_by_public_id(
+            application.created_care_mark_ids[0]
+        )
+        self.assertEqual((created.kind, created.status), ('memory', 'active'))
+        self.assertEqual(created.text, 'ゆきと呼ぶ')
+
+    async def test_promote_activates_draft_but_never_sensitive_text(self) -> None:
+        plain = await self.marks.create(
+            self.stream.id, 'memory', 'draft', '紅茶が好きらしい'
+        )
+        sensitive = await self.marks.create(
+            self.stream.id, 'memory', 'draft', '通院している'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(promote_care_mark_ids=(
+                plain.public_id, sensitive.public_id,
+            )),
+            source_content='それ、ちゃんと覚えておいて',
+        )
+
+        self.assertEqual(application.promoted_care_mark_ids, (plain.public_id,))
+        self.assertEqual(
+            (await self.marks.get_by_public_id(plain.public_id)).status,
+            'active',
+        )
+        self.assertEqual(
+            (await self.marks.get_by_public_id(sensitive.public_id)).status,
+            'draft',
+        )
+
+    async def test_promote_needs_spoken_request(self) -> None:
+        draft = await self.marks.create(
+            self.stream.id, 'memory', 'draft', '紅茶が好きらしい'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(promote_care_mark_ids=(draft.public_id,)),
+            source_content='ふうん、そうなんだ',
+        )
+
+        self.assertEqual(application.promoted_care_mark_ids, ())
+        self.assertEqual(
+            (await self.marks.get_by_public_id(draft.public_id)).status,
+            'draft',
+        )
+
+    async def test_closed_mark_is_not_included_as_reference(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'attention', 'open', '週末の約束の話'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(
+                close_care_mark_ids=(mark.public_id,),
+                include_care_mark_ids=(mark.public_id,),
+            ),
+            source_content='その件はもう閉じていい',
+        )
+
+        self.assertEqual(application.closed_care_mark_ids, (mark.public_id,))
+        self.assertEqual(application.include_care_mark_ids, ())
+
+    async def test_natural_language_close_reaches_speaker(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'attention', 'open', '週末の約束の話'
+        )
+        reader = RecordingReader(CareReadResult(
+            close_care_mark_ids=(mark.public_id,),
+        ))
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        result = await pipeline.process(
+            self.incoming('nl-close', '週末の約束の件、もう閉じていいよ', mention=True)
+        )
+
+        self.assertTrue(result.should_send)
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'closed',
+        )
+        self.assertIn('閉じた', speaker.contexts[-1].care_note)
+        self.assertNotIn('とは言わない', speaker.contexts[-1].care_note)
+
+    async def test_unfulfilled_forget_request_reaches_speaker_as_denial(self) -> None:
+        reader = RecordingReader(CareReadResult())
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        result = await pipeline.process(
+            self.incoming('nl-forget-miss', 'さっきのことは忘れて', mention=True)
+        )
+
+        self.assertTrue(result.should_send)
+        self.assertIn('忘れた、とは言わない', speaker.contexts[-1].care_note)
+
+
+class CareOutcomeNoteTests(unittest.TestCase):
+    @staticmethod
+    def mark(public_id, kind, status, text='何か'):
+        return CareMark(
+            id=1,
+            public_id=public_id,
+            stream_id=1,
+            source_message_id=None,
+            kind=kind,
+            status=status,
+            text=text,
+            created_at='now',
+            updated_at='now',
+        )
+
+    def test_notes_report_only_real_changes(self) -> None:
+        note = care_outcome_note(
+            'さっきのことは忘れて',
+            CareApplication(forgotten_care_mark_ids=('care_1',)),
+        )
+        self.assertIn('もう覚えていないことにした', note)
+        self.assertNotIn('とは言わない', note)
+
+    def test_unfulfilled_forget_request_yields_denial_note(self) -> None:
+        note = care_outcome_note('さっきのことは忘れて', CareApplication())
+        self.assertIn('忘れた、とは言わない', note)
+
+    def test_unfulfilled_close_request_yields_denial_note(self) -> None:
+        note = care_outcome_note('この話は閉じて', CareApplication())
+        self.assertIn('閉じた、とは言わない', note)
+
+    def test_remember_request_with_new_active_memory(self) -> None:
+        created = self.mark('care_1', 'memory', 'active')
+        note = care_outcome_note(
+            'これは覚えて',
+            CareApplication(
+                created_care_mark_ids=('care_1',),
+                affected_care_marks=(created,),
+            ),
+        )
+        self.assertIn('覚えることにした', note)
+        self.assertNotIn('とは言わない', note)
+
+    def test_remember_request_with_sensitive_draft_stays_humble(self) -> None:
+        created = self.mark('care_1', 'memory', 'draft')
+        note = care_outcome_note(
+            'これは覚えて',
+            CareApplication(
+                created_care_mark_ids=('care_1',),
+                affected_care_marks=(created,),
+            ),
+        )
+        self.assertIn('言い切らない', note)
+
+    def test_remember_request_touching_known_memory(self) -> None:
+        touched = self.mark('care_1', 'memory', 'active')
+        note = care_outcome_note(
+            'これは覚えておいて',
+            CareApplication(
+                touched_care_mark_ids=('care_1',),
+                affected_care_marks=(touched,),
+            ),
+        )
+        self.assertIn('前から覚えている', note)
+
+    def test_plain_talk_yields_no_note(self) -> None:
+        self.assertEqual(
+            care_outcome_note('今日は晴れだね', CareApplication()), ''
+        )
+
+    def test_notes_never_leak_internal_words(self) -> None:
+        samples = (
+            care_outcome_note('さっきのことは忘れて', CareApplication()),
+            care_outcome_note(
+                '忘れて。ついでに閉じて。あと覚えて',
+                CareApplication(
+                    forgotten_care_mark_ids=('care_1',),
+                    closed_care_mark_ids=('care_2',),
+                    promoted_care_mark_ids=('care_3',),
+                ),
+            ),
+        )
+        for note in samples:
+            lowered = note.casefold()
+            for word in (
+                'caremark', 'readcue', 'care_', 'status', 'draft', 'active',
+                'open', 'closed', 'hidden', 'memory', 'attention',
+            ):
+                self.assertNotIn(word, lowered)

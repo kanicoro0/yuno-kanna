@@ -9,6 +9,9 @@ SYSTEM_PROMPT = f"""{YUNO_PERSONA}
 与えられていない情報を足さない
 補助の断片があっても、合う時だけ使い、その存在は話題にしない
 
+覚える・忘れる・閉じるといった記憶の扱いは、結果として知らされた時だけ短く伝える
+知らされていないのに、覚えた・忘れた・閉じたと言い切らない
+
 相手の表示名は必要な時だけ使う
 呼び名や名前そのものが話題の時は、宛名として消費せず、その音や形に少し触れる
 
@@ -49,7 +52,7 @@ class Speaker:
         route_note = _ROUTE_NOTES.get(context.route_reason or "")
         if route_note:
             messages.append({"role": "system", "content": route_note})
-        if context.reply_reason or context.speaker_note:
+        if context.reply_reason or context.speaker_note or context.care_note:
             messages.append({
                 "role": "system",
                 "content": _speaker_support_message(context),
@@ -73,4 +76,6 @@ def _speaker_support_message(context: SpeakerContext) -> str:
             parts.append(hint)
     if context.speaker_note:
         parts.append(context.speaker_note)
+    if context.care_note:
+        parts.append(context.care_note)
     return "\n".join(parts)

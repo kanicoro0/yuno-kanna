@@ -10,6 +10,7 @@ from yuno.care.reader import CareReader
 from yuno.care.service import (
     CareApplication,
     CareService,
+    care_outcome_note,
     cue_salience,
     immediate_care_decision,
 )
@@ -131,6 +132,7 @@ class ConversationPipeline:
         include_care_mark_ids = []
         pre_care_completed = False
         care_mark_changes: tuple[CareMark, ...] = ()
+        care_note = ""
         if self._should_read_before_speaking(turn):
             state = await self.care_service.current_state(turn.stream_id)
             salience = cue_salience(turn.content, state.read_cues)
@@ -172,6 +174,7 @@ class ConversationPipeline:
                         turn.stream_id,
                         turn.care_source_user_message_id,
                         care_result,
+                        source_content=turn.content,
                     )
                 finally:
                     logger.info(
@@ -181,6 +184,7 @@ class ConversationPipeline:
                     )
                 include_care_mark_ids = list(application.include_care_mark_ids)
                 care_mark_changes = application.affected_care_marks
+                care_note = care_outcome_note(turn.content, application)
                 pre_care_completed = True
                 self._schedule_auto_maintain(turn.stream_id, application)
                 logger.debug(
@@ -233,6 +237,7 @@ class ConversationPipeline:
             route_reason=turn.route_reason,
             reply_reason=care_result.reply_reason,
             speaker_note=care_result.speaker_note,
+            care_note=care_note,
         )
         started = time.monotonic()
         try:
@@ -335,6 +340,7 @@ class ConversationPipeline:
                 ticket.stream_id,
                 ticket.care_source_user_message_id,
                 care_result,
+                source_content=ticket.user_content,
             )
         finally:
             logger.info(

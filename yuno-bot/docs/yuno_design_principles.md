@@ -72,6 +72,7 @@ CareReader は同じ stream を静かに読み、次のような構造化結果�
 - CareMark candidate
 - ReadCue update
 - touch / include の候補
+- 明示的に頼まれた時だけの状態変更候補（close / forget / promote）
 - 必要なら Speaker への短い補助メモ（内部では `speaker_note`）
 - `wants_to_speak` / `should_speak` のような会話上の補助判断
 
@@ -132,6 +133,25 @@ CareReader を先に読むのは次のような時だけです。
 - そのほか安い前処理で十分な信号がある
 
 低信号の通常発言では、保存のみで Speaker も CareReader も走らせないことがあります。
+
+## 自然言語による印の状態変更
+
+会話の中の明示的な頼みで、既にある印の状態を変えられます。
+
+- 「もう閉じていい」: open な attention-like CareMark を closed にする
+- 「忘れて」「もう覚えなくていい」: 対象の CareMark を hidden にする
+- 「ちゃんと覚えて」「固定して」: draft な memory-like CareMark を active にする
+- 呼び方や記憶の訂正: 古い印を hidden にし、新しい内容を candidate として置く
+
+守る線は次の通りです。
+
+- 状態変更は CareReader の提案だけでは適用しません。forget / promote は、いまの発言自体に操作の言葉が含まれる時だけ適用します
+- 推測だけで忘れません。迷う時は何もしません
+- センシティブな draft は自然言語では active に上げません
+- 1 ターンあたりの適用件数に上限があります
+- 実際に状態が変わった時だけ、短い定型メモとして Speaker に結果が渡ります
+- 操作を頼まれたのに状態が変わらなかった時は、「変えたと言わない」旨のメモが渡ります
+- Speaker は、知らされていないのに覚えた・忘れた・閉じたと言い切りません
 
 ## 返信前に待つもの / 待たないもの
 

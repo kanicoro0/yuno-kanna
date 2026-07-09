@@ -58,7 +58,7 @@ class FakeCareService:
             reply_mode=reply_mode,
         )
 
-    async def apply(self, stream_id, source_message_id, result):
+    async def apply(self, stream_id, source_message_id, result, source_content=''):
         return CareApplication()
 
 
@@ -348,7 +348,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
 
         class ApplyingCareService(FakeCareService):
-            async def apply(self, stream_id, source_message_id, result):
+            async def apply(self, stream_id, source_message_id, result, source_content=''):
                 return CareApplication(created_care_mark_ids=('care_0001',))
 
         maintenance = BlockingMaintenance()
@@ -390,7 +390,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
 
         class ApplyingCareService(FakeCareService):
-            async def apply(self, stream_id, source_message_id, result):
+            async def apply(self, stream_id, source_message_id, result, source_content=''):
                 return CareApplication(created_care_mark_ids=('care_0002',))
 
         maintenance = BlockingMaintenance()

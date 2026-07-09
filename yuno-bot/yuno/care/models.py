@@ -55,3 +55,6 @@ class CareReadResult:
     read_cue_updates: Tuple[ReadCueUpdate, ...] = ()
     touch_care_mark_ids: Tuple[str, ...] = ()
     include_care_mark_ids: Tuple[str, ...] = ()
+    close_care_mark_ids: Tuple[str, ...] = ()
+    forget_care_mark_ids: Tuple[str, ...] = ()
+    promote_care_mark_ids: Tuple[str, ...] = ()

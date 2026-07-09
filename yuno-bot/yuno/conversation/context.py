@@ -28,6 +28,7 @@ class SpeakerContext:
     route_reason: Optional[str] = None
     reply_reason: str = ''
     speaker_note: str = ''
+    care_note: str = ''
 
 
 class ContextBuilder:
@@ -48,6 +49,7 @@ class ContextBuilder:
         route_reason: Optional[str] = None,
         reply_reason: str = '',
         speaker_note: str = '',
+        care_note: str = '',
     ) -> SpeakerContext:
         recent = await self.repository.recent(stream_id, RECENT_MESSAGE_LIMIT)
         references: List[SpeakerReference] = []
@@ -73,6 +75,7 @@ class ContextBuilder:
             route_reason,
             reply_reason,
             speaker_note,
+            care_note,
         )
 
 

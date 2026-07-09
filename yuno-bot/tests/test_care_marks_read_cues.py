@@ -61,6 +61,20 @@ class CareMarkReadCueTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.marks.delete(mark.public_id))
         self.assertIsNone(await self.marks.get_by_public_id(mark.public_id))
 
+    async def test_public_id_is_never_reused_after_deleting_newest(self) -> None:
+        await self.marks.create(self.stream.id, 'memory', 'draft', 'first')
+        newest = await self.marks.create(
+            self.stream.id, 'memory', 'draft', 'second'
+        )
+        self.assertEqual(newest.public_id, 'care_0002')
+        self.assertTrue(await self.marks.delete(newest.public_id))
+
+        recreated = await self.marks.create(
+            self.stream.id, 'memory', 'draft', 'third'
+        )
+
+        self.assertEqual(recreated.public_id, 'care_0003')
+
     async def test_attention_statuses_remain_distinct(self) -> None:
         mark = await self.marks.create(
             self.stream.id, 'attention', 'open', 'unfinished topic'

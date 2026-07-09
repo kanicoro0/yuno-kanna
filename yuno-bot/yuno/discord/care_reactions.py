@@ -63,6 +63,9 @@ class CareReactionSurface:
         add_reaction = getattr(target, 'add_reaction', None)
         if not callable(add_reaction):
             return
+        # A quiet surface: at most one reaction per batch. The loop only
+        # walks newest-first past marks whose seed yields no emoji; the
+        # first attempted reaction ends it, even when Discord rejects it.
         for mark in reversed(selected):
             emoji = pick_care_mark_reaction(mark, target.content)
             if emoji is None:

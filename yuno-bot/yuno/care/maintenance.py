@@ -69,7 +69,13 @@ class CareMaintenanceReader(Protocol):
 
 
 class CareMaintenanceService:
-    """Builds bounded cleanup proposals without applying them."""
+    """Builds bounded cleanup proposals and applies close_attention only.
+
+    propose_for_stream never writes. apply_selected writes one confirmed
+    close_attention. auto_close_after_activity applies close_attention
+    proposals automatically, without user confirmation, up to
+    MAX_AUTOMATIC_CLOSES per run. Every other action stays proposal-only.
+    """
 
     def __init__(
         self,
@@ -148,6 +154,12 @@ class CareMaintenanceService:
         *,
         protected_public_ids: Sequence[str] = (),
     ) -> Tuple[str, ...]:
+        """Automatically close proposed open attentions, no confirmation.
+
+        Runs in the background after care activity and applies up to
+        MAX_AUTOMATIC_CLOSES close_attention proposals, skipping marks the
+        current turn just created or touched.
+        """
         proposal = await self.propose_for_stream(stream_id)
         protected = frozenset(protected_public_ids)
         closed = []

@@ -36,7 +36,8 @@ ConversationLog につく印です。
 - fixed remembered: 明示的な呼び名、強い好み、設定、相手が覚えてほしいと言ったもの
 - recent remembered: しばらく使うが、古くなったら通常参照から外してよいもの
 
-現在の最小表示では、active memory-like CareMark を fixed remembered、draft memory-like CareMark を recent remembered の表示に置きます。
+現在の最小表示では、active memory-like CareMark を fixed remembered として「固定で覚えていること」に、draft memory-like CareMark を「固定する前の候補」に置きます。
+draft は Speaker 参照されないため、recent remembered(返答でも使う最近の記憶)はまだ実装されていません。表示上も「覚えている」とは言いません。
 `/memories list` では draft memory-like CareMark を `固定にする` 操作で active に上げられます。
 この段階では、DB schema ではなく表示と整理方針として扱います。
 CareMark は引き続き source/evidence であり、fixed/recent の判断は元の ConversationLog と CareMark に戻れる形で進めます。
@@ -78,6 +79,7 @@ listening 対象の通常発言は、低信号なら保存のみで終わるこ�
 
 現行 runtime では、auto maintenance は返信前の critical path にいません。
 必要なら背景で進み、maintenance の失敗で返信自体は失敗させません。
+背景の auto maintenance は close_attention に限り、確認なしで 1 回あたり最大 3 件まで自動適用します。それ以外の提案は表示のみです。
 
 今後も、この線は保ちます。
 

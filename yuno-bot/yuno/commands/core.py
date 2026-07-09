@@ -32,6 +32,8 @@ RESTORE_LABEL = '戻す'
 PROMOTE_LABEL = '固定にする'
 MISSING_MARK_TEXT = 'もう見つからないよ'
 TIDY_STALE_TEXT = 'もう状態が変わってるみたい'
+# Only close_attention has an apply button; other proposals are read-only.
+VIEW_ONLY_SUFFIX = '（いまは見るだけ）'
 DEFAULT_MEMORIES_KIND = 'memory'
 DEFAULT_MEMORIES_STATUS = 'active'
 
@@ -486,7 +488,9 @@ def render_remembered_marks(marks: Iterable[CareMark]) -> str:
             '固定で覚えていること', fixed_marks, start_index=1
         ),
         _render_mark_section(
-            '最近覚えていること',
+            # Draft memories are not referenced in replies yet, so this
+            # section must not claim they are already remembered.
+            '固定する前の候補',
             recent_marks,
             start_index=len(fixed_marks) + 1,
         ),
@@ -515,6 +519,8 @@ def render_maintenance_proposal(
         label = _MAINTENANCE_LABELS.get(action.action)
         if label is None:
             continue
+        if action.action != 'close_attention':
+            label = f'{label}{VIEW_ONLY_SUFFIX}'
         detail = _maintenance_detail(action, by_public)
         rows.append(f'{index}. {label}\n   {detail}')
     return '整理案\n' + ('\n\n'.join(rows) or 'いまは特にないよ')

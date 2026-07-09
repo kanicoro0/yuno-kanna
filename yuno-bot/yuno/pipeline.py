@@ -287,6 +287,14 @@ class ConversationPipeline:
     async def observe_after_send(
         self, ticket: Optional[ObservationTicket]
     ) -> Optional[CareApplication]:
+        """Fallback care read for replies sent without a pre-send read.
+
+        With the default wiring every sent reply already completed the
+        pre-send care read (directed routes always run it; passive routes
+        only speak when it ran), so this usually returns None. It matters
+        only for wirings that send replies without care components on the
+        pre-send path.
+        """
         if (
             ticket is None
             or ticket.pre_care_completed

@@ -33,6 +33,16 @@ class DesignGuardTests(unittest.TestCase):
         self.assertIn("呼ばれたら返す", text)
         self.assertNotIn("CareReader", text)
 
+    def test_speaker_does_not_claim_memory_operations_on_its_own(self) -> None:
+        self.assertIn(
+            "知らされていないのに、覚えた・忘れた・閉じたと言い切らない",
+            SYSTEM_PROMPT,
+        )
+
+    def test_care_reader_state_changes_require_explicit_requests(self) -> None:
+        self.assertIn("推測で忘れません", CARE_SYSTEM_PROMPT)
+        self.assertIn("迷ったら状態変更を出しません", CARE_SYSTEM_PROMPT)
+
     def test_prompts_do_not_claim_unprovided_capabilities(self) -> None:
         self.assertIn("与えられていない情報を足さない", SYSTEM_PROMPT)
         for word in ("履歴", "references", "memory mark", "attention item"):

@@ -26,12 +26,22 @@ ReadCueはCareMarkへ戻るための索引です。ReadCueそのものを返答�
 - 名前が含まれていても、名前そのものの話題・偶然の文字列・独り言ならshould_speak=false。
 - listening通常発言へ割り込むのは、今この場で本当に一言返したい時だけ。
 
+既にある印の状態変更は、明示的に頼まれた時だけ候補を出します:
+- close_care_mark_ids: 「もう閉じていい」「終わったよ」など、会話上はっきり区切りがついたopen attentionを閉じる。
+- forget_care_mark_ids: 「忘れて」「もう覚えなくていい」と明確に頼まれた対象だけ。推測で忘れません。
+- promote_care_mark_ids: 「ちゃんと覚えて」「固定して」と明確に頼まれたdraft memoryだけ。
+迷ったら状態変更を出しません。頼まれていなければ空にします。
+呼び方や記憶の訂正を頼まれた時は、古い印をforget_care_mark_idsに挙げ、新しい内容をcare_mark_candidatesに出します。
+route_reasonがlistening_only/name_seenの時は、ゆのへの明確な依頼でない限り状態変更を出しません。
+
 speaker_noteには、Speakerに渡す短い判断メモだけを書きます。返答本文を書きません。
+覚えた・忘れた・閉じたという結果報告はspeaker_noteに書きません。それは適用結果から別に伝えられます。
 reply_reasonは direct_call, mention, reply_to_yuno, followup, casual_reaction, name_topic, overheard_only, none のいずれか。
 JSON fields: wants_to_speak, should_speak, reply_reason, speaker_note,
 care_mark_candidates[{kind,status,text,confidence,sensitive,about_other_person}],
 read_cue_updates[{care_mark_public_id,candidate_text,term,weight}],
-touch_care_mark_ids, include_care_mark_ids。
+touch_care_mark_ids, include_care_mark_ids,
+close_care_mark_ids, forget_care_mark_ids, promote_care_mark_ids。
 kindはmemoryまたはattention。memory statusはdraftまたはactive、attention statusはopenまたはclosedです。'''
 
 _ALLOWED_REPLY_REASONS = {
@@ -107,6 +117,9 @@ def parse_care_result(data: Any) -> CareReadResult:
         read_cue_updates=tuple(cue_updates),
         touch_care_mark_ids=_ids(data.get('touch_care_mark_ids'), 8),
         include_care_mark_ids=_ids(data.get('include_care_mark_ids'), 8),
+        close_care_mark_ids=_ids(data.get('close_care_mark_ids'), 4),
+        forget_care_mark_ids=_ids(data.get('forget_care_mark_ids'), 4),
+        promote_care_mark_ids=_ids(data.get('promote_care_mark_ids'), 4),
     )
 
 

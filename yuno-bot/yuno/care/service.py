@@ -26,6 +26,9 @@ class CareApplication:
     upserted_read_cue_ids: Tuple[int, ...] = ()
     include_care_mark_ids: Tuple[str, ...] = ()
     affected_care_marks: Tuple[CareMark, ...] = ()
+    closed_care_mark_ids: Tuple[str, ...] = ()
+    forgotten_care_mark_ids: Tuple[str, ...] = ()
+    promoted_care_mark_ids: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -41,9 +44,29 @@ _CARE_TRIGGER_TERMS = (
     ('name_preference', ('呼んで', '呼び名', '名前')),
     ('preference', ('好き', '嫌い', '苦手', '好み')),
     ('schedule_or_task', ('予定', '締切', 'やること', '忘れそう')),
+    ('memory_operation', (
+        '忘れて', '覚えなくていい', '閉じていい', '固定して', 'なかったこと',
+    )),
 )
 _STRONG_CUE_SALIENCE = 0.5
 _STRONG_ATTENTION_OVERLAP = 0.6
+
+# Spoken-request gates for state changes. Reader proposals alone are not
+# enough for the riskier operations; the current message itself must also
+# carry the request, so a stray proposal cannot quietly change state.
+_FORGET_REQUEST_TERMS = (
+    '忘れて', '忘れよ', '覚えなくていい', '覚えないで', '消して', 'やめて',
+    'なかったこと',
+)
+_REMEMBER_REQUEST_TERMS = (
+    '覚えて', '固定', '記憶して', 'メモして', '忘れないで',
+)
+_CLOSE_REQUEST_TERMS = (
+    '閉じて', '閉じよ', 'もう終わ', '解決した', '済んだ', '片付いた',
+)
+MAX_CLOSE_OPERATIONS = 3
+MAX_FORGET_OPERATIONS = 2
+MAX_PROMOTE_OPERATIONS = 2
 
 
 class CareService:
@@ -110,6 +133,7 @@ class CareService:
         stream_id: int,
         source_message_id: int,
         result: CareReadResult,
+        source_content: str = '',
     ) -> CareApplication:
         state = await self.current_state(stream_id)
         by_public: Dict[str, CareMark] = {
@@ -193,6 +217,14 @@ class CareService:
             _remember_affected(affected, mark)
             _remember_target(candidate_targets, normalized, mark)
 
+        closed = await self._apply_close(result, by_public, affected)
+        forgotten = await self._apply_forget(
+            result, source_content, created, by_public, affected
+        )
+        promoted = await self._apply_promote(
+            result, source_content, by_public, affected
+        )
+
         cue_ids = []
         for update in result.read_cue_updates[:8]:
             mark = by_public.get(update.care_mark_public_id or '')
@@ -225,7 +257,90 @@ class CareService:
         return CareApplication(
             tuple(created), tuple(touched), tuple(cue_ids), included,
             tuple(affected),
+            closed_care_mark_ids=tuple(closed),
+            forgotten_care_mark_ids=tuple(forgotten),
+            promoted_care_mark_ids=tuple(promoted),
         )
+
+    async def _apply_close(
+        self,
+        result: CareReadResult,
+        by_public: Dict[str, CareMark],
+        affected: List[CareMark],
+    ) -> List[str]:
+        closed: List[str] = []
+        for public_id in result.close_care_mark_ids:
+            if len(closed) >= MAX_CLOSE_OPERATIONS:
+                break
+            mark = by_public.get(public_id)
+            if mark is None or mark.kind != 'attention' or mark.status != 'open':
+                continue
+            updated = await self.care_marks.update(public_id, status='closed')
+            if updated is not None:
+                closed.append(public_id)
+                by_public[public_id] = updated
+                _remember_affected(affected, updated)
+        return closed
+
+    async def _apply_forget(
+        self,
+        result: CareReadResult,
+        source_content: str,
+        created: List[str],
+        by_public: Dict[str, CareMark],
+        affected: List[CareMark],
+    ) -> List[str]:
+        if not result.forget_care_mark_ids:
+            return []
+        if not requests_forget(source_content):
+            return []
+        forgotten: List[str] = []
+        for public_id in result.forget_care_mark_ids:
+            if len(forgotten) >= MAX_FORGET_OPERATIONS:
+                break
+            mark = by_public.get(public_id)
+            if (
+                mark is None
+                or mark.status == 'hidden'
+                or public_id in created
+            ):
+                continue
+            updated = await self.care_marks.update(public_id, status='hidden')
+            if updated is not None:
+                forgotten.append(public_id)
+                by_public[public_id] = updated
+                _remember_affected(affected, updated)
+        return forgotten
+
+    async def _apply_promote(
+        self,
+        result: CareReadResult,
+        source_content: str,
+        by_public: Dict[str, CareMark],
+        affected: List[CareMark],
+    ) -> List[str]:
+        if not result.promote_care_mark_ids:
+            return []
+        if not requests_remember(source_content):
+            return []
+        promoted: List[str] = []
+        for public_id in result.promote_care_mark_ids:
+            if len(promoted) >= MAX_PROMOTE_OPERATIONS:
+                break
+            mark = by_public.get(public_id)
+            if (
+                mark is None
+                or mark.kind != 'memory'
+                or mark.status != 'draft'
+                or looks_sensitive(mark.text)
+            ):
+                continue
+            updated = await self.care_marks.update(public_id, status='active')
+            if updated is not None:
+                promoted.append(public_id)
+                by_public[public_id] = updated
+                _remember_affected(affected, updated)
+        return promoted
 
 
 def normalize_for_match(value: str) -> str:
@@ -260,6 +375,70 @@ def immediate_care_decision(
     if attention_overlap(content, state.care_marks) >= _STRONG_ATTENTION_OVERLAP:
         return CareTriggerDecision(True, 'open_attention', salience)
     return CareTriggerDecision(False, 'low_signal', salience)
+
+
+def requests_forget(content: str) -> bool:
+    return _contains_any(content, _FORGET_REQUEST_TERMS)
+
+
+def requests_remember(content: str) -> bool:
+    return _contains_any(content, _REMEMBER_REQUEST_TERMS)
+
+
+def requests_close(content: str) -> bool:
+    return _contains_any(content, _CLOSE_REQUEST_TERMS)
+
+
+def care_outcome_note(source_content: str, application: CareApplication) -> str:
+    """Short fixed-form Speaker notes about what actually happened.
+
+    Lines exist only for state that really changed, plus explicit
+    "do not claim it" lines when the message asked for a change that
+    did not happen. Forgotten mark text is never repeated here.
+    """
+    parts: List[str] = []
+    if application.forgotten_care_mark_ids:
+        parts.append('いま、頼まれたことをひとつ手放して、もう覚えていないことにした')
+    if application.closed_care_mark_ids:
+        parts.append('いま、あとで見るつもりだったことをひと区切りつけて閉じた')
+    if application.promoted_care_mark_ids:
+        parts.append('いま、言われたことをちゃんと覚えることにした')
+
+    if requests_remember(source_content) and not application.promoted_care_mark_ids:
+        parts.append(_remember_outcome(application))
+    if requests_forget(source_content) and not application.forgotten_care_mark_ids:
+        parts.append('忘れることは、いまここでは起きていない。忘れた、とは言わない')
+    if requests_close(source_content) and not application.closed_care_mark_ids:
+        parts.append('閉じることは、いまここでは起きていない。閉じた、とは言わない')
+    return '\n'.join(parts)
+
+
+def _remember_outcome(application: CareApplication) -> str:
+    by_id = {mark.public_id: mark for mark in application.affected_care_marks}
+    created = [
+        by_id[public_id]
+        for public_id in application.created_care_mark_ids
+        if public_id in by_id
+    ]
+    touched = [
+        by_id[public_id]
+        for public_id in application.touched_care_mark_ids
+        if public_id in by_id
+    ]
+    if any(mark.kind == 'memory' and mark.status == 'active' for mark in created):
+        return 'いま、言われたことを覚えることにした'
+    if any(mark.kind == 'memory' and mark.status == 'draft' for mark in created):
+        return 'いま、言われたことはそっと預かっている。覚えた、とまでは言い切らない'
+    if any(mark.kind == 'memory' and mark.status == 'active' for mark in touched):
+        return 'それは前から覚えている'
+    return '覚えることは、いまここでは起きていない。覚えた、とは言わない'
+
+
+def _contains_any(content: str, terms: Tuple[str, ...]) -> bool:
+    normalized = normalize_for_match(content)
+    if not normalized:
+        return False
+    return any(normalize_for_match(term) in normalized for term in terms)
 
 
 def overlaps_attention(content: str, marks: Iterable[CareMark]) -> bool:
@@ -300,8 +479,11 @@ def _remember_target(
 
 
 def _remember_affected(marks: List[CareMark], mark: CareMark) -> None:
-    if all(existing.public_id != mark.public_id for existing in marks):
-        marks.append(mark)
+    for index, existing in enumerate(marks):
+        if existing.public_id == mark.public_id:
+            marks[index] = mark
+            return
+    marks.append(mark)
 
 
 def _grams(value: str) -> set:

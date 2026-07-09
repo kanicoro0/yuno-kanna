@@ -33,6 +33,29 @@ class SpeakerSupportMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("followup", payload)
         self.assertNotIn("CareReader", payload)
 
+    async def test_care_note_is_passed_without_internal_labels(self) -> None:
+        class CapturingClient:
+            def __init__(self):
+                self.messages = []
+
+            async def complete(self, messages):
+                self.messages = messages
+                return "ok"
+
+        client = CapturingClient()
+        context = SpeakerContext(
+            history=({"role": "user", "content": "A: さっきのことは忘れて"},),
+            care_note="いま、頼まれたことをひとつ手放して、もう覚えていないことにした",
+        )
+
+        await Speaker(client).speak(context)
+
+        payload = str(client.messages)
+        self.assertIn("もう覚えていないことにした", payload)
+        self.assertNotIn("care_note", payload)
+        self.assertNotIn("CareMark", payload)
+        self.assertNotIn("hidden", payload)
+
     async def test_references_still_pass_through_with_support_message(self) -> None:
         class CapturingClient:
             def __init__(self):

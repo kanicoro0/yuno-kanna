@@ -44,6 +44,24 @@ class CareReaderTests(unittest.TestCase):
 
         self.assertEqual(result.reply_reason, "")
 
+    def test_parse_state_change_id_lists(self) -> None:
+        result = parse_care_result({
+            "close_care_mark_ids": ["care_0001", "not-a-care-id", "care_0001"],
+            "forget_care_mark_ids": ["care_0002"],
+            "promote_care_mark_ids": ["care_0003", 7],
+        })
+
+        self.assertEqual(result.close_care_mark_ids, ("care_0001",))
+        self.assertEqual(result.forget_care_mark_ids, ("care_0002",))
+        self.assertEqual(result.promote_care_mark_ids, ("care_0003",))
+
+    def test_parse_missing_state_change_lists_stay_empty(self) -> None:
+        result = parse_care_result({"should_speak": True})
+
+        self.assertEqual(result.close_care_mark_ids, ())
+        self.assertEqual(result.forget_care_mark_ids, ())
+        self.assertEqual(result.promote_care_mark_ids, ())
+
 
 if __name__ == "__main__":
     unittest.main()

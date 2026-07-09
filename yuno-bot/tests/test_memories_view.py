@@ -172,7 +172,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertNotIn(internal, text)
 
-    def test_remembered_renderer_splits_fixed_and_recent_sections(self):
+    def test_remembered_renderer_splits_fixed_and_candidate_sections(self):
         text = render_remembered_marks((
             mark('care_0001', 'memory', 'active', '青い花'),
             mark('care_0002', 'memory', 'draft', '小さい花'),
@@ -184,8 +184,9 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertRegex(
             text,
-            r'最近覚えていること\n2\. `care_0002` まだ置いてある',
+            r'固定する前の候補\n2\. `care_0002` まだ置いてある',
         )
+        self.assertNotIn('最近覚えていること', text)
 
     def test_tidy_and_open_are_registered_under_memories_group(self):
         group = create_memories_group(FakeService(), PermissionService())
@@ -218,6 +219,27 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('星の話を続ける', text)
         for internal in ('care_', 'resolved', 'close_attention', 'memory', 'attention'):
             self.assertNotIn(internal, text)
+
+    def test_tidy_renderer_marks_non_applicable_actions_as_view_only(self):
+        proposal = CareMaintenanceProposal(1, (
+            CareMaintenanceAction(
+                'close_attention', ('care_0001',), reason='resolved'
+            ),
+            CareMaintenanceAction(
+                'merge_attention', ('care_0002', 'care_0003'),
+                proposed_text='似た話をまとめる',
+            ),
+            CareMaintenanceAction('promote_draft_memory', ('care_0004',)),
+        ))
+
+        text = render_maintenance_proposal(proposal)
+
+        lines = text.splitlines()
+        closable = next(line for line in lines if '閉じてもよさそう' in line)
+        self.assertNotIn('（いまは見るだけ）', closable)
+        for label in ('まとめられそう', '残してもよさそう'):
+            row = next(line for line in lines if label in line)
+            self.assertIn('（いまは見るだけ）', row)
 
     def test_tidy_renderer_filters_internal_proposed_text(self):
         proposal = CareMaintenanceProposal(1, (
@@ -280,7 +302,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
             [f'1 {HIDE_LABEL}', f'2 {PROMOTE_LABEL}'],
         )
         self.assertIn('固定で覚えていること', text)
-        self.assertIn('最近覚えていること', text)
+        self.assertIn('固定する前の候補', text)
         self.assertIn('1. `care_0001`', text)
         self.assertIn('2. `care_0003`', text)
         self.assertNotIn('care_0002', text)
@@ -356,7 +378,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             click.response.edits[0]['content'],
             '固定で覚えていること\nここにはまだない\n\n'
-            '最近覚えていること\nここにはまだない',
+            '固定する前の候補\nここにはまだない',
         )
 
     async def test_promote_recent_button_makes_draft_memory_active(self):
@@ -377,7 +399,7 @@ class MemoriesViewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('care_0002', click.response.edits[0]['content'])
         self.assertRegex(
             click.response.edits[0]['content'],
-            r'最近覚えていること\nここにはまだない',
+            r'固定する前の候補\nここにはまだない',
         )
 
     async def test_button_rejects_non_admin_without_service_call(self):

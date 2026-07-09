@@ -112,10 +112,12 @@ class CareService:
         result: CareReadResult,
     ) -> CareApplication:
         state = await self.current_state(stream_id)
-        marks: List[CareMark] = list(state.care_marks)
         by_public: Dict[str, CareMark] = {
-            mark.public_id: mark for mark in marks
+            mark.public_id: mark for mark in state.care_marks
         }
+        # Duplicate checks read every mark of the candidate's kind, hidden
+        # included, so they are not limited by the visible-state window.
+        dedup_marks: Dict[str, List[CareMark]] = {}
         candidate_targets: Dict[str, Optional[CareMark]] = {}
         created = []
         touched = []
@@ -143,12 +145,21 @@ class CareService:
             normalized = normalize_for_match(candidate.text)
             if not normalized:
                 continue
+            if candidate.kind not in dedup_marks:
+                dedup_marks[candidate.kind] = (
+                    await self.care_marks.list_all_for_kind(
+                        stream_id, candidate.kind
+                    )
+                )
+            same_text = [
+                mark for mark in dedup_marks[candidate.kind]
+                if normalize_for_match(mark.text) == normalized
+            ]
             matching = next((
-                mark for mark in marks
-                if mark.kind == candidate.kind
-                and normalize_for_match(mark.text) == normalized
+                mark for mark in same_text
+                if mark.status != 'hidden'
                 and (
-                    mark.kind == 'memory'
+                    candidate.kind == 'memory'
                     or mark.status == 'open' and status == 'open'
                 )
             ), None)
@@ -162,6 +173,10 @@ class CareService:
                         _remember_affected(affected, touched_mark)
                 _remember_target(candidate_targets, normalized, matching)
                 continue
+            if any(mark.status == 'hidden' for mark in same_text):
+                # The same text was hidden on purpose; a candidate must not
+                # quietly bring it back as a new mark.
+                continue
             try:
                 mark = await self.care_marks.create(
                     stream_id=stream_id,
@@ -172,7 +187,7 @@ class CareService:
                 )
             except ValueError:
                 continue
-            marks.append(mark)
+            dedup_marks[candidate.kind].append(mark)
             by_public[mark.public_id] = mark
             created.append(mark.public_id)
             _remember_affected(affected, mark)

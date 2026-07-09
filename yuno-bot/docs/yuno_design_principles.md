@@ -39,7 +39,8 @@ open な attention-like CareMark は同じ印の一種ですが、まだ閉じ�
 - fixed remembered: 明示的な呼び名、強い好み、設定、相手が覚えてほしいと言ったもの。明示的な削除や訂正がない限り、勝手に流さない
 - recent remembered: しばらく使えるが、件数制限や時間経過で通常参照から外してよいもの。元の ConversationLog と CareMark は根拠として残す
 
-現在の最小表示では、active な memory-like CareMark を「固定で覚えていること」、draft な memory-like CareMark を「最近覚えていること」に出します。
+現在の最小表示では、active な memory-like CareMark を「固定で覚えていること」、draft な memory-like CareMark を「固定する前の候補」に出します。
+draft な memory-like CareMark は、返答時の Speaker 参照には使われません。返答で参照されるのは active な memory-like CareMark と open な attention-like CareMark だけです。
 `/memories list` では draft な memory-like CareMark を `固定にする` 操作で active に上げられます。
 この分割はまず表示と整理方針として扱います。
 DB schema、CareReader contract、Speaker reference selection を同時に変えません。
@@ -136,6 +137,11 @@ CareReader を先に読むのは次のような時だけです。
 
 現行 runtime では、`auto maintenance` を返信前の critical path に置きません。
 CareMark 作成や touch のあとで必要なら走りますが、返信前には待たず、背景で進みます。
+
+auto maintenance は提案を作るだけではありません。
+close_attention に限り、確認なしで 1 回あたり最大 3 件まで自動で適用します。
+そのターンで作成・touch された印は自動 close の対象から守られます。
+close_attention 以外の提案は、`/memories tidy` でも自動でも適用されず、表示のみです。
 
 この設計で守りたいことは次の通りです。
 

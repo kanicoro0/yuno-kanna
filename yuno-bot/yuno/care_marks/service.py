@@ -42,6 +42,17 @@ class CareMarkService:
             stream_id, kinds, statuses, limit
         )
 
+    async def list_all_for_kind(
+        self, stream_id: int, kind: str
+    ) -> List[CareMark]:
+        """Every mark of one kind, hidden included, for duplicate checks.
+
+        Not for Speaker/CareReader visible state; use list_for_stream there.
+        """
+        if kind not in CARE_MARK_STATUSES:
+            raise ValueError('invalid care mark kind')
+        return await self.repository.list_all_for_kind(stream_id, kind)
+
     async def list_for_source(
         self,
         stream_id: int,

@@ -23,8 +23,14 @@ class CareMarkRepository:
     ) -> CareMark:
         now = utc_now()
         async with self._create_lock:
+            # sqlite_sequence keeps the highest id ever assigned, so deleting
+            # the newest mark cannot hand its public_id to a different mark.
             row = await (await self.database.connection.execute(
-                'SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM care_marks'
+                '''SELECT COALESCE(
+                       (SELECT seq FROM sqlite_sequence
+                        WHERE name = 'care_marks'),
+                       0
+                   ) + 1 AS next_id'''
             )).fetchone()
             next_id = int(row['next_id'])
             public_id = f'care_{next_id:04d}'
@@ -82,6 +88,18 @@ class CareMarkRepository:
                 WHERE {where_clause}
                 ORDER BY id DESC LIMIT ?''',
             tuple(parameters),
+        )).fetchall()
+        return [self._model(row) for row in rows]
+
+    async def list_all_for_kind(
+        self, stream_id: int, kind: str
+    ) -> List[CareMark]:
+        """Every mark of one kind, hidden included, for duplicate checks."""
+        rows = await (await self.database.connection.execute(
+            '''SELECT * FROM care_marks
+               WHERE stream_id = ? AND kind = ?
+               ORDER BY id DESC''',
+            (stream_id, kind),
         )).fetchall()
         return [self._model(row) for row in rows]
 

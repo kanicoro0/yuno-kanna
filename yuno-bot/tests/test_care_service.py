@@ -238,6 +238,96 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
             (existing.public_id,),
         )
 
+    async def test_hidden_memory_is_not_recreated_by_candidate(self) -> None:
+        hidden = await self.marks.create(
+            self.stream.id, 'memory', 'active', '青い花が好き'
+        )
+        await self.marks.update(hidden.public_id, status='hidden')
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(care_mark_candidates=(
+                CareMarkCandidate('memory', 'active', '青い花が好き'),
+            )),
+        )
+
+        self.assertEqual(application.created_care_mark_ids, ())
+        self.assertEqual(application.touched_care_mark_ids, ())
+        remaining = await self.marks.list_for_stream(
+            self.stream.id, statuses=('draft', 'active', 'hidden')
+        )
+        self.assertEqual(
+            [mark.status for mark in remaining], ['hidden']
+        )
+
+    async def test_hidden_attention_is_not_recreated_by_candidate(self) -> None:
+        hidden = await self.marks.create(
+            self.stream.id, 'attention', 'open', 'あとで見る話'
+        )
+        await self.marks.update(hidden.public_id, status='hidden')
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(care_mark_candidates=(
+                CareMarkCandidate('attention', 'open', 'あとで見る話'),
+            )),
+        )
+
+        self.assertEqual(application.created_care_mark_ids, ())
+        remaining = await self.marks.list_for_stream(
+            self.stream.id, statuses=('open', 'closed', 'hidden')
+        )
+        self.assertEqual([mark.status for mark in remaining], ['hidden'])
+
+    async def test_visible_match_still_wins_over_hidden_twin(self) -> None:
+        hidden = await self.marks.create(
+            self.stream.id, 'memory', 'active', '月の話'
+        )
+        await self.marks.update(hidden.public_id, status='hidden')
+        visible = await self.marks.create(
+            self.stream.id, 'memory', 'active', '月の話'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(care_mark_candidates=(
+                CareMarkCandidate('memory', 'active', '月の話'),
+            )),
+        )
+
+        self.assertEqual(application.created_care_mark_ids, ())
+        self.assertEqual(
+            application.touched_care_mark_ids, (visible.public_id,)
+        )
+
+    async def test_dedup_sees_marks_beyond_visible_state_window(self) -> None:
+        old = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'ふるい約束'
+        )
+        for index in range(25):
+            await self.marks.create(
+                self.stream.id, 'memory', 'draft', f'埋める印{index}'
+            )
+        state = await self.service.current_state(self.stream.id)
+        self.assertNotIn(
+            old.public_id,
+            {mark.public_id for mark in state.care_marks},
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(care_mark_candidates=(
+                CareMarkCandidate('memory', 'active', 'ふるい約束'),
+            )),
+        )
+
+        self.assertEqual(application.created_care_mark_ids, ())
+        self.assertEqual(application.touched_care_mark_ids, (old.public_id,))
+
     async def test_read_cue_update_links_to_created_candidate(self) -> None:
         application = await self.service.apply(
             self.stream.id,

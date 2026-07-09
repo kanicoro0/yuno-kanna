@@ -42,6 +42,16 @@ class CareMarkService:
             stream_id, kinds, statuses, limit
         )
 
+    async def list_recent_for_stream(
+        self, stream_id: int, limit: int = 10
+    ) -> List[CareMark]:
+        """Marks in most-recently-changed order, hidden included.
+
+        A quiet after-the-fact surface: it lets someone see what was
+        remembered, closed, or put away recently, without an event log.
+        """
+        return await self.repository.list_recently_updated(stream_id, limit)
+
     async def list_all_for_kind(
         self, stream_id: int, kind: str
     ) -> List[CareMark]:

@@ -106,9 +106,13 @@ def action_for_mark(mark: CareMark) -> Optional[MarkAction]:
         return MarkAction(HIDE_LABEL, 'hidden')
     if mark.kind == 'memory' and mark.status == 'draft':
         return MarkAction(PROMOTE_LABEL, 'active')
+    if mark.kind == 'memory' and mark.status == 'hidden':
+        return MarkAction(RESTORE_LABEL, 'active')
     if mark.kind == 'attention' and mark.status == 'open':
         return MarkAction(CLOSE_LABEL, 'closed')
     if mark.kind == 'attention' and mark.status == 'closed':
+        return MarkAction(RESTORE_LABEL, 'open')
+    if mark.kind == 'attention' and mark.status == 'hidden':
         return MarkAction(RESTORE_LABEL, 'open')
     return None
 
@@ -125,6 +129,7 @@ class MemoriesView(YunoView):
         kind: str,
         status: str,
         limit: int,
+        recent: bool = False,
     ):
         super().__init__(
             opened_by_user_id=opened_by_user_id,
@@ -138,9 +143,19 @@ class MemoriesView(YunoView):
         self.kind = kind
         self.status = status
         self.limit = limit
+        self.recent = recent
         self._shown_mark_ids = frozenset()
 
     async def prepare(self) -> str:
+        if self.recent:
+            marks = tuple(await self.service.list_recent_marks(
+                self.channel_id,
+                self.guild_id,
+                self.limit,
+            ))
+            self._set_buttons(marks)
+            return render_recent_marks(marks)
+
         if _is_default_remembered_surface(self.kind, self.status):
             marks = await self._default_remembered_marks()
             self._set_buttons(marks)
@@ -308,6 +323,7 @@ def create_memories_group(
         kind: str,
         status: str,
         limit: int,
+        recent: bool = False,
     ) -> None:
         view = MemoriesView(
             service,
@@ -318,6 +334,7 @@ def create_memories_group(
             kind=kind,
             status=status,
             limit=limit,
+            recent=recent,
         )
         text = await view.prepare()
         await interaction.response.send_message(
@@ -367,6 +384,18 @@ def create_memories_group(
             return
         await _send_mark_panel(
             interaction, kind='attention', status='open', limit=limit
+        )
+
+    @group.command(name='recent', description='この場所の最近の動きを見る')
+    @app_commands.describe(limit='表示する件数（1〜20）')
+    async def memories_recent(
+        interaction: discord.Interaction,
+        limit: app_commands.Range[int, 1, 20] = 10,
+    ) -> None:
+        if not await _require_admin(interaction, permissions):
+            return
+        await _send_mark_panel(
+            interaction, kind='all', status='all', limit=limit, recent=True
         )
 
     @group.command(name='tidy', description='この場所に残したものの整理案を見る')
@@ -433,40 +462,9 @@ def create_memories_group(
         await _reply(
             interaction,
             (
-                f'`{mark.public_id}` を追加\n'
+                'ここに置いたよ\n'
                 f'{_kind_label(mark.kind)} / {_status_label(mark.status)}\n'
                 f'{_preview(mark.text)}'
-            ),
-        )
-
-    @group.command(name='status', description='印の状態を変更')
-    @app_commands.describe(
-        public_id='/memories に出ているID',
-        status='変更後の状態',
-    )
-    @app_commands.choices(status=_MARK_STATUS_CHOICES)
-    async def memories_status(
-        interaction: discord.Interaction,
-        public_id: str,
-        status: str,
-    ) -> None:
-        if not await _require_admin(interaction, permissions):
-            return
-        try:
-            mark = await service.set_status(
-                _channel(interaction),
-                public_id,
-                status,
-            )
-        except ValueError:
-            await _reply(interaction, _MARK_STATUS_HELP)
-            return
-        await _reply(
-            interaction,
-            (
-                f'`{public_id}` を {_status_label(status)} にした'
-                if mark else
-                'この場では見つからない'
             ),
         )
 
@@ -507,6 +505,13 @@ def render_care_marks(
     ) or 'ここにはまだない'
 
 
+def render_recent_marks(marks: Iterable[CareMark]) -> str:
+    selected = tuple(marks)
+    if not selected:
+        return '最近の動き\nまだ動きはないみたい'
+    return f'最近の動き\n{render_care_marks(selected)}'
+
+
 def render_maintenance_proposal(
     proposal: CareMaintenanceProposal,
     marks: Iterable[CareMark] = (),
@@ -541,7 +546,7 @@ def _care_mark_rows(
     start_index: int = 1,
 ) -> tuple[str, ...]:
     return tuple(
-        f'{index}. `{mark.public_id}` {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
+        f'{index}. {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
         f'   {_preview(mark.text)}'
         for index, mark in enumerate(marks, start=start_index)
     )

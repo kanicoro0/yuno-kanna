@@ -1,9 +1,15 @@
 from dataclasses import dataclass
-import re
-import unicodedata
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from yuno.care.models import CareReadRequest, CareReadResult
+from yuno.care.operations import (
+    MAX_CLOSE_OPERATIONS,
+    MAX_FORGET_OPERATIONS,
+    MAX_PROMOTE_OPERATIONS,
+    normalize_for_match,
+    requests_forget,
+    requests_remember,
+)
 from yuno.care.safety import looks_sensitive
 from yuno.care_marks.models import CareMark
 from yuno.care_marks.service import CareMarkService
@@ -50,23 +56,6 @@ _CARE_TRIGGER_TERMS = (
 )
 _STRONG_CUE_SALIENCE = 0.5
 _STRONG_ATTENTION_OVERLAP = 0.6
-
-# Spoken-request gates for state changes. Reader proposals alone are not
-# enough for the riskier operations; the current message itself must also
-# carry the request, so a stray proposal cannot quietly change state.
-_FORGET_REQUEST_TERMS = (
-    '忘れて', '忘れよ', '覚えなくていい', '覚えないで', '消して', 'やめて',
-    'なかったこと',
-)
-_REMEMBER_REQUEST_TERMS = (
-    '覚えて', '固定', '記憶して', 'メモして', '忘れないで',
-)
-_CLOSE_REQUEST_TERMS = (
-    '閉じて', '閉じよ', 'もう終わ', '解決した', '済んだ', '片付いた',
-)
-MAX_CLOSE_OPERATIONS = 3
-MAX_FORGET_OPERATIONS = 2
-MAX_PROMOTE_OPERATIONS = 2
 
 
 class CareService:
@@ -343,11 +332,6 @@ class CareService:
         return promoted
 
 
-def normalize_for_match(value: str) -> str:
-    normalized = unicodedata.normalize('NFKC', value).casefold()
-    return re.sub(r'[\W_]+', '', normalized, flags=re.UNICODE)
-
-
 def cue_salience(content: str, cues: Iterable[ReadCue]) -> float:
     normalized = normalize_for_match(content)
     if not normalized:
@@ -375,70 +359,6 @@ def immediate_care_decision(
     if attention_overlap(content, state.care_marks) >= _STRONG_ATTENTION_OVERLAP:
         return CareTriggerDecision(True, 'open_attention', salience)
     return CareTriggerDecision(False, 'low_signal', salience)
-
-
-def requests_forget(content: str) -> bool:
-    return _contains_any(content, _FORGET_REQUEST_TERMS)
-
-
-def requests_remember(content: str) -> bool:
-    return _contains_any(content, _REMEMBER_REQUEST_TERMS)
-
-
-def requests_close(content: str) -> bool:
-    return _contains_any(content, _CLOSE_REQUEST_TERMS)
-
-
-def care_outcome_note(source_content: str, application: CareApplication) -> str:
-    """Short fixed-form Speaker notes about what actually happened.
-
-    Lines exist only for state that really changed, plus explicit
-    "do not claim it" lines when the message asked for a change that
-    did not happen. Forgotten mark text is never repeated here.
-    """
-    parts: List[str] = []
-    if application.forgotten_care_mark_ids:
-        parts.append('いま、頼まれたことをひとつ手放して、もう覚えていないことにした')
-    if application.closed_care_mark_ids:
-        parts.append('いま、あとで見るつもりだったことをひと区切りつけて閉じた')
-    if application.promoted_care_mark_ids:
-        parts.append('いま、言われたことをちゃんと覚えることにした')
-
-    if requests_remember(source_content) and not application.promoted_care_mark_ids:
-        parts.append(_remember_outcome(application))
-    if requests_forget(source_content) and not application.forgotten_care_mark_ids:
-        parts.append('忘れることは、いまここでは起きていない。忘れた、とは言わない')
-    if requests_close(source_content) and not application.closed_care_mark_ids:
-        parts.append('閉じることは、いまここでは起きていない。閉じた、とは言わない')
-    return '\n'.join(parts)
-
-
-def _remember_outcome(application: CareApplication) -> str:
-    by_id = {mark.public_id: mark for mark in application.affected_care_marks}
-    created = [
-        by_id[public_id]
-        for public_id in application.created_care_mark_ids
-        if public_id in by_id
-    ]
-    touched = [
-        by_id[public_id]
-        for public_id in application.touched_care_mark_ids
-        if public_id in by_id
-    ]
-    if any(mark.kind == 'memory' and mark.status == 'active' for mark in created):
-        return 'いま、言われたことを覚えることにした'
-    if any(mark.kind == 'memory' and mark.status == 'draft' for mark in created):
-        return 'いま、言われたことはそっと預かっている。覚えた、とまでは言い切らない'
-    if any(mark.kind == 'memory' and mark.status == 'active' for mark in touched):
-        return 'それは前から覚えている'
-    return '覚えることは、いまここでは起きていない。覚えた、とは言わない'
-
-
-def _contains_any(content: str, terms: Tuple[str, ...]) -> bool:
-    normalized = normalize_for_match(content)
-    if not normalized:
-        return False
-    return any(normalize_for_match(term) in normalized for term in terms)
 
 
 def overlaps_attention(content: str, marks: Iterable[CareMark]) -> bool:

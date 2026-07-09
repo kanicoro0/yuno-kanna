@@ -23,12 +23,13 @@ def mark(public_id, kind, status, text):
 
 
 class MemoriesCommandSurfaceTests(unittest.TestCase):
-    def test_render_care_marks_includes_public_id_for_status_command(self):
+    def test_render_care_marks_hides_public_ids(self):
         text = render_care_marks((
-            mark("cm_123", "memory", "active", "覚えておきたいこと"),
+            mark("care_0123", "memory", "active", "覚えておきたいこと"),
         ))
 
-        self.assertIn("`cm_123`", text)
+        self.assertNotIn("care_0123", text)
+        self.assertNotIn("care_", text)
         self.assertIn("覚えている", text)
         self.assertIn("覚えておきたいこと", text)
 

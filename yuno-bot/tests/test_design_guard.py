@@ -42,6 +42,8 @@ class DesignGuardTests(unittest.TestCase):
     def test_care_reader_state_changes_require_explicit_requests(self) -> None:
         self.assertIn("推測で忘れません", CARE_SYSTEM_PROMPT)
         self.assertIn("迷ったら状態変更を出しません", CARE_SYSTEM_PROMPT)
+        self.assertIn("対象を推測で選びません", CARE_SYSTEM_PROMPT)
+        self.assertIn("unclear_operation", CARE_SYSTEM_PROMPT)
 
     def test_prompts_do_not_claim_unprovided_capabilities(self) -> None:
         self.assertIn("与えられていない情報を足さない", SYSTEM_PROMPT)

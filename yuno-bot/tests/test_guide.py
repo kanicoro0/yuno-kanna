@@ -22,6 +22,7 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
             '/status',
             '/listening',
             '/memories list',
+            '/memories recent',
             'ゆのに預ける',
             '残す',
             'あとで見る',
@@ -30,6 +31,7 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
             '戻す',
         ):
             self.assertIn(visible, GUIDE_TEXT)
+        self.assertIn('会話の中でそのまま頼めるよ', GUIDE_TEXT)
         self.assertIn('コマンドか右クリックから開いてね', GUIDE_TEXT)
         self.assertNotIn('ボタンはつかない', GUIDE_TEXT)
 

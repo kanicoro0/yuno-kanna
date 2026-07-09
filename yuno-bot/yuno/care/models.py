@@ -58,3 +58,4 @@ class CareReadResult:
     close_care_mark_ids: Tuple[str, ...] = ()
     forget_care_mark_ids: Tuple[str, ...] = ()
     promote_care_mark_ids: Tuple[str, ...] = ()
+    unclear_operation: str = ''

@@ -7,10 +7,10 @@ from typing import Optional
 from yuno.care.models import CareReadResult
 from yuno.care.maintenance import CareMaintenanceService
 from yuno.care.reader import CareReader
+from yuno.care.operations import care_outcome_note
 from yuno.care.service import (
     CareApplication,
     CareService,
-    care_outcome_note,
     cue_salience,
     immediate_care_decision,
 )
@@ -184,7 +184,11 @@ class ConversationPipeline:
                     )
                 include_care_mark_ids = list(application.include_care_mark_ids)
                 care_mark_changes = application.affected_care_marks
-                care_note = care_outcome_note(turn.content, application)
+                care_note = care_outcome_note(
+                    turn.content,
+                    application,
+                    care_result.unclear_operation,
+                )
                 pre_care_completed = True
                 self._schedule_auto_maintain(turn.stream_id, application)
                 logger.debug(

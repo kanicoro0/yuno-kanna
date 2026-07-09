@@ -7,11 +7,11 @@ from yuno.care.models import (
     CareReadResult,
     ReadCueUpdate,
 )
+from yuno.care.operations import care_outcome_note
 from yuno.care.service import (
     CareApplication,
     CareService,
     CareState,
-    care_outcome_note,
     immediate_care_decision,
 )
 from yuno.care_marks.models import CareMark
@@ -603,6 +603,25 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.should_send)
         self.assertIn('忘れた、とは言わない', speaker.contexts[-1].care_note)
 
+    async def test_unclear_forget_lets_speaker_ask_back(self) -> None:
+        reader = RecordingReader(CareReadResult(
+            decision_made=True,
+            should_speak=True,
+            unclear_operation='forget',
+        ))
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        result = await pipeline.process(
+            self.incoming('nl-forget-vague', 'あれはもう忘れて', mention=True)
+        )
+
+        self.assertTrue(result.should_send)
+        note = speaker.contexts[-1].care_note
+        self.assertIn('聞き返していい', note)
+        self.assertNotIn('いまここでは起きていない', note)
+        self.assertEqual(await self.marks.list_for_stream(self.stream.id), [])
+
 
 class CareOutcomeNoteTests(unittest.TestCase):
     @staticmethod
@@ -672,6 +691,35 @@ class CareOutcomeNoteTests(unittest.TestCase):
     def test_plain_talk_yields_no_note(self) -> None:
         self.assertEqual(
             care_outcome_note('今日は晴れだね', CareApplication()), ''
+        )
+
+    def test_unclear_forget_becomes_ask_back_instead_of_denial(self) -> None:
+        note = care_outcome_note(
+            'さっきのことは忘れて', CareApplication(), 'forget'
+        )
+        self.assertIn('聞き返していい', note)
+        self.assertIn('忘れた、とは言わず', note)
+        self.assertNotIn('いまここでは起きていない', note)
+
+    def test_unclear_signal_works_even_outside_gate_lexicon(self) -> None:
+        note = care_outcome_note(
+            '記憶から消し去ってほしいな', CareApplication(), 'forget'
+        )
+        self.assertIn('聞き返していい', note)
+
+    def test_unclear_is_ignored_when_the_operation_happened(self) -> None:
+        note = care_outcome_note(
+            'さっきのことは忘れて',
+            CareApplication(forgotten_care_mark_ids=('care_1',)),
+            'forget',
+        )
+        self.assertIn('もう覚えていないことにした', note)
+        self.assertNotIn('聞き返していい', note)
+
+    def test_unknown_unclear_value_is_ignored(self) -> None:
+        self.assertEqual(
+            care_outcome_note('今日は晴れだね', CareApplication(), 'reset'),
+            '',
         )
 
     def test_notes_never_leak_internal_words(self) -> None:

@@ -10,9 +10,11 @@ from yuno.conversation.repository import ConversationRepository
 
 logger = logging.getLogger(__name__)
 
-# This is a shared palette, not an emoji-to-meaning table. Kind, status, mark
-# text, and local source text only nudge a stable choice within the same pool.
+# These are shared palettes, not emoji-to-meaning tables. Kind, status, mark
+# text, and local source text only nudge a stable choice within one pool:
+# one pool for marks that now stand, one for marks quietly put to rest.
 _CALM_REACTIONS = ('🌙', '🫧', '🌿', '✨', '🕯️', '☁️', '🪶', '🌱')
+_SETTLED_REACTIONS = ('🍂', '💤', '🌙', '🕊️')
 
 
 def pick_care_mark_reaction(
@@ -21,15 +23,27 @@ def pick_care_mark_reaction(
 ) -> Optional[str]:
     if not source_text.strip():
         return None
-    if not (
-        mark.kind == 'memory' and mark.status == 'active'
-        or mark.kind == 'attention' and mark.status == 'open'
-    ):
+    if _is_standing(mark):
+        pool = _CALM_REACTIONS
+    elif _is_settled(mark):
+        pool = _SETTLED_REACTIONS
+    else:
         return None
     seed = '\0'.join((mark.kind, mark.status, mark.text, source_text))
     digest = hashlib.blake2s(seed.encode('utf-8'), digest_size=2).digest()
-    index = int.from_bytes(digest, 'big') % len(_CALM_REACTIONS)
-    return _CALM_REACTIONS[index]
+    index = int.from_bytes(digest, 'big') % len(pool)
+    return pool[index]
+
+
+def _is_standing(mark: CareMark) -> bool:
+    return (
+        mark.kind == 'memory' and mark.status == 'active'
+        or mark.kind == 'attention' and mark.status == 'open'
+    )
+
+
+def _is_settled(mark: CareMark) -> bool:
+    return mark.status in ('closed', 'hidden')
 
 
 class CareReactionSurface:
@@ -41,32 +55,45 @@ class CareReactionSurface:
         source: discord.Message,
         marks: Iterable[CareMark],
     ) -> None:
-        selected = tuple(sorted(
-            (
-                mark for mark in marks
-                if mark.kind == 'memory' and mark.status == 'active'
-                or mark.kind == 'attention' and mark.status == 'open'
-            ),
+        all_marks = tuple(marks)
+        standing = tuple(sorted(
+            (mark for mark in all_marks if _is_standing(mark)),
             key=lambda mark: mark.id,
         ))
-        if not selected:
+        if standing:
+            target = source
+            if self.resolver is not None:
+                try:
+                    target = await self.resolver.resolve(source, standing)
+                except Exception:
+                    logger.exception(
+                        'Care reaction target resolution failed; using source'
+                    )
+                    target = source
+            await self._react_once(target, standing)
             return
-        target = source
-        if self.resolver is not None:
-            try:
-                target = await self.resolver.resolve(source, selected)
-            except Exception:
-                logger.exception(
-                    'Care reaction target resolution failed; using source'
-                )
-                target = source
+        # Marks put to rest this turn react on the current message: the
+        # request itself gets the quiet acknowledgment, not the old spot
+        # where the mark was born.
+        settled = tuple(sorted(
+            (mark for mark in all_marks if _is_settled(mark)),
+            key=lambda mark: mark.id,
+        ))
+        if settled:
+            await self._react_once(source, settled)
+
+    @staticmethod
+    async def _react_once(
+        target: discord.Message,
+        selected: Iterable[CareMark],
+    ) -> None:
         add_reaction = getattr(target, 'add_reaction', None)
         if not callable(add_reaction):
             return
         # A quiet surface: at most one reaction per batch. The loop only
         # walks newest-first past marks whose seed yields no emoji; the
         # first attempted reaction ends it, even when Discord rejects it.
-        for mark in reversed(selected):
+        for mark in reversed(tuple(selected)):
             emoji = pick_care_mark_reaction(mark, target.content)
             if emoji is None:
                 continue

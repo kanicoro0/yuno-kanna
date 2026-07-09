@@ -29,8 +29,11 @@ from yuno.permissions import (
 HIDE_LABEL = '隠す'
 CLOSE_LABEL = '閉じる'
 RESTORE_LABEL = '戻す'
+PROMOTE_LABEL = '固定にする'
 MISSING_MARK_TEXT = 'もう見つからないよ'
 TIDY_STALE_TEXT = 'もう状態が変わってるみたい'
+DEFAULT_MEMORIES_KIND = 'memory'
+DEFAULT_MEMORIES_STATUS = 'active'
 
 _STATUS_TEXT = {
     'draft': 'まだ置いてある',
@@ -99,6 +102,8 @@ class MarkAction:
 def action_for_mark(mark: CareMark) -> Optional[MarkAction]:
     if mark.kind == 'memory' and mark.status == 'active':
         return MarkAction(HIDE_LABEL, 'hidden')
+    if mark.kind == 'memory' and mark.status == 'draft':
+        return MarkAction(PROMOTE_LABEL, 'active')
     if mark.kind == 'attention' and mark.status == 'open':
         return MarkAction(CLOSE_LABEL, 'closed')
     if mark.kind == 'attention' and mark.status == 'closed':
@@ -134,15 +139,40 @@ class MemoriesView(YunoView):
         self._shown_mark_ids = frozenset()
 
     async def prepare(self) -> str:
-        marks = await self.service.list_marks(
+        if _is_default_remembered_surface(self.kind, self.status):
+            marks = await self._default_remembered_marks()
+            self._set_buttons(marks)
+            return render_remembered_marks(marks)
+
+        marks = tuple(await self.service.list_marks(
             self.channel_id,
             self.guild_id,
             self.kind,
             self.status,
             self.limit,
-        )
+        ))
         self._set_buttons(marks)
         return render_care_marks(marks)
+
+    async def _default_remembered_marks(self) -> tuple[CareMark, ...]:
+        fixed_marks = tuple(await self.service.list_marks(
+            self.channel_id,
+            self.guild_id,
+            'memory',
+            'active',
+            self.limit,
+        ))
+        recent_limit = max(0, self.limit - len(fixed_marks))
+        if recent_limit == 0:
+            return fixed_marks
+        recent_marks = tuple(await self.service.list_marks(
+            self.channel_id,
+            self.guild_id,
+            'memory',
+            'draft',
+            recent_limit,
+        ))
+        return fixed_marks + recent_marks
 
     def _set_buttons(self, marks: Iterable[CareMark]) -> None:
         selected = tuple(marks)
@@ -267,30 +297,16 @@ def create_memories_group(
 ) -> app_commands.Group:
     group = app_commands.Group(
         name='memories',
-        description='この場に残した印を見る',
+        description='この場に覚えていることを見る',
     )
 
-    @group.command(name='list', description='この場所に残したものを見る')
-    @app_commands.describe(
-        kind='見るものの種類',
-        status='いまの状態で絞る',
-        limit='表示する件数（1〜20）',
-    )
-    @app_commands.choices(kind=_KIND_CHOICES, status=_STATUS_CHOICES)
-    async def memories_list(
+    async def _send_mark_panel(
         interaction: discord.Interaction,
-        kind: str = 'all',
-        status: str = 'visible',
-        limit: app_commands.Range[int, 1, 20] = 10,
+        *,
+        kind: str,
+        status: str,
+        limit: int,
     ) -> None:
-        if not await _require_admin(interaction, permissions):
-            return
-        if kind not in {*CARE_MARK_KINDS, 'all'}:
-            await _reply(interaction, '種類は表示される選択肢から選んでね')
-            return
-        if status not in {*CARE_MARK_STATUS_NAMES, 'visible', 'all'}:
-            await _reply(interaction, '状態は表示される選択肢から選んでね')
-            return
         view = MemoriesView(
             service,
             permissions,
@@ -313,6 +329,43 @@ def create_memories_group(
                 view.bind_message(await original_response())
             except discord.HTTPException:
                 pass
+
+    @group.command(name='list', description='この場所に覚えていることを見る')
+    @app_commands.describe(
+        kind='省略すると覚えていることだけを見る',
+        status='省略すると覚えているものだけを見る',
+        limit='表示する件数（1〜20）',
+    )
+    @app_commands.choices(kind=_KIND_CHOICES, status=_STATUS_CHOICES)
+    async def memories_list(
+        interaction: discord.Interaction,
+        kind: str = DEFAULT_MEMORIES_KIND,
+        status: str = DEFAULT_MEMORIES_STATUS,
+        limit: app_commands.Range[int, 1, 20] = 10,
+    ) -> None:
+        if not await _require_admin(interaction, permissions):
+            return
+        if kind not in {*CARE_MARK_KINDS, 'all'}:
+            await _reply(interaction, '種類は表示される選択肢から選んでね')
+            return
+        if status not in {*CARE_MARK_STATUS_NAMES, 'visible', 'all'}:
+            await _reply(interaction, '状態は表示される選択肢から選んでね')
+            return
+        await _send_mark_panel(
+            interaction, kind=kind, status=status, limit=limit
+        )
+
+    @group.command(name='open', description='この場所でまだ開いているものを見る')
+    @app_commands.describe(limit='表示する件数（1〜20）')
+    async def memories_open(
+        interaction: discord.Interaction,
+        limit: app_commands.Range[int, 1, 20] = 10,
+    ) -> None:
+        if not await _require_admin(interaction, permissions):
+            return
+        await _send_mark_panel(
+            interaction, kind='attention', status='open', limit=limit
+        )
 
     @group.command(name='tidy', description='この場所に残したものの整理案を見る')
     async def memories_tidy(interaction: discord.Interaction) -> None:
@@ -386,7 +439,7 @@ def create_memories_group(
 
     @group.command(name='status', description='印の状態を変更')
     @app_commands.describe(
-        public_id='/memories list に出ているID',
+        public_id='/memories に出ているID',
         status='変更後の状態',
     )
     @app_commands.choices(status=_MARK_STATUS_CHOICES)
@@ -418,11 +471,35 @@ def create_memories_group(
     return group
 
 
-def render_care_marks(marks: Iterable[CareMark]) -> str:
+def render_remembered_marks(marks: Iterable[CareMark]) -> str:
+    selected = tuple(marks)
+    fixed_marks = tuple(
+        mark for mark in selected
+        if mark.kind == 'memory' and mark.status == 'active'
+    )
+    recent_marks = tuple(
+        mark for mark in selected
+        if mark.kind == 'memory' and mark.status == 'draft'
+    )
+    return '\n\n'.join((
+        _render_mark_section(
+            '固定で覚えていること', fixed_marks, start_index=1
+        ),
+        _render_mark_section(
+            '最近覚えていること',
+            recent_marks,
+            start_index=len(fixed_marks) + 1,
+        ),
+    ))
+
+
+def render_care_marks(
+    marks: Iterable[CareMark],
+    *,
+    start_index: int = 1,
+) -> str:
     return '\n'.join(
-        f'{index}. `{mark.public_id}` {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
-        f'   {_preview(mark.text)}'
-        for index, mark in enumerate(marks, start=1)
+        _care_mark_rows(marks, start_index=start_index)
     ) or 'ここにはまだない'
 
 
@@ -441,6 +518,31 @@ def render_maintenance_proposal(
         detail = _maintenance_detail(action, by_public)
         rows.append(f'{index}. {label}\n   {detail}')
     return '整理案\n' + ('\n\n'.join(rows) or 'いまは特にないよ')
+
+
+def _render_mark_section(
+    title: str,
+    marks: Iterable[CareMark],
+    *,
+    start_index: int = 1,
+) -> str:
+    return f'{title}\n{render_care_marks(marks, start_index=start_index)}'
+
+
+def _care_mark_rows(
+    marks: Iterable[CareMark],
+    *,
+    start_index: int = 1,
+) -> tuple[str, ...]:
+    return tuple(
+        f'{index}. `{mark.public_id}` {_STATUS_TEXT.get(mark.status, "置いてある")}\n'
+        f'   {_preview(mark.text)}'
+        for index, mark in enumerate(marks, start=start_index)
+    )
+
+
+def _is_default_remembered_surface(kind: str, status: str) -> bool:
+    return kind == DEFAULT_MEMORIES_KIND and status == DEFAULT_MEMORIES_STATUS
 
 
 def _maintenance_detail(

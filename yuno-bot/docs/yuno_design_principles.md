@@ -30,6 +30,20 @@
 CareMark は独立した記憶庫ではありません。
 同じ stream の会話にぶら下がる薄い印として扱います。
 
+`/memories` は CareMark 全体の名前ではなく、覚えていることの表面です。
+`/memories list` の初期表示では active な memory-like CareMark だけを見せます。
+open な attention-like CareMark は同じ印の一種ですが、まだ閉じていない話題やあとで見るものなので、覚えていることの棚とは分けて `/memories open` で扱います。
+
+覚えていることは、将来的に固定で残すものと最近だけ持つものに分けます。
+
+- fixed remembered: 明示的な呼び名、強い好み、設定、相手が覚えてほしいと言ったもの。明示的な削除や訂正がない限り、勝手に流さない
+- recent remembered: しばらく使えるが、件数制限や時間経過で通常参照から外してよいもの。元の ConversationLog と CareMark は根拠として残す
+
+現在の最小表示では、active な memory-like CareMark を「固定で覚えていること」、draft な memory-like CareMark を「最近覚えていること」に出します。
+`/memories list` では draft な memory-like CareMark を `固定にする` 操作で active に上げられます。
+この分割はまず表示と整理方針として扱います。
+DB schema、CareReader contract、Speaker reference selection を同時に変えません。
+
 ## ReadCue
 
 `ReadCue` は CareMark を見つけ直すための弱い索引です。
@@ -138,7 +152,8 @@ CareMark 作成や touch のあとで必要なら走りますが、返信前に�
 
 - `/status`
 - `/listening`
-- `/memories`
+- `/memories list`: 初期表示では active memory-like CareMark を見る
+- `/memories open`: open attention-like CareMark を見る
 - `/guide`
 - selected message action panel
 

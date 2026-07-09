@@ -28,6 +28,19 @@ ConversationLog につく印です。
 - memory-like: `draft / active / hidden`
 - attention-like: `open / closed / hidden`
 
+`/memories` は CareMark 全体の管理名ではなく、覚えていることの表面として扱います。
+`/memories list` の初期表示は active memory-like CareMark だけに寄せ、open attention-like CareMark は `/memories open` で見る対象にします。
+
+覚えていることは、次に fixed remembered と recent remembered へ分ける方向で整理します。
+
+- fixed remembered: 明示的な呼び名、強い好み、設定、相手が覚えてほしいと言ったもの
+- recent remembered: しばらく使うが、古くなったら通常参照から外してよいもの
+
+現在の最小表示では、active memory-like CareMark を fixed remembered、draft memory-like CareMark を recent remembered の表示に置きます。
+`/memories list` では draft memory-like CareMark を `固定にする` 操作で active に上げられます。
+この段階では、DB schema ではなく表示と整理方針として扱います。
+CareMark は引き続き source/evidence であり、fixed/recent の判断は元の ConversationLog と CareMark に戻れる形で進めます。
+
 ### ReadCue
 
 ReadCue は CareMark に戻るための弱い索引です。
@@ -78,10 +91,19 @@ listening 対象の通常発言は、低信号なら保存のみで終わるこ�
 
 - `/status`: いまの場の状態確認
 - `/listening`: listening 対象の管理
-- `/memories`: CareMark の確認と小さな操作
+- `/memories list`: 初期表示では覚えていることだけを見る
+- `/memories open`: まだ開いているものを見る
 - `/guide`: いま使える入口の案内
 
 旧 `/memory` `/attention` `/interest` は current-facing surface としては使いません。
+
+open attention-like CareMark は `/memories` から完全には消しません。
+ただし `/memories list` の初期表示からは外し、`/memories open` に分けます。
+これは「覚えていること」と「まだ開いているもの」を同じ棚に混ぜないためです。
+
+remembered の中にも、勝手に流さないものと、最近だけ使うものがあります。
+ただし、この分割を入れる時も command と UI から小さく始めます。
+DB schema、CareReader prompt、Speaker reference selection を一度に変えません。
 
 ## これからの整理方向
 

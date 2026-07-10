@@ -140,6 +140,10 @@ def care_operations_log_line(
 
     The message content is reduced to which gate lexicons it hit; the
     hit is a known-vocabulary match, not the speaker's actual intent.
+    A missing hit alone is not a vocabulary gap: close has no spoken
+    gate, and pending ask-backs complete forget/promote without one.
+    Gap candidates are forget/promote lines with pending=none, proposals
+    present, and a gate block.
     """
     hits = [
         name

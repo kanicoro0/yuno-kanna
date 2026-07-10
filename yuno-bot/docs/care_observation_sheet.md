@@ -22,7 +22,7 @@ schema 設計（仮説 A/B/C）の判断材料は、この観察票に集まっ�
 | 対象取り違え | 意図と違う印に操作が適用された・されかけた |
 | pending 空振り | 聞き返しの答えを拾えなかった（雑談で消費された等） |
 | 無言適用の違和感 | listening 中の無言の状態変更が不自然だった |
-| 語彙の穴 | ゲート語彙にない言い回しだった（`lexical_request_hit=none` で適用/unclear） |
+| 語彙の穴 | ゲート語彙にない言い回しだった。候補の見つけ方: forget / promote で `pending=none`・提案あり・`blocked=…:gate:…` の行、または hit なしで unclear が立った行。`lexical_request_hit=none` だけでは断定しない（close はゲートなし、pending 経由もゲート語彙なしで適用されるため） |
 | その他 | 上記に入らないもの（聞き返し文の不自然さ等） |
 
 ## schema 仮説との対応

@@ -34,7 +34,12 @@
 
 - `lexical_request_hit`: 既知のゲート語彙に一致したか。**実際の意図ではない**近似。
   hit あり・提案なし・unclear なし → 読み落とし疑いとして観察票へ。
-  hit なしで操作が適用された → 語彙の穴の証拠として観察票へ。
+  hit なしは、それだけでは語彙の穴と**断定しない**。close はゲートを通らず、
+  pending 経由の forget / promote もゲート語彙なしで適用されるため、
+  hit なしの適用行には正当な経路がある。
+- **語彙の穴の候補**: forget / promote で `pending=none`・`proposed` ≥1・
+  `blocked=…:gate:…` の行。CareReader は操作を読み取ったが、
+  ゲート語彙が追いつかなかったことを示す。観察票へ。
 - `proposed` と `applied` の差: CareReader は提案したが適用されなかった件数。
 - `blocked`: 操作別×理由別の却下件数（gate / target / limit / sensitive）。
 - `pending_outcome`: applied / re_asked / no_action。no_action は
@@ -47,10 +52,12 @@
 1. mention で「これ覚えて」→ 印が付き、覚えた旨の短い返答。
 2. mention で「さっきのは忘れて」（対象が一意）→ hidden 化と手放した旨の返答。
 3. mention で「あれは忘れて」（対象が曖昧）→ 状態不変で聞き返し。
-4. 聞き返しの直後に対象を答える → 操作が完了する（correct 往復）。
+4. 聞き返しの直後に対象を答える → 操作が完了する（聞き返し往復）。
 5. 聞き返しの直後に別の話題を話す → 何も変わらない。
 6. 「その呼び方はやめて、◯◯って呼んで」→ 旧印 hidden + 新印作成が同一ターンで起きる。
-   ログでは forgotten ≥1 かつ created ≥1 の行を correct として数える。片方だけは観察票で判断。
+   ログでは forgotten ≥1 かつ created ≥1 の行を **correct_candidate** として数える。
+   同一の訂正依頼によるものかはログでは確定できないので、訂正（correct）と
+   確定するのは観察票での判断。片方だけの場合も観察票で判断。
 7. listening チャンネルの非 mention で「もう閉じていい」→ 無言で閉じ、リアクションが 1 つ付く。
 8. `/memories recent` で上記の変化が並び、「戻す」で復帰できる。
 

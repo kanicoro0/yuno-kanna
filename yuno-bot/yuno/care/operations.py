@@ -1,13 +1,16 @@
-"""Spoken-request gates and Speaker-facing outcome notes for care marks.
+"""Spoken-request gates, pending ask-backs, and Speaker outcome notes.
 
-Everything here is pure text logic: what counts as an explicit spoken
-request, how many state changes one turn may apply, and the short
-fixed-form notes that tell the Speaker only what really happened.
+Everything here is small operation machinery: what counts as an explicit
+spoken request, how many state changes one turn may apply, the short-lived
+memory of an ask-back waiting for its answer, and the fixed-form notes
+that tell the Speaker only what really happened.
 """
 
+from dataclasses import dataclass
 import re
+import time
 import unicodedata
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from yuno.care.service import CareApplication
@@ -46,6 +49,63 @@ _ASK_BACK_NOTES = {
         '覚えた、とは言わず、どれのことか短く聞き返していい'
     ),
 }
+
+
+PENDING_OPERATION_TTL_SECONDS = 300.0
+
+
+@dataclass(frozen=True)
+class _PendingOperation:
+    operation: str
+    author_id: str
+    expires_at: float
+
+
+class PendingCareOperations:
+    """One short-lived ask-back per stream, waiting for its answer.
+
+    When Yuno asks which mark was meant, the requested operation is kept
+    here for a few minutes so the next answer from the same speaker can
+    finish it. Nothing is persisted; losing this state only means the
+    request has to be said again.
+    """
+
+    def __init__(
+        self,
+        ttl_seconds: float = PENDING_OPERATION_TTL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._pending: Dict[int, _PendingOperation] = {}
+
+    def set(self, stream_id: int, author_id: str, operation: str) -> None:
+        if operation not in UNCLEAR_OPERATIONS:
+            return
+        self._pending[stream_id] = _PendingOperation(
+            operation=operation,
+            author_id=str(author_id),
+            expires_at=self._clock() + self._ttl_seconds,
+        )
+
+    def peek(self, stream_id: int, author_id: str) -> Optional[str]:
+        """The waiting operation for this speaker, or None.
+
+        A different speaker's turn leaves the pending ask-back in place;
+        only expiry or an explicit clear removes it.
+        """
+        pending = self._pending.get(stream_id)
+        if pending is None:
+            return None
+        if self._clock() >= pending.expires_at:
+            del self._pending[stream_id]
+            return None
+        if pending.author_id != str(author_id):
+            return None
+        return pending.operation
+
+    def clear(self, stream_id: int) -> None:
+        self._pending.pop(stream_id, None)
 
 
 def normalize_for_match(value: str) -> str:

@@ -46,6 +46,7 @@ class FakeCareService:
         state,
         route_reason="",
         reply_mode="none",
+        pending_operation="",
     ):
         return CareReadRequest(
             current_message=current_message,
@@ -56,9 +57,13 @@ class FakeCareService:
             cue_salience=cue_salience_value,
             route_reason=route_reason,
             reply_mode=reply_mode,
+            pending_operation=pending_operation,
         )
 
-    async def apply(self, stream_id, source_message_id, result, source_content=''):
+    async def apply(
+        self, stream_id, source_message_id, result,
+        source_content='', pending_operation='',
+    ):
         return CareApplication()
 
 
@@ -348,7 +353,10 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
 
         class ApplyingCareService(FakeCareService):
-            async def apply(self, stream_id, source_message_id, result, source_content=''):
+            async def apply(
+                self, stream_id, source_message_id, result,
+                source_content='', pending_operation='',
+            ):
                 return CareApplication(created_care_mark_ids=('care_0001',))
 
         maintenance = BlockingMaintenance()
@@ -390,7 +398,10 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
 
         class ApplyingCareService(FakeCareService):
-            async def apply(self, stream_id, source_message_id, result, source_content=''):
+            async def apply(
+                self, stream_id, source_message_id, result,
+                source_content='', pending_operation='',
+            ):
                 return CareApplication(created_care_mark_ids=('care_0002',))
 
         maintenance = BlockingMaintenance()

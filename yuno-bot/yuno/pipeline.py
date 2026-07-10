@@ -7,7 +7,7 @@ from typing import Optional
 from yuno.care.models import CareReadResult
 from yuno.care.maintenance import CareMaintenanceService
 from yuno.care.reader import CareReader
-from yuno.care.operations import care_outcome_note
+from yuno.care.operations import PendingCareOperations, care_outcome_note
 from yuno.care.service import (
     CareApplication,
     CareService,
@@ -84,6 +84,7 @@ class ConversationPipeline:
         self.reference_selector = reference_selector
         self.maintenance_service = maintenance_service
         self._background_tasks: set[asyncio.Task] = set()
+        self._pending_care_operations = PendingCareOperations()
 
     async def process(self, message: IncomingMessage) -> PipelineResult:
         """Compatibility path: one eligible stored message becomes one turn."""
@@ -137,7 +138,14 @@ class ConversationPipeline:
             state = await self.care_service.current_state(turn.stream_id)
             salience = cue_salience(turn.content, state.read_cues)
             trigger = immediate_care_decision(turn.content, state)
-            if self._requires_care_trigger(turn) and not trigger.run:
+            pending_operation = self._pending_care_operations.peek(
+                turn.stream_id, turn.author_id
+            )
+            if (
+                self._requires_care_trigger(turn)
+                and not trigger.run
+                and pending_operation is None
+            ):
                 logger.debug(
                     "care_reader skipped before speech decision stream_id=%s route=%s reason=%s",
                     turn.stream_id,
@@ -145,6 +153,11 @@ class ConversationPipeline:
                     trigger.reason,
                 )
             else:
+                if pending_operation is not None:
+                    # The ask-back is answered (or re-asked) on this turn;
+                    # either way it is consumed here, not left dangling.
+                    self._pending_care_operations.clear(turn.stream_id)
+                pending_operation = pending_operation or ""
                 request = await self.care_service.build_request(
                     turn.stream_id,
                     turn.content,
@@ -153,6 +166,7 @@ class ConversationPipeline:
                     state,
                     route_reason=turn.route_reason,
                     reply_mode=turn.reply_mode,
+                    pending_operation=pending_operation,
                 )
                 logger.debug(
                     "care_reader called before speech decision stream_id=%s route=%s",
@@ -175,6 +189,7 @@ class ConversationPipeline:
                         turn.care_source_user_message_id,
                         care_result,
                         source_content=turn.content,
+                        pending_operation=pending_operation,
                     )
                 finally:
                     logger.info(
@@ -190,6 +205,19 @@ class ConversationPipeline:
                     care_result.unclear_operation,
                 )
                 pre_care_completed = True
+                self._remember_unanswered_ask_back(turn, care_result, application)
+                logger.info(
+                    "care_operations stream_id=%s phase=pre created=%d touched=%d "
+                    "closed=%d forgotten=%d promoted=%d unclear=%s pending_used=%s",
+                    turn.stream_id,
+                    len(application.created_care_mark_ids),
+                    len(application.touched_care_mark_ids),
+                    len(application.closed_care_mark_ids),
+                    len(application.forgotten_care_mark_ids),
+                    len(application.promoted_care_mark_ids),
+                    care_result.unclear_operation or "none",
+                    pending_operation or "none",
+                )
                 self._schedule_auto_maintain(turn.stream_id, application)
                 logger.debug(
                     "care_reader result stream_id=%s decision=%s speak=%s reason=%s memory=%d attention=%d cues=%d",
@@ -415,6 +443,29 @@ class ConversationPipeline:
                 for mark in application.affected_care_marks
             ),
         )))
+
+    def _remember_unanswered_ask_back(
+        self,
+        turn: PipelineTurn,
+        care_result: CareReadResult,
+        application: CareApplication,
+    ) -> None:
+        operation = care_result.unclear_operation
+        if not operation or self._operation_applied(operation, application):
+            return
+        self._pending_care_operations.set(
+            turn.stream_id, turn.author_id, operation
+        )
+
+    @staticmethod
+    def _operation_applied(
+        operation: str, application: CareApplication
+    ) -> bool:
+        return bool({
+            "close": application.closed_care_mark_ids,
+            "forget": application.forgotten_care_mark_ids,
+            "promote": application.promoted_care_mark_ids,
+        }.get(operation))
 
     def _should_read_before_speaking(self, turn: PipelineTurn) -> bool:
         return (

@@ -93,6 +93,7 @@ class CareService:
         state: CareState,
         route_reason: str = '',
         reply_mode: str = 'none',
+        pending_operation: str = '',
     ) -> CareReadRequest:
         recent = await self.conversations.recent(stream_id, 8)
         public_ids = {mark.id: mark.public_id for mark in state.care_marks}
@@ -115,6 +116,7 @@ class CareService:
             cue_salience=max(0.0, min(0.7, cue_salience_value)),
             route_reason=route_reason,
             reply_mode=reply_mode,
+            pending_operation=pending_operation,
         )
 
     async def apply(
@@ -123,6 +125,7 @@ class CareService:
         source_message_id: int,
         result: CareReadResult,
         source_content: str = '',
+        pending_operation: str = '',
     ) -> CareApplication:
         state = await self.current_state(stream_id)
         by_public: Dict[str, CareMark] = {
@@ -208,10 +211,11 @@ class CareService:
 
         closed = await self._apply_close(result, by_public, affected)
         forgotten = await self._apply_forget(
-            result, source_content, created, by_public, affected
+            result, source_content, pending_operation, created,
+            by_public, affected,
         )
         promoted = await self._apply_promote(
-            result, source_content, by_public, affected
+            result, source_content, pending_operation, by_public, affected
         )
 
         cue_ids = []
@@ -275,13 +279,16 @@ class CareService:
         self,
         result: CareReadResult,
         source_content: str,
+        pending_operation: str,
         created: List[str],
         by_public: Dict[str, CareMark],
         affected: List[CareMark],
     ) -> List[str]:
         if not result.forget_care_mark_ids:
             return []
-        if not requests_forget(source_content):
+        # A pending ask-back means the request was already spoken on the
+        # turn that could not name its target; the answer completes it.
+        if not requests_forget(source_content) and pending_operation != 'forget':
             return []
         forgotten: List[str] = []
         for public_id in result.forget_care_mark_ids:
@@ -305,12 +312,13 @@ class CareService:
         self,
         result: CareReadResult,
         source_content: str,
+        pending_operation: str,
         by_public: Dict[str, CareMark],
         affected: List[CareMark],
     ) -> List[str]:
         if not result.promote_care_mark_ids:
             return []
-        if not requests_remember(source_content):
+        if not requests_remember(source_content) and pending_operation != 'promote':
             return []
         promoted: List[str] = []
         for public_id in result.promote_care_mark_ids:

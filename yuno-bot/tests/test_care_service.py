@@ -29,12 +29,15 @@ from yuno.read_cues.service import ReadCueService
 
 
 class RecordingReader:
-    def __init__(self, result=None):
+    def __init__(self, result=None, results=None):
         self.result = result or CareReadResult()
+        self.results = list(results) if results else []
         self.requests = []
 
     async def read(self, request):
         self.requests.append(request)
+        if self.results:
+            return self.results.pop(0)
         return self.result
 
 
@@ -104,13 +107,13 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
     @staticmethod
-    def incoming(message_id, content, *, mention=False):
+    def incoming(message_id, content, *, mention=False, author_id='7'):
         return IncomingMessage(
             discord_message_id=message_id,
             discord_channel_id='10',
             discord_guild_id='1',
             stream_kind='channel',
-            author_id='7',
+            author_id=author_id,
             author_name='A',
             author_is_bot=False,
             bot_user_id='99',
@@ -602,6 +605,130 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.should_send)
         self.assertIn('忘れた、とは言わない', speaker.contexts[-1].care_note)
+
+    async def test_forget_gate_accepts_a_pending_ask_back(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+
+        application = await self.service.apply(
+            self.stream.id,
+            self.message.id,
+            CareReadResult(forget_care_mark_ids=(mark.public_id,)),
+            source_content='呼び方のやつだよ',
+            pending_operation='forget',
+        )
+
+        self.assertEqual(
+            application.forgotten_care_mark_ids, (mark.public_id,)
+        )
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'hidden',
+        )
+
+    async def test_ask_back_round_trip_finishes_the_forget(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+        reader = RecordingReader(results=[
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                unclear_operation='forget',
+            ),
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                forget_care_mark_ids=(mark.public_id,),
+            ),
+        ])
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        first = await pipeline.process(
+            self.incoming('ask-1', '前に言ったこと、忘れてほしい', mention=True)
+        )
+        self.assertTrue(first.should_send)
+        self.assertIn('聞き返していい', speaker.contexts[-1].care_note)
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'active',
+        )
+
+        second = await pipeline.process(
+            self.incoming('ask-2', '呼び方のやつだよ', mention=True)
+        )
+
+        self.assertTrue(second.should_send)
+        self.assertEqual(reader.requests[1].pending_operation, 'forget')
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'hidden',
+        )
+        self.assertIn('手放して', speaker.contexts[-1].care_note)
+
+    async def test_pending_ask_back_runs_reader_even_for_low_signal_listening(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+        reader = RecordingReader(results=[
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                unclear_operation='forget',
+            ),
+            CareReadResult(
+                decision_made=True,
+                should_speak=False,
+                forget_care_mark_ids=(mark.public_id,),
+            ),
+        ])
+        pipeline = self.pipeline(reader)
+
+        await pipeline.process(
+            self.incoming('quiet-1', 'さっきのは忘れて', mention=True)
+        )
+        second = await pipeline.process(
+            self.incoming('quiet-2', '呼び方のやつ')
+        )
+
+        self.assertFalse(second.should_send)
+        self.assertEqual(len(reader.requests), 2)
+        self.assertEqual(reader.requests[1].pending_operation, 'forget')
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'hidden',
+        )
+
+    async def test_pending_ask_back_ignores_other_speakers(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+        reader = RecordingReader(results=[
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                unclear_operation='forget',
+            ),
+            CareReadResult(decision_made=True, should_speak=True),
+        ])
+        pipeline = self.pipeline(reader)
+
+        await pipeline.process(
+            self.incoming('other-1', 'さっきのは忘れて', mention=True)
+        )
+        await pipeline.process(
+            self.incoming(
+                'other-2', '呼び方のやつだよ', mention=True, author_id='8'
+            )
+        )
+
+        self.assertEqual(reader.requests[1].pending_operation, '')
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'active',
+        )
 
     async def test_unclear_forget_lets_speaker_ask_back(self) -> None:
         reader = RecordingReader(CareReadResult(

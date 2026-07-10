@@ -35,6 +35,14 @@ class GuideTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('コマンドか右クリックから開いてね', GUIDE_TEXT)
         self.assertNotIn('ボタンはつかない', GUIDE_TEXT)
 
+    def test_guide_leads_with_conversation_not_commands(self):
+        self.assertTrue(GUIDE_TEXT.startswith('ゆのとの話し方'))
+        self.assertIn('聞き返すことがある', GUIDE_TEXT)
+        self.assertLess(
+            GUIDE_TEXT.index('話しかけて'),
+            GUIDE_TEXT.index('/status'),
+        )
+
     def test_guide_text_hides_internal_names(self):
         for internal in (
             'CareMark',

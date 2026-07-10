@@ -717,6 +717,113 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
             'hidden',
         )
 
+    async def test_new_explicit_request_supersedes_waiting_ask_back(self) -> None:
+        old_target = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+        new_target = await self.marks.create(
+            self.stream.id, 'memory', 'active', '雨音が好き'
+        )
+        reader = RecordingReader(results=[
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                unclear_operation='forget',
+            ),
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                forget_care_mark_ids=(new_target.public_id,),
+            ),
+        ])
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        await pipeline.process(
+            self.incoming('sup-1', 'さっきのは忘れて', mention=True)
+        )
+        second = await pipeline.process(
+            self.incoming('sup-2', '雨音の好みの話は忘れて', mention=True)
+        )
+
+        self.assertTrue(second.should_send)
+        # The new stand-alone request is not read as an answer to the old
+        # question: no pending hint reaches the reader.
+        self.assertEqual(reader.requests[1].pending_operation, '')
+        self.assertEqual(
+            (await self.marks.get_by_public_id(new_target.public_id)).status,
+            'hidden',
+        )
+        self.assertEqual(
+            (await self.marks.get_by_public_id(old_target.public_id)).status,
+            'active',
+        )
+        self.assertIsNone(
+            pipeline._pending_care_operations.peek(self.stream.id, '7')
+        )
+
+    async def test_weak_wording_still_answers_the_waiting_ask_back(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+        reader = RecordingReader(results=[
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                unclear_operation='forget',
+            ),
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                forget_care_mark_ids=(mark.public_id,),
+            ),
+        ])
+        pipeline = self.pipeline(reader)
+
+        await pipeline.process(
+            self.incoming('weak-1', 'さっきのは忘れて', mention=True)
+        )
+        await pipeline.process(
+            self.incoming('weak-2', 'もういいや、呼び方のやつ', mention=True)
+        )
+
+        self.assertEqual(reader.requests[1].pending_operation, 'forget')
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'hidden',
+        )
+
+    async def test_unclear_new_request_replaces_the_waiting_ask_back(self) -> None:
+        reader = RecordingReader(results=[
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                unclear_operation='forget',
+            ),
+            CareReadResult(
+                decision_made=True,
+                should_speak=True,
+                unclear_operation='close',
+            ),
+        ])
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        await pipeline.process(
+            self.incoming('swap-1', 'さっきのは忘れて', mention=True)
+        )
+        second = await pipeline.process(
+            self.incoming('swap-2', 'あの長い相談の件、もう閉じて', mention=True)
+        )
+
+        self.assertTrue(second.should_send)
+        self.assertIn('？', second.reply_text)
+        self.assertEqual(reader.requests[1].pending_operation, '')
+        self.assertEqual(
+            pipeline._pending_care_operations.peek(self.stream.id, '7'),
+            'close',
+        )
+
     async def test_pending_ask_back_ignores_other_speakers(self) -> None:
         mark = await self.marks.create(
             self.stream.id, 'memory', 'active', 'こはると呼ぶ'

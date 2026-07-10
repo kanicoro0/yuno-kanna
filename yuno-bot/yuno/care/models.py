@@ -30,6 +30,7 @@ class CareReadRequest:
     cue_salience: float
     route_reason: str = ''
     reply_mode: str = 'none'
+    pending_operation: str = ''
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -41,6 +42,7 @@ class CareReadRequest:
             'cue_salience': self.cue_salience,
             'route_reason': self.route_reason,
             'reply_mode': self.reply_mode,
+            'pending_operation': self.pending_operation,
         }
 
 

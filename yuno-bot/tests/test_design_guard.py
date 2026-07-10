@@ -44,6 +44,7 @@ class DesignGuardTests(unittest.TestCase):
         self.assertIn("迷ったら状態変更を出しません", CARE_SYSTEM_PROMPT)
         self.assertIn("対象を推測で選びません", CARE_SYSTEM_PROMPT)
         self.assertIn("unclear_operation", CARE_SYSTEM_PROMPT)
+        self.assertIn("pending_operation", CARE_SYSTEM_PROMPT)
 
     def test_prompts_do_not_claim_unprovided_capabilities(self) -> None:
         self.assertIn("与えられていない情報を足さない", SYSTEM_PROMPT)

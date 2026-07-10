@@ -36,6 +36,10 @@ ReadCueはCareMarkへ戻るための索引です。ReadCueそのものを返答�
 操作は明確に頼まれたが、どの印のことか決められない時は、状態変更を出さずに
 unclear_operationへforget/close/promoteのどれかを入れます。対象を推測で選びません。
 その時はshould_speakをtrueにして、短く聞き返せるようにします。
+入力にpending_operationがある時は、直前にゆのが「どれのことか」を聞き返しています。
+今の発言がその対象を答えているなら、pending_operationの操作を該当する印に出します。
+まだ決められなければ、同じ操作をもう一度unclear_operationに入れます。
+対象の話をしていないなら、何も出しません。
 route_reasonがlistening_only/name_seenの時は、ゆのへの明確な依頼でない限り状態変更を出しません。
 
 speaker_noteには、Speakerに渡す短い判断メモだけを書きます。返答本文を書きません。

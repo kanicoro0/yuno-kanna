@@ -5,6 +5,7 @@ from yuno.care.operations import (
     PendingCareOperations,
     ask_back_reply,
     care_operations_log_line,
+    requests_new_operation,
     requests_restore,
 )
 from yuno.care.service import CareApplication
@@ -119,6 +120,30 @@ class RequestsRestoreTests(unittest.TestCase):
                 self.assertFalse(requests_restore(content))
 
 
+class RequestsNewOperationTests(unittest.TestCase):
+    def test_strong_targeted_requests_supersede(self) -> None:
+        for content in (
+            'Bの好みの話は忘れて',
+            'この前の雨音の話は覚えなくていいよ',
+            'あの長い相談の件、もう閉じて',
+            'さっきのメモの話、固定しておいて',
+        ):
+            with self.subTest(content=content):
+                self.assertTrue(requests_new_operation(content))
+
+    def test_bare_or_weak_phrases_do_not_supersede(self) -> None:
+        for content in (
+            '忘れて',
+            'なかったことにして',
+            'やめて、あの話',
+            'もういいや、呼び方のやつ',
+            '呼び方のやつだよ',
+            '',
+        ):
+            with self.subTest(content=content):
+                self.assertFalse(requests_new_operation(content))
+
+
 class CareOperationsLogLineTests(unittest.TestCase):
     def line(self, **overrides):
         arguments = dict(
@@ -212,6 +237,16 @@ class CareOperationsLogLineTests(unittest.TestCase):
 
         self.assertIn('pending_outcome=no_action', line)
         self.assertNotIn('unrelated', line)
+
+    def test_pending_outcome_superseded(self) -> None:
+        line = self.line(
+            pending_operation='forget',
+            pending_superseded=True,
+            result=CareReadResult(forget_care_mark_ids=('care_1',)),
+        )
+
+        self.assertIn('pending=forget', line)
+        self.assertIn('pending_outcome=superseded', line)
 
 
 if __name__ == '__main__':

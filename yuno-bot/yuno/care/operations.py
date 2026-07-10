@@ -137,6 +137,34 @@ def requests_close(content: str) -> bool:
 _RESTORE_ACTION_TERMS = ('戻して', '戻せ', '復活')
 _RESTORE_MEMORY_TERMS = ('記憶', '覚え', '忘れ')
 
+# Only strong, targeted requests may push aside a waiting ask-back.
+# Deliberately narrower than the apply gates: weak words like やめて or
+# もういい could be part of an answer, never a stand-alone request.
+_SUPERSEDE_REQUEST_TERMS = (
+    '忘れて', '覚えなくていい', '閉じて', '固定して', 'なかったこと',
+)
+_SUPERSEDE_EXTRA_CHARS = 4
+
+
+def requests_new_operation(content: str) -> bool:
+    """A strong operation request that stands on its own.
+
+    True only when a strong operation term appears together with enough
+    other words to be naming its own target, rather than answering the
+    waiting question with the bare operation word.
+    """
+    normalized = normalize_for_match(content)
+    if not normalized:
+        return False
+    for term in _SUPERSEDE_REQUEST_TERMS:
+        normalized_term = normalize_for_match(term)
+        if (
+            normalized_term in normalized
+            and len(normalized) - len(normalized_term) >= _SUPERSEDE_EXTRA_CHARS
+        ):
+            return True
+    return False
+
 
 def requests_restore(content: str) -> bool:
     """A strong, memory-explicit restore request.
@@ -171,6 +199,7 @@ def care_operations_log_line(
     result: CareReadResult,
     application: 'CareApplication',
     pending_operation: str = '',
+    pending_superseded: bool = False,
 ) -> str:
     """One observation line: counts and enums only, never message text.
 
@@ -215,7 +244,8 @@ def care_operations_log_line(
         f' blocked={blocked}'
         f' unclear={result.unclear_operation or "none"}'
         f' pending={pending_operation or "none"}'
-        f' pending_outcome={_pending_outcome(result, application, pending_operation)}'
+        f' pending_outcome='
+        f'{_pending_outcome(result, application, pending_operation, pending_superseded)}'
     )
 
 
@@ -223,9 +253,14 @@ def _pending_outcome(
     result: CareReadResult,
     application: 'CareApplication',
     pending_operation: str,
+    pending_superseded: bool = False,
 ) -> str:
     if not pending_operation:
         return 'none'
+    if pending_superseded:
+        # A stand-alone new request pushed the waiting ask-back aside;
+        # nothing was answered and nothing is claimed about the old one.
+        return 'superseded'
     fulfilled = {
         'close': application.closed_care_mark_ids,
         'forget': application.forgotten_care_mark_ids,

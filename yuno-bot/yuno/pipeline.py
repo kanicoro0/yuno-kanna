@@ -12,6 +12,7 @@ from yuno.care.operations import (
     ask_back_reply,
     care_operations_log_line,
     care_outcome_note,
+    requests_new_operation,
 )
 from yuno.care.service import (
     CareApplication,
@@ -144,13 +145,13 @@ class ConversationPipeline:
             state = await self.care_service.current_state(turn.stream_id)
             salience = cue_salience(turn.content, state.read_cues)
             trigger = immediate_care_decision(turn.content, state)
-            pending_operation = self._pending_care_operations.peek(
+            waiting_operation = self._pending_care_operations.peek(
                 turn.stream_id, turn.author_id
             )
             if (
                 self._requires_care_trigger(turn)
                 and not trigger.run
-                and pending_operation is None
+                and waiting_operation is None
             ):
                 logger.debug(
                     "care_reader skipped before speech decision stream_id=%s route=%s reason=%s",
@@ -159,11 +160,17 @@ class ConversationPipeline:
                     trigger.reason,
                 )
             else:
-                if pending_operation is not None:
-                    # The ask-back is answered (or re-asked) on this turn;
-                    # either way it is consumed here, not left dangling.
+                pending_operation = ""
+                pending_superseded = False
+                if waiting_operation is not None:
+                    # The ask-back is consumed on this turn either way:
+                    # answered, re-asked, or pushed aside by a stand-alone
+                    # new request that must not read as its answer.
                     self._pending_care_operations.clear(turn.stream_id)
-                pending_operation = pending_operation or ""
+                    if requests_new_operation(turn.content):
+                        pending_superseded = True
+                    else:
+                        pending_operation = waiting_operation
                 request = await self.care_service.build_request(
                     turn.stream_id,
                     turn.content,
@@ -226,7 +233,8 @@ class ConversationPipeline:
                         source_content=turn.content,
                         result=care_result,
                         application=application,
-                        pending_operation=pending_operation,
+                        pending_operation=waiting_operation or "",
+                        pending_superseded=pending_superseded,
                     ),
                 )
                 self._schedule_auto_maintain(turn.stream_id, application)

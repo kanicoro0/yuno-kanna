@@ -134,7 +134,7 @@ def requests_close(content: str) -> bool:
     return _contains_any(content, _CLOSE_REQUEST_TERMS)
 
 
-_RESTORE_ACTION_TERMS = ('戻して', '戻せない', '復活')
+_RESTORE_ACTION_TERMS = ('戻して', '戻せ', '復活')
 _RESTORE_MEMORY_TERMS = ('記憶', '覚え', '忘れ')
 
 

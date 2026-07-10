@@ -791,6 +791,60 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('忘れた、とは言わない', speaker.contexts[-1].care_note)
 
+    async def test_ask_back_is_sent_even_when_reader_chose_silence(self) -> None:
+        reader = RecordingReader(CareReadResult(
+            decision_made=True,
+            should_speak=False,
+            unclear_operation='forget',
+        ))
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        result = await pipeline.process(
+            self.incoming('quiet-unclear', 'あの話はもう忘れていいよ')
+        )
+
+        self.assertTrue(result.should_send)
+        self.assertEqual(speaker.contexts, [])
+        self.assertIn('？', result.reply_text)
+        self.assertEqual(result.reply_mode, 'plain')
+        self.assertEqual(await self.marks.list_for_stream(self.stream.id), [])
+
+    async def test_restore_confirmation_path_never_authorizes_a_claim(self) -> None:
+        """観察 #3 の実経路「戻せる？」→「うん」。
+
+        復元は起きないので、どのターンの note も完了を伝えない。
+        2 ターン目の防波堤は Speaker への指示のみで、機械的保証は
+        未対応(docs の既知制限)。ここでは「完了を伝える note が
+        どこにも生成されない」ことまでを固定する。
+        """
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'hidden', 'こはると呼ぶ'
+        )
+        reader = RecordingReader(
+            CareReadResult(decision_made=True, should_speak=True)
+        )
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        await pipeline.process(
+            self.incoming('restore-ask', 'さっき忘れたやつ、戻せる？', mention=True)
+        )
+        first_note = speaker.contexts[-1].care_note
+        self.assertIn('戻した、とは言わない', first_note)
+        self.assertIn('一覧', first_note)
+
+        await pipeline.process(
+            self.incoming('restore-yes', 'うん', mention=True)
+        )
+
+        second_note = speaker.contexts[-1].care_note
+        self.assertNotIn('戻した', second_note.replace('戻した、とは言わない', ''))
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'hidden',
+        )
+
     async def test_memory_explicit_restore_request_denies_completion(self) -> None:
         reader = RecordingReader(CareReadResult(
             decision_made=True,

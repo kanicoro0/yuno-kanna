@@ -219,7 +219,10 @@ class ConversationPipeline:
                     turn.stream_id,
                     care_operations_log_line(
                         route_reason=turn.route_reason,
-                        spoke=self._should_speak(turn, care_result),
+                        spoke=(
+                            bool(ask_back_operation)
+                            or self._should_speak(turn, care_result)
+                        ),
                         source_content=turn.content,
                         result=care_result,
                         application=application,
@@ -245,6 +248,11 @@ class ConversationPipeline:
                 )
 
         should_speak = self._should_speak(turn, care_result)
+        if ask_back_operation:
+            # The question must land even when the reader chose silence;
+            # a stored pending with no spoken ask-back would leave the
+            # next answer completing a question that was never asked.
+            should_speak = True
         logger.debug(
             "speech decision stream_id=%s route_reply=%s care_decision=%s should_speak=%s",
             turn.stream_id,

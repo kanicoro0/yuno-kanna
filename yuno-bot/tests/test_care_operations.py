@@ -103,6 +103,7 @@ class RequestsRestoreTests(unittest.TestCase):
         for content in (
             'さっきの記憶、戻して',
             '忘れたやつを戻してほしい',
+            'さっき忘れたやつ、戻せる？',
             '覚えてたこと、復活できる？',
         ):
             with self.subTest(content=content):

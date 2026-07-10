@@ -7,7 +7,11 @@ from typing import Optional
 from yuno.care.models import CareReadResult
 from yuno.care.maintenance import CareMaintenanceService
 from yuno.care.reader import CareReader
-from yuno.care.operations import PendingCareOperations, care_outcome_note
+from yuno.care.operations import (
+    PendingCareOperations,
+    care_operations_log_line,
+    care_outcome_note,
+)
 from yuno.care.service import (
     CareApplication,
     CareService,
@@ -207,16 +211,16 @@ class ConversationPipeline:
                 pre_care_completed = True
                 self._remember_unanswered_ask_back(turn, care_result, application)
                 logger.info(
-                    "care_operations stream_id=%s phase=pre created=%d touched=%d "
-                    "closed=%d forgotten=%d promoted=%d unclear=%s pending_used=%s",
+                    "care_operations stream_id=%s phase=pre %s",
                     turn.stream_id,
-                    len(application.created_care_mark_ids),
-                    len(application.touched_care_mark_ids),
-                    len(application.closed_care_mark_ids),
-                    len(application.forgotten_care_mark_ids),
-                    len(application.promoted_care_mark_ids),
-                    care_result.unclear_operation or "none",
-                    pending_operation or "none",
+                    care_operations_log_line(
+                        route_reason=turn.route_reason,
+                        spoke=self._should_speak(turn, care_result),
+                        source_content=turn.content,
+                        result=care_result,
+                        application=application,
+                        pending_operation=pending_operation,
+                    ),
                 )
                 self._schedule_auto_maintain(turn.stream_id, application)
                 logger.debug(
@@ -381,6 +385,17 @@ class ConversationPipeline:
                 _elapsed_ms(started),
             )
         self._schedule_auto_maintain(ticket.stream_id, application)
+        logger.info(
+            "care_operations stream_id=%s phase=post %s",
+            ticket.stream_id,
+            care_operations_log_line(
+                route_reason=ticket.route_reason,
+                spoke=True,
+                source_content=ticket.user_content,
+                result=care_result,
+                application=application,
+            ),
+        )
         logger.debug(
             "post-send care_reader result stream_id=%s memory=%d attention=%d cues=%d",
             ticket.stream_id,

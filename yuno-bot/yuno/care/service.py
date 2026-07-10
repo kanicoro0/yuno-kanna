@@ -35,6 +35,10 @@ class CareApplication:
     closed_care_mark_ids: Tuple[str, ...] = ()
     forgotten_care_mark_ids: Tuple[str, ...] = ()
     promoted_care_mark_ids: Tuple[str, ...] = ()
+    # Observation-only counters: (operation, reason, count) for proposals
+    # that did not apply. Reasons: gate / target / limit / sensitive.
+    # Never persisted; they exist for the care_operations log line.
+    blocked_operations: Tuple[Tuple[str, str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -209,13 +213,15 @@ class CareService:
             _remember_affected(affected, mark)
             _remember_target(candidate_targets, normalized, mark)
 
-        closed = await self._apply_close(result, by_public, affected)
+        blocked: Dict[Tuple[str, str], int] = {}
+        closed = await self._apply_close(result, by_public, affected, blocked)
         forgotten = await self._apply_forget(
             result, source_content, pending_operation, created,
-            by_public, affected,
+            by_public, affected, blocked,
         )
         promoted = await self._apply_promote(
-            result, source_content, pending_operation, by_public, affected
+            result, source_content, pending_operation, by_public, affected,
+            blocked,
         )
 
         cue_ids = []
@@ -253,6 +259,10 @@ class CareService:
             closed_care_mark_ids=tuple(closed),
             forgotten_care_mark_ids=tuple(forgotten),
             promoted_care_mark_ids=tuple(promoted),
+            blocked_operations=tuple(sorted(
+                (operation, reason, count)
+                for (operation, reason), count in blocked.items()
+            )),
         )
 
     async def _apply_close(
@@ -260,19 +270,24 @@ class CareService:
         result: CareReadResult,
         by_public: Dict[str, CareMark],
         affected: List[CareMark],
+        blocked: Dict[Tuple[str, str], int],
     ) -> List[str]:
         closed: List[str] = []
         for public_id in result.close_care_mark_ids:
-            if len(closed) >= MAX_CLOSE_OPERATIONS:
-                break
             mark = by_public.get(public_id)
             if mark is None or mark.kind != 'attention' or mark.status != 'open':
+                _note_blocked(blocked, 'close', 'target')
+                continue
+            if len(closed) >= MAX_CLOSE_OPERATIONS:
+                _note_blocked(blocked, 'close', 'limit')
                 continue
             updated = await self.care_marks.update(public_id, status='closed')
-            if updated is not None:
-                closed.append(public_id)
-                by_public[public_id] = updated
-                _remember_affected(affected, updated)
+            if updated is None:
+                _note_blocked(blocked, 'close', 'target')
+                continue
+            closed.append(public_id)
+            by_public[public_id] = updated
+            _remember_affected(affected, updated)
         return closed
 
     async def _apply_forget(
@@ -283,29 +298,37 @@ class CareService:
         created: List[str],
         by_public: Dict[str, CareMark],
         affected: List[CareMark],
+        blocked: Dict[Tuple[str, str], int],
     ) -> List[str]:
         if not result.forget_care_mark_ids:
             return []
         # A pending ask-back means the request was already spoken on the
         # turn that could not name its target; the answer completes it.
         if not requests_forget(source_content) and pending_operation != 'forget':
+            _note_blocked(
+                blocked, 'forget', 'gate', len(result.forget_care_mark_ids)
+            )
             return []
         forgotten: List[str] = []
         for public_id in result.forget_care_mark_ids:
-            if len(forgotten) >= MAX_FORGET_OPERATIONS:
-                break
             mark = by_public.get(public_id)
             if (
                 mark is None
                 or mark.status == 'hidden'
                 or public_id in created
             ):
+                _note_blocked(blocked, 'forget', 'target')
+                continue
+            if len(forgotten) >= MAX_FORGET_OPERATIONS:
+                _note_blocked(blocked, 'forget', 'limit')
                 continue
             updated = await self.care_marks.update(public_id, status='hidden')
-            if updated is not None:
-                forgotten.append(public_id)
-                by_public[public_id] = updated
-                _remember_affected(affected, updated)
+            if updated is None:
+                _note_blocked(blocked, 'forget', 'target')
+                continue
+            forgotten.append(public_id)
+            by_public[public_id] = updated
+            _remember_affected(affected, updated)
         return forgotten
 
     async def _apply_promote(
@@ -315,28 +338,38 @@ class CareService:
         pending_operation: str,
         by_public: Dict[str, CareMark],
         affected: List[CareMark],
+        blocked: Dict[Tuple[str, str], int],
     ) -> List[str]:
         if not result.promote_care_mark_ids:
             return []
         if not requests_remember(source_content) and pending_operation != 'promote':
+            _note_blocked(
+                blocked, 'promote', 'gate', len(result.promote_care_mark_ids)
+            )
             return []
         promoted: List[str] = []
         for public_id in result.promote_care_mark_ids:
-            if len(promoted) >= MAX_PROMOTE_OPERATIONS:
-                break
             mark = by_public.get(public_id)
             if (
                 mark is None
                 or mark.kind != 'memory'
                 or mark.status != 'draft'
-                or looks_sensitive(mark.text)
             ):
+                _note_blocked(blocked, 'promote', 'target')
+                continue
+            if looks_sensitive(mark.text):
+                _note_blocked(blocked, 'promote', 'sensitive')
+                continue
+            if len(promoted) >= MAX_PROMOTE_OPERATIONS:
+                _note_blocked(blocked, 'promote', 'limit')
                 continue
             updated = await self.care_marks.update(public_id, status='active')
-            if updated is not None:
-                promoted.append(public_id)
-                by_public[public_id] = updated
-                _remember_affected(affected, updated)
+            if updated is None:
+                _note_blocked(blocked, 'promote', 'target')
+                continue
+            promoted.append(public_id)
+            by_public[public_id] = updated
+            _remember_affected(affected, updated)
         return promoted
 
 
@@ -404,6 +437,16 @@ def _remember_target(
         targets[normalized_text] = mark
     elif targets[normalized_text] != mark:
         targets[normalized_text] = None
+
+
+def _note_blocked(
+    blocked: Dict[Tuple[str, str], int],
+    operation: str,
+    reason: str,
+    count: int = 1,
+) -> None:
+    key = (operation, reason)
+    blocked[key] = blocked.get(key, 0) + count
 
 
 def _remember_affected(marks: List[CareMark], mark: CareMark) -> None:

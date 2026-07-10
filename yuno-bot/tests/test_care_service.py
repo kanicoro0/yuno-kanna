@@ -416,6 +416,9 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(application.closed_care_mark_ids, ())
         self.assertEqual(
+            application.blocked_operations, (('close', 'target', 2),)
+        )
+        self.assertEqual(
             (await self.marks.get_by_public_id(memory.public_id)).status,
             'active',
         )
@@ -433,6 +436,9 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(application.forgotten_care_mark_ids, ())
+        self.assertEqual(
+            application.blocked_operations, (('forget', 'gate', 1),)
+        )
         self.assertEqual(
             (await self.marks.get_by_public_id(mark.public_id)).status,
             'active',
@@ -474,6 +480,9 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(application.forgotten_care_mark_ids), 2)
+        self.assertEqual(
+            application.blocked_operations, (('forget', 'limit', 1),)
+        )
         statuses = [
             (await self.marks.get_by_public_id(mark.public_id)).status
             for mark in marks
@@ -527,6 +536,9 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(application.promoted_care_mark_ids, (plain.public_id,))
+        self.assertEqual(
+            application.blocked_operations, (('promote', 'sensitive', 1),)
+        )
         self.assertEqual(
             (await self.marks.get_by_public_id(plain.public_id)).status,
             'active',

@@ -12,6 +12,8 @@ import time
 import unicodedata
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
+from yuno.care.models import CareReadResult
+
 if TYPE_CHECKING:
     from yuno.care.service import CareApplication
 
@@ -123,6 +125,83 @@ def requests_remember(content: str) -> bool:
 
 def requests_close(content: str) -> bool:
     return _contains_any(content, _CLOSE_REQUEST_TERMS)
+
+
+def care_operations_log_line(
+    *,
+    route_reason: str,
+    spoke: bool,
+    source_content: str,
+    result: CareReadResult,
+    application: 'CareApplication',
+    pending_operation: str = '',
+) -> str:
+    """One observation line: counts and enums only, never message text.
+
+    The message content is reduced to which gate lexicons it hit; the
+    hit is a known-vocabulary match, not the speaker's actual intent.
+    A missing hit alone is not a vocabulary gap: close has no spoken
+    gate, and pending ask-backs complete forget/promote without one.
+    Gap candidates are forget/promote lines with pending=none, proposals
+    present, and a gate block.
+    """
+    hits = [
+        name
+        for name, hit in (
+            ('forget', requests_forget(source_content)),
+            ('remember', requests_remember(source_content)),
+            ('close', requests_close(source_content)),
+        )
+        if hit
+    ]
+    proposed = (
+        f'close:{len(result.close_care_mark_ids)}'
+        f',forget:{len(result.forget_care_mark_ids)}'
+        f',promote:{len(result.promote_care_mark_ids)}'
+    )
+    applied = (
+        f'created:{len(application.created_care_mark_ids)}'
+        f',touched:{len(application.touched_care_mark_ids)}'
+        f',closed:{len(application.closed_care_mark_ids)}'
+        f',forgotten:{len(application.forgotten_care_mark_ids)}'
+        f',promoted:{len(application.promoted_care_mark_ids)}'
+    )
+    blocked = ','.join(
+        f'{operation}:{reason}:{count}'
+        for operation, reason, count in application.blocked_operations
+    ) or 'none'
+    return (
+        f'route={route_reason or "none"}'
+        f' spoke={"true" if spoke else "false"}'
+        f' lexical_request_hit={",".join(hits) or "none"}'
+        f' proposed={proposed}'
+        f' applied={applied}'
+        f' blocked={blocked}'
+        f' unclear={result.unclear_operation or "none"}'
+        f' pending={pending_operation or "none"}'
+        f' pending_outcome={_pending_outcome(result, application, pending_operation)}'
+    )
+
+
+def _pending_outcome(
+    result: CareReadResult,
+    application: 'CareApplication',
+    pending_operation: str,
+) -> str:
+    if not pending_operation:
+        return 'none'
+    fulfilled = {
+        'close': application.closed_care_mark_ids,
+        'forget': application.forgotten_care_mark_ids,
+        'promote': application.promoted_care_mark_ids,
+    }.get(pending_operation)
+    if fulfilled:
+        return 'applied'
+    if result.unclear_operation:
+        return 're_asked'
+    # Nothing happened; whether the answer was unrelated is not decided
+    # here, only that no state changed.
+    return 'no_action'
 
 
 def care_outcome_note(

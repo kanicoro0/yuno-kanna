@@ -3,7 +3,9 @@ import unittest
 from yuno.care.models import CareReadResult
 from yuno.care.operations import (
     PendingCareOperations,
+    ask_back_reply,
     care_operations_log_line,
+    requests_restore,
 )
 from yuno.care.service import CareApplication
 
@@ -61,6 +63,60 @@ class PendingCareOperationsTests(unittest.TestCase):
 
         self.assertEqual(pending.peek(1, '7'), 'forget')
         self.assertEqual(pending.peek(2, '7'), 'close')
+
+
+class AskBackReplyTests(unittest.TestCase):
+    def test_reply_is_deterministic_for_the_same_turn(self) -> None:
+        first = ask_back_reply('forget', 'あれはもう忘れて')
+        second = ask_back_reply('forget', 'あれはもう忘れて')
+
+        self.assertEqual(first, second)
+
+    def test_every_reply_is_a_short_question(self) -> None:
+        seeds = [f'ため書き{index}' for index in range(12)]
+        for operation in ('forget', 'close', 'promote'):
+            for seed in seeds:
+                reply = ask_back_reply(operation, seed)
+                with self.subTest(operation=operation, reply=reply):
+                    self.assertIn('？', reply)
+                    self.assertLess(len(reply), 40)
+
+    def test_replies_never_leak_internal_words(self) -> None:
+        for operation in ('forget', 'close', 'promote'):
+            for index in range(8):
+                reply = ask_back_reply(operation, f'seed{index}').casefold()
+                for word in (
+                    'caremark', 'care_', 'status', 'memory', 'attention',
+                    'draft', 'active', 'hidden', 'pending', 'unclear',
+                ):
+                    self.assertNotIn(word, reply)
+
+    def test_wording_varies_across_seeds(self) -> None:
+        replies = {
+            ask_back_reply('forget', f'話{index}') for index in range(24)
+        }
+        self.assertGreater(len(replies), 1)
+
+
+class RequestsRestoreTests(unittest.TestCase):
+    def test_memory_explicit_restore_is_detected(self) -> None:
+        for content in (
+            'さっきの記憶、戻して',
+            '忘れたやつを戻してほしい',
+            'さっき忘れたやつ、戻せる？',
+            '覚えてたこと、復活できる？',
+        ):
+            with self.subTest(content=content):
+                self.assertTrue(requests_restore(content))
+
+    def test_plain_restore_words_do_not_match(self) -> None:
+        for content in (
+            '椅子を元の場所に戻しておいて',
+            'ゲームのセーブを復活させたい',
+            '記憶力がほしい',
+        ):
+            with self.subTest(content=content):
+                self.assertFalse(requests_restore(content))
 
 
 class CareOperationsLogLineTests(unittest.TestCase):

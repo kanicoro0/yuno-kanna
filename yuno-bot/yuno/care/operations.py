@@ -7,6 +7,7 @@ that tell the Speaker only what really happened.
 """
 
 from dataclasses import dataclass
+import hashlib
 import re
 import time
 import unicodedata
@@ -37,18 +38,24 @@ MAX_PROMOTE_OPERATIONS = 2
 
 UNCLEAR_OPERATIONS = frozenset({'forget', 'close', 'promote'})
 
-_ASK_BACK_NOTES = {
+# Deterministic ask-back replies, sent instead of a Speaker turn when an
+# operation was requested but its target could not be named. Short, in
+# Yuno's voice, one question and nothing else.
+_ASK_BACK_REPLIES = {
     'forget': (
-        'どれを手放すかは、まだ決めていない。'
-        '忘れた、とは言わず、どれのことか短く聞き返していい'
+        'どれを手放せばいいか、もうすこしだけ教えて…？',
+        '忘れるのは、どのことかな…？',
+        '手放すのは、どれのこと？',
     ),
     'close': (
-        'どれを閉じるかは、まだ決めていない。'
-        '閉じた、とは言わず、どれのことか短く聞き返していい'
+        '閉じるのは、どの話のこと…？',
+        'ひと区切りにするのは、どれかな？',
+        'どの話を閉じればいい…？',
     ),
     'promote': (
-        'どれを覚えておくかは、まだ決めていない。'
-        '覚えた、とは言わず、どれのことか短く聞き返していい'
+        'ちゃんと覚えておくのは、どのこと…？',
+        'どれをしっかり持っておけばいいかな？',
+        '覚えておくのは、どの話のこと？',
     ),
 }
 
@@ -125,6 +132,35 @@ def requests_remember(content: str) -> bool:
 
 def requests_close(content: str) -> bool:
     return _contains_any(content, _CLOSE_REQUEST_TERMS)
+
+
+_RESTORE_ACTION_TERMS = ('戻して', '戻せ', '復活')
+_RESTORE_MEMORY_TERMS = ('記憶', '覚え', '忘れ')
+
+
+def requests_restore(content: str) -> bool:
+    """A strong, memory-explicit restore request.
+
+    Restore is not a conversational operation yet, so this only matches
+    when a restore word and a memory word appear together; a plain
+    「戻して」 about anything else stays out.
+    """
+    return (
+        _contains_any(content, _RESTORE_ACTION_TERMS)
+        and _contains_any(content, _RESTORE_MEMORY_TERMS)
+    )
+
+
+def ask_back_reply(operation: str, seed_text: str) -> str:
+    """The deterministic short ask-back for an unclear operation.
+
+    Chosen from a small in-voice pool; the seed only varies the wording,
+    never whether the question is asked.
+    """
+    pool = _ASK_BACK_REPLIES[operation]
+    seed = f'{operation}\0{seed_text}'.encode('utf-8')
+    digest = hashlib.blake2s(seed, digest_size=2).digest()
+    return pool[int.from_bytes(digest, 'big') % len(pool)]
 
 
 def care_operations_log_line(
@@ -211,10 +247,12 @@ def care_outcome_note(
 ) -> str:
     """Short fixed-form Speaker notes about what actually happened.
 
-    Lines exist only for state that really changed, plus an ask-back line
-    when a request could not be tied to one mark, and explicit
-    "do not claim it" lines when the message asked for a change that did
-    not happen. Forgotten mark text is never repeated here.
+    Lines exist only for state that really changed, plus explicit
+    "do not claim it" lines when a change was asked for - by the spoken
+    words or by reader proposals that were blocked - and did not happen.
+    Unclear operations add no line here: their turn is answered by the
+    deterministic ask-back reply instead of the Speaker.
+    Forgotten mark text is never repeated here.
     """
     forgot = bool(application.forgotten_care_mark_ids)
     closed = bool(application.closed_care_mark_ids)
@@ -235,20 +273,42 @@ def care_outcome_note(
         and not fulfilled[unclear_operation]
         else ''
     )
-    if unclear:
-        parts.append(_ASK_BACK_NOTES[unclear])
 
-    if (
+    # Blocked proposals count as evidence a change was asked for, even
+    # when the spoken words missed the gate lexicon: the reply must not
+    # claim the change either way.
+    remember_evidence = (
         requests_remember(source_content)
-        and not promoted
-        and unclear != 'promote'
-    ):
+        or _blocked_count(application, 'promote') > 0
+    )
+    forget_evidence = (
+        requests_forget(source_content)
+        or _blocked_count(application, 'forget') > 0
+    )
+    close_evidence = (
+        requests_close(source_content)
+        or _blocked_count(application, 'close') > 0
+    )
+    if remember_evidence and not promoted and unclear != 'promote':
         parts.append(_remember_outcome(application))
-    if requests_forget(source_content) and not forgot and unclear != 'forget':
+    if forget_evidence and not forgot and unclear != 'forget':
         parts.append('忘れることは、いまここでは起きていない。忘れた、とは言わない')
-    if requests_close(source_content) and not closed and unclear != 'close':
+    if close_evidence and not closed and unclear != 'close':
         parts.append('閉じることは、いまここでは起きていない。閉じた、とは言わない')
+    if requests_restore(source_content):
+        parts.append(
+            '元に戻すことは、いまの会話ではできていない。戻した、とは言わない。'
+            '一覧からなら戻せる、と伝えてよい'
+        )
     return '\n'.join(parts)
+
+
+def _blocked_count(application: 'CareApplication', operation: str) -> int:
+    return sum(
+        count
+        for blocked_operation, _reason, count in application.blocked_operations
+        if blocked_operation == operation
+    )
 
 
 def _remember_outcome(application: 'CareApplication') -> str:

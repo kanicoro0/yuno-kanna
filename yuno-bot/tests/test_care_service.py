@@ -662,7 +662,11 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
             self.incoming('ask-1', '前に言ったこと、忘れてほしい', mention=True)
         )
         self.assertTrue(first.should_send)
-        self.assertIn('聞き返していい', speaker.contexts[-1].care_note)
+        # The ask-back turn bypasses the Speaker entirely: the reply is a
+        # deterministic short question and cannot claim completion.
+        self.assertEqual(speaker.contexts, [])
+        self.assertIn('？', first.reply_text)
+        self.assertNotIn('忘れた', first.reply_text)
         self.assertEqual(
             (await self.marks.get_by_public_id(mark.public_id)).status,
             'active',
@@ -742,7 +746,7 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
             'active',
         )
 
-    async def test_unclear_forget_lets_speaker_ask_back(self) -> None:
+    async def test_unclear_forget_replies_with_a_deterministic_ask_back(self) -> None:
         reader = RecordingReader(CareReadResult(
             decision_made=True,
             should_speak=True,
@@ -756,10 +760,53 @@ class CareServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(result.should_send)
-        note = speaker.contexts[-1].care_note
-        self.assertIn('聞き返していい', note)
-        self.assertNotIn('いまここでは起きていない', note)
+        self.assertEqual(speaker.contexts, [])
+        self.assertIn('？', result.reply_text)
+        self.assertLess(len(result.reply_text), 40)
+        self.assertNotIn('忘れた', result.reply_text)
         self.assertEqual(await self.marks.list_for_stream(self.stream.id), [])
+
+    async def test_gate_blocked_forget_still_denies_completion(self) -> None:
+        mark = await self.marks.create(
+            self.stream.id, 'memory', 'active', 'こはると呼ぶ'
+        )
+        reader = RecordingReader(CareReadResult(
+            decision_made=True,
+            should_speak=True,
+            forget_care_mark_ids=(mark.public_id,),
+        ))
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        result = await pipeline.process(
+            self.incoming(
+                'nl-forget-offlex', 'その呼び方はもう見なくていいよ', mention=True
+            )
+        )
+
+        self.assertTrue(result.should_send)
+        self.assertEqual(
+            (await self.marks.get_by_public_id(mark.public_id)).status,
+            'active',
+        )
+        self.assertIn('忘れた、とは言わない', speaker.contexts[-1].care_note)
+
+    async def test_memory_explicit_restore_request_denies_completion(self) -> None:
+        reader = RecordingReader(CareReadResult(
+            decision_made=True,
+            should_speak=True,
+        ))
+        speaker = RecordingSpeaker()
+        pipeline = self.pipeline(reader, speaker)
+
+        result = await pipeline.process(
+            self.incoming('nl-restore', 'さっきの記憶、戻して', mention=True)
+        )
+
+        self.assertTrue(result.should_send)
+        note = speaker.contexts[-1].care_note
+        self.assertIn('戻した、とは言わない', note)
+        self.assertIn('一覧', note)
 
 
 class CareOutcomeNoteTests(unittest.TestCase):
@@ -832,19 +879,13 @@ class CareOutcomeNoteTests(unittest.TestCase):
             care_outcome_note('今日は晴れだね', CareApplication()), ''
         )
 
-    def test_unclear_forget_becomes_ask_back_instead_of_denial(self) -> None:
+    def test_unclear_suppresses_the_denial_line(self) -> None:
+        # The unclear turn is answered by the deterministic ask-back
+        # reply, so the note stays silent instead of denying.
         note = care_outcome_note(
             'さっきのことは忘れて', CareApplication(), 'forget'
         )
-        self.assertIn('聞き返していい', note)
-        self.assertIn('忘れた、とは言わず', note)
-        self.assertNotIn('いまここでは起きていない', note)
-
-    def test_unclear_signal_works_even_outside_gate_lexicon(self) -> None:
-        note = care_outcome_note(
-            '記憶から消し去ってほしいな', CareApplication(), 'forget'
-        )
-        self.assertIn('聞き返していい', note)
+        self.assertEqual(note, '')
 
     def test_unclear_is_ignored_when_the_operation_happened(self) -> None:
         note = care_outcome_note(
@@ -853,7 +894,32 @@ class CareOutcomeNoteTests(unittest.TestCase):
             'forget',
         )
         self.assertIn('もう覚えていないことにした', note)
-        self.assertNotIn('聞き返していい', note)
+        self.assertNotIn('聞き返', note)
+
+    def test_blocked_proposals_deny_completion_without_lexical_hit(self) -> None:
+        note = care_outcome_note(
+            'それはもう見なくていいよ',
+            CareApplication(blocked_operations=(('forget', 'gate', 1),)),
+        )
+        self.assertIn('忘れた、とは言わない', note)
+
+    def test_blocked_close_denies_completion_without_lexical_hit(self) -> None:
+        note = care_outcome_note(
+            'その話はおしまいにして',
+            CareApplication(blocked_operations=(('close', 'target', 1),)),
+        )
+        self.assertIn('閉じた、とは言わない', note)
+
+    def test_memory_explicit_restore_yields_denial_and_pointer(self) -> None:
+        note = care_outcome_note('忘れたやつ、戻してほしい', CareApplication())
+        self.assertIn('戻した、とは言わない', note)
+        self.assertIn('一覧', note)
+
+    def test_plain_restore_word_without_memory_context_stays_silent(self) -> None:
+        self.assertEqual(
+            care_outcome_note('椅子を元の場所に戻しておいて', CareApplication()),
+            '',
+        )
 
     def test_unknown_unclear_value_is_ignored(self) -> None:
         self.assertEqual(

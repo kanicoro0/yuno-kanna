@@ -9,6 +9,7 @@ from yuno.care.maintenance import CareMaintenanceService
 from yuno.care.reader import CareReader
 from yuno.care.operations import (
     PendingCareOperations,
+    ask_back_reply,
     care_operations_log_line,
     care_outcome_note,
 )
@@ -138,6 +139,7 @@ class ConversationPipeline:
         pre_care_completed = False
         care_mark_changes: tuple[CareMark, ...] = ()
         care_note = ""
+        ask_back_operation = ""
         if self._should_read_before_speaking(turn):
             state = await self.care_service.current_state(turn.stream_id)
             salience = cue_salience(turn.content, state.read_cues)
@@ -209,7 +211,9 @@ class ConversationPipeline:
                     care_result.unclear_operation,
                 )
                 pre_care_completed = True
-                self._remember_unanswered_ask_back(turn, care_result, application)
+                ask_back_operation = self._remember_unanswered_ask_back(
+                    turn, care_result, application
+                )
                 logger.info(
                     "care_operations stream_id=%s phase=pre %s",
                     turn.stream_id,
@@ -258,32 +262,38 @@ class ConversationPipeline:
                 care_mark_changes=care_mark_changes,
             )
 
-        care_mark_ids = include_care_mark_ids
-        if self.reference_selector:
-            selection = await self.reference_selector.select(
-                turn.stream_id, turn.content
-            )
-            care_mark_ids = list(dict.fromkeys((
-                *care_mark_ids,
-                *selection.care_mark_ids,
-            )))
-        context = await self.context_builder.build(
-            turn.stream_id,
-            care_mark_ids,
-            route_reason=turn.route_reason,
-            reply_reason=care_result.reply_reason,
-            speaker_note=care_result.speaker_note,
-            care_note=care_note,
-        )
-        started = time.monotonic()
-        try:
-            reply = await self.speaker.speak(context)
-        finally:
-            logger.info(
-                "timing speaker_generation stream_id=%s ms=%.1f",
+        if ask_back_operation:
+            # An operation was asked for but its target is unnamed: the
+            # whole reply is the deterministic short ask-back, so a claim
+            # of completion cannot slip in and the question always lands.
+            reply = ask_back_reply(ask_back_operation, turn.content)
+        else:
+            care_mark_ids = include_care_mark_ids
+            if self.reference_selector:
+                selection = await self.reference_selector.select(
+                    turn.stream_id, turn.content
+                )
+                care_mark_ids = list(dict.fromkeys((
+                    *care_mark_ids,
+                    *selection.care_mark_ids,
+                )))
+            context = await self.context_builder.build(
                 turn.stream_id,
-                _elapsed_ms(started),
+                care_mark_ids,
+                route_reason=turn.route_reason,
+                reply_reason=care_result.reply_reason,
+                speaker_note=care_result.speaker_note,
+                care_note=care_note,
             )
+            started = time.monotonic()
+            try:
+                reply = await self.speaker.speak(context)
+            finally:
+                logger.info(
+                    "timing speaker_generation stream_id=%s ms=%.1f",
+                    turn.stream_id,
+                    _elapsed_ms(started),
+                )
         reply_mode = turn.reply_mode if turn.should_reply else "plain"
         reply_to = (
             turn.reply_to_discord_message_id
@@ -464,13 +474,15 @@ class ConversationPipeline:
         turn: PipelineTurn,
         care_result: CareReadResult,
         application: CareApplication,
-    ) -> None:
+    ) -> str:
+        """Store the waiting ask-back and name the operation to ask about."""
         operation = care_result.unclear_operation
         if not operation or self._operation_applied(operation, application):
-            return
+            return ""
         self._pending_care_operations.set(
             turn.stream_id, turn.author_id, operation
         )
+        return operation
 
     @staticmethod
     def _operation_applied(
